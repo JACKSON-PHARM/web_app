@@ -130,6 +130,7 @@ async def get_drive_info(
     """Get Google Drive database info (admin only)"""
     import logging
     from app.config import settings
+    import os
     logger = logging.getLogger(__name__)
     
     # Force authentication check before getting info
@@ -140,6 +141,30 @@ async def get_drive_info(
     
     info = drive_manager.get_database_info()
     logger.info(f"🔍 Database info result: {info.get('error', 'No error')}")
+    
+    # Add local database info for comparison
+    local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
+    local_db_exists = os.path.exists(local_db_path)
+    info['local_database'] = {
+        'exists': local_db_exists,
+        'path': local_db_path,
+        'size_mb': round(os.path.getsize(local_db_path) / (1024 * 1024), 2) if local_db_exists else 0,
+        'modified': os.path.getmtime(local_db_path) if local_db_exists else None
+    }
+    
+    # Check sync status
+    if is_auth and info.get('exists') and local_db_exists:
+        drive_timestamp = drive_manager.get_drive_database_timestamp()
+        if drive_timestamp:
+            from datetime import datetime
+            local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
+            drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+            info['sync_status'] = {
+                'is_synced': drive_mtime <= local_mtime,
+                'drive_newer': drive_mtime > local_mtime,
+                'drive_timestamp': drive_timestamp,
+                'local_timestamp': local_mtime.isoformat()
+            }
     
     # Add callback URL to the response
     info['callback_url'] = settings.GOOGLE_OAUTH_CALLBACK_URL

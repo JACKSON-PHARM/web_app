@@ -61,22 +61,64 @@ async def lifespan(app: FastAPI):
                 settings.GOOGLE_DRIVE_FOLDER_ID = folder_id
                 logger.info(f"✅ Google Drive folder: {folder_id}")
                 
-                # Download database on startup BEFORE initializing db_manager
+                # Smart database sync: Check if download is needed, then do it in background
                 local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
-                logger.info(f"📥 Downloading database from Google Drive to: {local_db_path}")
-                downloaded = drive_manager.download_database(local_db_path)
+                local_db_exists = os.path.exists(local_db_path)
                 
-                if downloaded:
-                    db_size = os.path.getsize(local_db_path) / (1024 * 1024)
-                    logger.info(f"✅ Database downloaded successfully ({db_size:.2f} MB)")
-                    logger.info(f"📁 Database location: {local_db_path}")
-                    
-                    # Reset db_manager singleton so it reinitializes with the downloaded database
-                    from app.dependencies import reset_db_manager
-                    reset_db_manager()
-                    logger.info("🔄 Database manager will be reinitialized with downloaded database")
+                # Check if we need to download (only if local DB doesn't exist or Drive version is newer)
+                should_download = False
+                drive_timestamp = None
+                
+                if local_db_exists:
+                    # Check Drive timestamp to see if it's newer
+                    drive_timestamp = drive_manager.get_drive_database_timestamp()
+                    if drive_timestamp:
+                        from datetime import datetime
+                        local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
+                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                        if drive_mtime > local_mtime:
+                            logger.info(f"📥 Drive database is newer ({drive_timestamp} vs {local_mtime.isoformat()}), will sync in background")
+                            should_download = True
+                        else:
+                            logger.info(f"✅ Local database is up to date (Drive: {drive_timestamp}, Local: {local_mtime.isoformat()})")
+                    else:
+                        logger.info("ℹ️ Could not get Drive timestamp, using local database")
                 else:
-                    logger.info("ℹ️ No existing database found in Drive, will create new one on first refresh")
+                    logger.info("📥 No local database found, will download from Drive in background")
+                    should_download = True
+                
+                # If local DB exists, use it immediately (don't block startup)
+                if local_db_exists:
+                    db_size = os.path.getsize(local_db_path) / (1024 * 1024)
+                    logger.info(f"✅ Using existing database ({db_size:.2f} MB) - app ready immediately")
+                    logger.info(f"📁 Database location: {local_db_path}")
+                
+                # Download in background if needed (non-blocking)
+                if should_download:
+                    logger.info("🔄 Starting background database sync from Google Drive...")
+                    import asyncio
+                    async def background_download():
+                        try:
+                            logger.info("📥 Background download started...")
+                            downloaded = drive_manager.download_database(local_db_path)
+                            if downloaded:
+                                db_size = os.path.getsize(local_db_path) / (1024 * 1024)
+                                logger.info(f"✅ Background download complete ({db_size:.2f} MB)")
+                                # Reset db_manager so next request uses new database
+                                from app.dependencies import reset_db_manager
+                                reset_db_manager()
+                                logger.info("🔄 Database manager will use updated database on next request")
+                            else:
+                                logger.info("ℹ️ Background download: No database found in Drive")
+                        except Exception as e:
+                            logger.error(f"❌ Background download failed: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+                    
+                    # Schedule background download (don't await - non-blocking)
+                    asyncio.create_task(background_download())
+                else:
+                    logger.info("ℹ️ No database sync needed - using existing local database")
             else:
                 logger.warning("⚠️ Google Drive not authenticated - authorization required")
                 logger.info("ℹ️ Use /api/admin/drive/authorize endpoint to get authorization URL")

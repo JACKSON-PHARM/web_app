@@ -585,6 +585,84 @@ async def get_database_diagnostics(
         "diagnostics": diagnostics
     }
 
+@router.get("/sync-status")
+async def get_sync_status(
+    current_user: dict = Depends(get_current_user),
+    db_manager = Depends(get_db_manager)
+):
+    """Get database sync status - shows if local DB is synced with Drive"""
+    import os
+    from app.dependencies import get_drive_manager
+    from app.config import settings
+    
+    status = {
+        "local_database": {
+            "exists": False,
+            "path": db_manager.db_path,
+            "size_mb": 0,
+            "modified": None
+        },
+        "drive_database": {
+            "exists": False,
+            "modified": None
+        },
+        "sync_status": "unknown",
+        "message": ""
+    }
+    
+    try:
+        # Check local database
+        if db_manager.db_path and os.path.exists(db_manager.db_path):
+            status["local_database"]["exists"] = True
+            status["local_database"]["size_mb"] = round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2)
+            status["local_database"]["modified"] = os.path.getmtime(db_manager.db_path)
+        
+        # Check Drive database
+        drive_manager = get_drive_manager()
+        if drive_manager.is_authenticated():
+            drive_info = drive_manager.get_database_info()
+            if drive_info.get('exists'):
+                status["drive_database"]["exists"] = True
+                status["drive_database"]["modified"] = drive_info.get('modified')
+                
+                # Compare timestamps
+                if status["local_database"]["exists"]:
+                    from datetime import datetime
+                    local_mtime = datetime.fromtimestamp(status["local_database"]["modified"])
+                    drive_timestamp = drive_info.get('modified')
+                    if drive_timestamp:
+                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                        if drive_mtime > local_mtime:
+                            status["sync_status"] = "outdated"
+                            status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
+                        else:
+                            status["sync_status"] = "synced"
+                            status["message"] = "Database is up to date."
+                    else:
+                        status["sync_status"] = "unknown"
+                        status["message"] = "Could not compare timestamps."
+                else:
+                    status["sync_status"] = "missing"
+                    status["message"] = "Local database not found. Will download on next refresh."
+            else:
+                status["sync_status"] = "no_drive_db"
+                status["message"] = "No database in Drive. Create one by refreshing data."
+        else:
+            status["sync_status"] = "not_authenticated"
+            status["message"] = "Google Drive not authenticated."
+    
+    except Exception as e:
+        status["sync_status"] = "error"
+        status["message"] = f"Error checking sync status: {str(e)}"
+        logger.error(f"Error getting sync status: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    
+    return {
+        "success": True,
+        "status": status
+    }
+
 @router.get("/branches")
 async def get_branches(
     company: Optional[str] = None,
