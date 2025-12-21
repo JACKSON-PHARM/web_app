@@ -165,10 +165,15 @@ async def get_new_arrivals(
             
             # Get stock data from database to enrich the results - OPTIMIZED BATCH QUERY
             try:
-                original_db_manager = db_manager._db_manager
-                if not hasattr(original_db_manager, 'db_path') or not original_db_manager.db_path:
-                    original_db_manager.db_path = db_manager.db_path
-                dashboard_service = DashboardService(original_db_manager)
+                # Use the wrapper db_manager directly - it always has db_path
+                # If original manager exists, use it; otherwise use wrapper
+                manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
+                
+                # Ensure db_path is set
+                if not hasattr(manager_to_use, 'db_path') or not manager_to_use.db_path:
+                    manager_to_use.db_path = db_manager.db_path
+                
+                dashboard_service = DashboardService(manager_to_use)
                 
                 # Get stock information for items - SINGLE BATCH QUERY instead of per-item
                 db_path = dashboard_service._get_database_path(prefer_stock=True)
@@ -327,10 +332,15 @@ async def get_new_arrivals(
             }
         else:
             # Fallback to database approach (original)
-            original_db_manager = db_manager._db_manager
-            if not hasattr(original_db_manager, 'db_path') or not original_db_manager.db_path:
-                original_db_manager.db_path = db_manager.db_path
-            dashboard_service = DashboardService(original_db_manager)
+            # Use the wrapper db_manager directly - it always has db_path
+            # If original manager exists, use it; otherwise use wrapper
+            manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
+            
+            # Ensure db_path is set
+            if not hasattr(manager_to_use, 'db_path') or not manager_to_use.db_path:
+                manager_to_use.db_path = db_manager.db_path
+            
+            dashboard_service = DashboardService(manager_to_use)
             new_arrivals = dashboard_service.get_new_arrivals_this_week(
                 "BABA DOGO HQ",  # Source branch (always HQ)
                 target_company,

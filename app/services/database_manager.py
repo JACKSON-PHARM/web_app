@@ -40,6 +40,9 @@ class DatabaseManager:
         if _OriginalDatabaseManager:
             try:
                 self._db_manager = _OriginalDatabaseManager(db_path)
+                # Ensure the wrapped manager has db_path attribute
+                if not hasattr(self._db_manager, 'db_path'):
+                    self._db_manager.db_path = db_path
                 self.logger.info(f"✅ Database manager initialized with original: {db_path}")
             except Exception as e:
                 self.logger.warning(f"⚠️ Failed to initialize original DatabaseManager: {e}")
