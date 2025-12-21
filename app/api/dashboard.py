@@ -396,6 +396,53 @@ async def get_priority_items(
 ):
     """Get priority items between branches"""
     try:
+        # Log database status
+        logger.info(f"📊 Priority items request: target={target_branch} ({target_company}), source={source_branch} ({source_company})")
+        logger.info(f"📁 Database path: {db_manager.db_path}")
+        logger.info(f"📁 Database exists: {os.path.exists(db_manager.db_path) if db_manager.db_path else False}")
+        
+        # Check if database has data
+        if db_manager.db_path and os.path.exists(db_manager.db_path):
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_manager.db_path)
+                cursor = conn.cursor()
+                
+                # Check table counts
+                tables_to_check = ['current_stock', 'stock_data', 'purchase_orders', 'branch_orders', 'sales']
+                table_counts = {}
+                for table in tables_to_check:
+                    try:
+                        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                        count = cursor.fetchone()[0]
+                        table_counts[table] = count
+                        logger.info(f"📋 Table '{table}': {count} rows")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Table '{table}' not found or error: {e}")
+                        table_counts[table] = 0
+                
+                conn.close()
+                
+                # If no data in key tables, return helpful error
+                if table_counts.get('current_stock', 0) == 0 and table_counts.get('stock_data', 0) == 0:
+                    logger.error("❌ Database has no stock data!")
+                    return {
+                        "success": False,
+                        "error": "Database is empty. Please refresh data first by clicking 'Refresh Now' button.",
+                        "data": [],
+                        "count": 0,
+                        "diagnostics": {
+                            "database_path": db_manager.db_path,
+                            "database_exists": True,
+                            "table_counts": table_counts,
+                            "message": "No stock data found. Please refresh data from APIs."
+                        }
+                    }
+            except Exception as e:
+                logger.error(f"❌ Error checking database: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
         # Use the wrapper db_manager directly - it always has db_path
         # If original manager exists, use it; otherwise use wrapper
         manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
@@ -405,6 +452,7 @@ async def get_priority_items(
             manager_to_use.db_path = db_manager.db_path
         
         dashboard_service = DashboardService(manager_to_use)
+        logger.info(f"🔍 Calling get_priority_items_between_branches...")
         priority_items = dashboard_service.get_priority_items_between_branches(
             target_branch,
             target_company,
@@ -412,6 +460,8 @@ async def get_priority_items(
             source_company,
             limit=limit
         )
+        
+        logger.info(f"📊 DashboardService returned: {type(priority_items)}, empty: {priority_items is None or (hasattr(priority_items, 'empty') and priority_items.empty)}")
         
         # Convert DataFrame to dict - replace NaN with None for JSON serialization
         if priority_items is not None and not priority_items.empty:
@@ -423,16 +473,41 @@ async def get_priority_items(
                 for key, value in record.items():
                     if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
                         record[key] = None
+            logger.info(f"✅ Returning {len(records)} priority items")
             return {
                 "success": True,
                 "data": records,
                 "count": len(priority_items)
             }
         else:
+            logger.warning("⚠️ No priority items returned from DashboardService")
+            # Check database again to provide helpful message
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_manager.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM current_stock")
+                stock_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM stock_data")
+                stock_data_count = cursor.fetchone()[0]
+                conn.close()
+                
+                if stock_count == 0 and stock_data_count == 0:
+                    return {
+                        "success": False,
+                        "error": "Database is empty. Please refresh data first by clicking 'Refresh Now' button.",
+                        "data": [],
+                        "count": 0,
+                        "message": "No stock data found in database. Please refresh data from APIs."
+                    }
+            except Exception as e:
+                logger.error(f"Error checking database: {e}")
+            
             return {
                 "success": True,
                 "data": [],
-                "count": 0
+                "count": 0,
+                "message": "No priority items found for the selected branches. Try selecting different branches or refresh data."
             }
     except Exception as e:
         import traceback
