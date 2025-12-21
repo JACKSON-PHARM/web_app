@@ -22,8 +22,16 @@
         </div>
     </nav>
     
+    <!-- Database Sync Status Notification -->
+    <div id="syncStatusNotification" class="data-freshness-notification" style="display: none; top: 60px; right: 20px;">
+        <div class="notification-content">
+            <span id="syncIcon" class="freshness-icon">🔄</span>
+            <span id="syncMessage" class="freshness-message">Checking sync status...</span>
+        </div>
+    </div>
+    
     <!-- Data Freshness Notification -->
-    <div id="dataFreshnessNotification" class="data-freshness-notification" style="display: none;">
+    <div id="dataFreshnessNotification" class="data-freshness-notification" style="display: none; top: 120px; right: 20px;">
         <div class="notification-content">
             <span id="freshnessIcon" class="freshness-icon">📊</span>
             <span id="freshnessMessage" class="freshness-message">Loading...</span>
@@ -260,11 +268,61 @@
             }
         }
         
+        // Database Sync Status System
+        let syncCheckInterval = null;
+        
+        async function updateSyncStatus() {
+            try {
+                const status = await apiRequest('/api/dashboard/sync-status');
+                const notification = document.getElementById('syncStatusNotification');
+                const icon = document.getElementById('syncIcon');
+                const message = document.getElementById('syncMessage');
+                
+                if (!notification || !icon || !message) return;
+                
+                const syncStatus = status.status?.sync_status || 'unknown';
+                const syncMessage = status.status?.message || '';
+                const localExists = status.status?.local_database?.exists || false;
+                const driveExists = status.status?.drive_database?.exists || false;
+                
+                // Show notification based on sync status
+                notification.className = 'data-freshness-notification';
+                
+                if (syncStatus === 'synced') {
+                    notification.classList.add('fresh');
+                    icon.textContent = '✅';
+                    message.textContent = 'Database synced';
+                    // Hide after 3 seconds if synced
+                    setTimeout(() => {
+                        notification.style.display = 'none';
+                    }, 3000);
+                } else if (syncStatus === 'outdated') {
+                    notification.classList.add('stale');
+                    icon.textContent = '🔄';
+                    message.textContent = 'Syncing newer data in background...';
+                    notification.style.display = 'block';
+                } else if (syncStatus === 'missing' && !localExists) {
+                    notification.classList.add('refreshing');
+                    icon.textContent = '📥';
+                    message.textContent = 'Downloading database from Drive...';
+                    notification.style.display = 'block';
+                } else if (syncStatus === 'no_drive_db') {
+                    notification.style.display = 'none';
+                } else {
+                    notification.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error updating sync status:', error);
+            }
+        }
+        
         // Start freshness checking when page loads
         document.addEventListener('DOMContentLoaded', () => {
             updateDataFreshnessNotification();
+            updateSyncStatus();
             // Check every 10 seconds
             freshnessCheckInterval = setInterval(updateDataFreshnessNotification, 10000);
+            syncCheckInterval = setInterval(updateSyncStatus, 5000); // Check sync more frequently
         });
         
         // Cleanup on page unload
