@@ -12,7 +12,7 @@ import io
 import os
 import json
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -394,6 +394,121 @@ class GoogleDriveManager:
                 'exists': False,
                 'error': str(e),
                 'message': f'Error checking database: {str(e)}'
+            }
+    
+    def list_all_database_files(self) -> List[Dict]:
+        """List all database files in Google Drive, sorted by modification time (newest first)"""
+        if not self.is_authenticated():
+            return []
+        
+        try:
+            query = f"name='{settings.DB_FILENAME}' and trashed=false"
+            results = self.service.files().list(
+                q=query,
+                orderBy='modifiedTime desc',
+                fields='files(id,name,size,modifiedTime,createdTime,parents)'
+            ).execute()
+            
+            files = []
+            for file_info in results.get('files', []):
+                # Get parent folder names
+                parent_folders = []
+                if file_info.get('parents'):
+                    for parent_id in file_info.get('parents', []):
+                        try:
+                            parent_info = self.service.files().get(fileId=parent_id, fields='name').execute()
+                            parent_folders.append(parent_info.get('name', 'Unknown'))
+                        except:
+                            parent_folders.append('Unknown')
+                
+                files.append({
+                    'id': file_info.get('id'),
+                    'name': file_info.get('name'),
+                    'size': int(file_info.get('size', 0)),
+                    'size_mb': round(int(file_info.get('size', 0)) / (1024 * 1024), 2),
+                    'modified': file_info.get('modifiedTime'),
+                    'created': file_info.get('createdTime'),
+                    'location': ', '.join(parent_folders) if parent_folders else 'My Drive',
+                    'parent_ids': file_info.get('parents', [])
+                })
+            
+            return files
+        except Exception as e:
+            logger.error(f"Error listing database files: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
+    
+    def delete_database_file(self, file_id: str) -> bool:
+        """Delete a database file from Google Drive"""
+        if not self.is_authenticated():
+            logger.error("Google Drive not authenticated")
+            return False
+        
+        try:
+            self.service.files().delete(fileId=file_id).execute()
+            logger.info(f"✅ Deleted database file: {file_id}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error deleting database file {file_id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+    
+    def cleanup_old_database_files(self, keep_count: int = 2) -> Dict:
+        """Delete old database files, keeping only the most recent N files"""
+        if not self.is_authenticated():
+            return {'success': False, 'message': 'Google Drive not authenticated'}
+        
+        try:
+            all_files = self.list_all_database_files()
+            
+            if len(all_files) <= keep_count:
+                return {
+                    'success': True,
+                    'message': f'Only {len(all_files)} file(s) found, keeping all (limit: {keep_count})',
+                    'deleted': [],
+                    'kept': [f['id'] for f in all_files]
+                }
+            
+            # Sort by modified time (newest first) - already sorted by API, but ensure it
+            all_files.sort(key=lambda x: x.get('modified', ''), reverse=True)
+            
+            # Keep the most recent N files
+            files_to_keep = all_files[:keep_count]
+            files_to_delete = all_files[keep_count:]
+            
+            deleted = []
+            failed = []
+            
+            for file_info in files_to_delete:
+                file_id = file_info['id']
+                if self.delete_database_file(file_id):
+                    deleted.append({
+                        'id': file_id,
+                        'location': file_info['location'],
+                        'modified': file_info['modified']
+                    })
+                else:
+                    failed.append({
+                        'id': file_id,
+                        'location': file_info['location']
+                    })
+            
+            return {
+                'success': True,
+                'message': f'Cleaned up {len(deleted)} old database file(s), kept {len(files_to_keep)} most recent',
+                'deleted': deleted,
+                'kept': [f['id'] for f in files_to_keep],
+                'failed': failed
+            }
+        except Exception as e:
+            logger.error(f"Error cleaning up old database files: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                'success': False,
+                'message': f'Error cleaning up files: {str(e)}'
             }
     
     def is_authenticated(self) -> bool:

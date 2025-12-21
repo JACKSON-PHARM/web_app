@@ -49,6 +49,17 @@
             <button onclick="getAuthorizationUrl()" class="btn btn-success">Get Authorization URL</button>
             <button onclick="syncDatabase()" class="btn btn-primary">📥 Download from Drive</button>
             <button onclick="uploadDatabase()" class="btn btn-success">📤 Upload to Drive</button>
+            <button onclick="loadDatabaseFiles()" class="btn btn-info">🗂️ Manage Files</button>
+        </div>
+    </div>
+    
+    <!-- Database Files Management Section -->
+    <div class="card" id="filesManagementCard" style="margin-top: 20px; display: none;">
+        <div class="card-header">🗂️ Database Files Management</div>
+        <div id="filesList" class="loading">Loading...</div>
+        <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+            <button onclick="cleanupOldFiles()" class="btn btn-warning">🧹 Cleanup Old Files (Keep 2 Most Recent)</button>
+            <button onclick="loadDatabaseFiles()" class="btn btn-secondary">🔄 Refresh List</button>
         </div>
     </div>
 </div>

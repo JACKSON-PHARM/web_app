@@ -184,6 +184,72 @@ async def get_authorization_url(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/drive/files")
+async def list_database_files(
+    current_user: dict = Depends(get_current_admin),
+    drive_manager = Depends(get_drive_manager)
+):
+    """List all database files in Google Drive (admin only)"""
+    if not drive_manager.is_authenticated():
+        return {
+            "success": False,
+            "message": "Google Drive not authenticated",
+            "files": []
+        }
+    
+    files = drive_manager.list_all_database_files()
+    return {
+        "success": True,
+        "files": files,
+        "count": len(files)
+    }
+
+@router.delete("/drive/files/{file_id}")
+async def delete_database_file(
+    file_id: str,
+    current_user: dict = Depends(get_current_admin),
+    drive_manager = Depends(get_drive_manager)
+):
+    """Delete a specific database file from Google Drive (admin only)"""
+    if not drive_manager.is_authenticated():
+        return {
+            "success": False,
+            "message": "Google Drive not authenticated"
+        }
+    
+    success = drive_manager.delete_database_file(file_id)
+    if success:
+        return {
+            "success": True,
+            "message": f"Database file deleted successfully"
+        }
+    else:
+        return {
+            "success": False,
+            "message": "Failed to delete database file"
+        }
+
+@router.post("/drive/cleanup")
+async def cleanup_old_database_files(
+    keep_count: int = 2,
+    current_user: dict = Depends(get_current_admin),
+    drive_manager = Depends(get_drive_manager)
+):
+    """Clean up old database files, keeping only the most recent N files (admin only)"""
+    if not drive_manager.is_authenticated():
+        return {
+            "success": False,
+            "message": "Google Drive not authenticated"
+        }
+    
+    if keep_count < 1:
+        keep_count = 1
+    if keep_count > 5:
+        keep_count = 5  # Safety limit
+    
+    result = drive_manager.cleanup_old_database_files(keep_count=keep_count)
+    return result
+
 @router.post("/drive/upload-credentials")
 async def upload_credentials(
     file: UploadFile = File(...),
