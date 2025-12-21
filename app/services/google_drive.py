@@ -133,15 +133,25 @@ class GoogleDriveManager:
             if not self.folder_id:
                 self.folder_id = self.ensure_folder_exists()
             
-            # Find database file in folder
+            # Find database file in folder first
             query = f"name='{settings.DB_FILENAME}' and '{self.folder_id}' in parents and trashed=false"
             results = self.service.files().list(q=query).execute()
             items = results.get('files', [])
             
+            # If not found in app folder, search Drive-wide (fallback)
             if not items:
-                logger.warning(f"Database '{settings.DB_FILENAME}' not found in Drive folder '{self.folder_id}'")
-                logger.info("💡 Tip: Use 'Upload to Drive' to upload your local database first, or use 'Refresh Now' to fetch data and create a database")
-                return False
+                logger.info(f"Database not found in folder '{self.folder_id}', searching Drive-wide...")
+                query_wide = f"name='{settings.DB_FILENAME}' and trashed=false"
+                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=1).execute()
+                items_wide = results_wide.get('files', [])
+                
+                if items_wide:
+                    logger.info(f"✅ Found database elsewhere in Drive, downloading...")
+                    items = items_wide  # Use the found file
+                else:
+                    logger.warning(f"Database '{settings.DB_FILENAME}' not found anywhere in Drive")
+                    logger.info("💡 Tip: Use 'Upload to Drive' to upload your local database first, or use 'Refresh Now' to fetch data and create a database")
+                    return False
             
             file_id = items[0]['id']
             
@@ -309,7 +319,7 @@ class GoogleDriveManager:
             return {'exists': False, 'error': 'Not authenticated', 'message': 'Google Drive not authenticated. Please authorize first.'}
         
         try:
-            # Ensure folder exists first
+            # First, try to find database in the app's specific folder
             if not self.folder_id:
                 self.folder_id = self.ensure_folder_exists()
             
@@ -317,6 +327,44 @@ class GoogleDriveManager:
             results = self.service.files().list(q=query).execute()
             items = results.get('files', [])
             
+            # If not found in specific folder, search Drive-wide (fallback)
+            if not items:
+                logger.info(f"Database not found in folder '{self.folder_id}', searching Drive-wide...")
+                query_wide = f"name='{settings.DB_FILENAME}' and trashed=false"
+                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=1).execute()
+                items_wide = results_wide.get('files', [])
+                
+                if items_wide:
+                    # Found database elsewhere in Drive
+                    logger.info(f"✅ Found database in Drive (not in app folder): {items_wide[0].get('name')}")
+                    file_id = items_wide[0]['id']
+                    file_info = self.service.files().get(
+                        fileId=file_id,
+                        fields='id,name,size,modifiedTime,parents'
+                    ).execute()
+                    
+                    # Get parent folder name for display
+                    parent_folders = []
+                    if file_info.get('parents'):
+                        for parent_id in file_info.get('parents', []):
+                            try:
+                                parent_info = self.service.files().get(fileId=parent_id, fields='name').execute()
+                                parent_folders.append(parent_info.get('name', 'Unknown'))
+                            except:
+                                pass
+                    
+                    return {
+                        'exists': True,
+                        'size': int(file_info.get('size', 0)),
+                        'size_mb': round(int(file_info.get('size', 0)) / (1024 * 1024), 2),
+                        'modified': file_info.get('modifiedTime'),
+                        'id': file_id,
+                        'folder_id': self.folder_id,
+                        'location': ', '.join(parent_folders) if parent_folders else 'My Drive',
+                        'note': f'Found in: {", ".join(parent_folders) if parent_folders else "My Drive"} (not in app folder)'
+                    }
+            
+            # Found in app folder
             if items:
                 file_id = items[0]['id']
                 file_info = self.service.files().get(
@@ -329,8 +377,10 @@ class GoogleDriveManager:
                     'size_mb': round(int(file_info.get('size', 0)) / (1024 * 1024), 2),
                     'modified': file_info.get('modifiedTime'),
                     'id': file_id,
-                    'folder_id': self.folder_id
+                    'folder_id': self.folder_id,
+                    'location': 'App Folder'
                 }
+            
             return {
                 'exists': False,
                 'message': f'Database not found in Google Drive folder. Upload it first using the refresh function.',

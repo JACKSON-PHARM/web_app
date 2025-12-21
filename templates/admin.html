@@ -291,6 +291,12 @@
                     if (info.exists) {
                         html += `<p><strong>Size:</strong> ${info.size_mb} MB</p>`;
                         html += `<p><strong>Last Modified:</strong> ${info.modified ? new Date(info.modified).toLocaleString() : 'Unknown'}</p>`;
+                        if (info.location && info.location !== 'App Folder') {
+                            html += `<p style="color: #856404; font-size: 13px; margin-top: 5px;"><strong>📍 Location:</strong> ${info.location}</p>`;
+                            if (info.note) {
+                                html += `<p style="color: #856404; font-size: 12px; margin-top: 5px; font-style: italic;">${info.note}</p>`;
+                            }
+                        }
                         html += `<p style="color: #28a745; font-size: 14px; margin-top: 10px;">✅ Database is synced and available in Google Drive</p>`;
                         html += '<div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 5px; padding: 10px; margin-top: 10px;">';
                         html += '<p style="color: #0c5460; font-size: 13px; margin: 0;"><strong>💡 How it works:</strong></p>';
