@@ -6,6 +6,10 @@ from typing import Optional
 from app.dependencies import get_current_user, get_db_manager
 import sys
 import os
+import logging
+
+# Set up logger first
+logger = logging.getLogger(__name__)
 
 # Try to import StockViewService - first from local web_app copy, then from parent ui folder
 try:
@@ -22,8 +26,6 @@ except ImportError:
         logger.info("✅ Imported StockViewService from parent ui folder")
     except ImportError:
         # Fallback: Service not available
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error("❌ Could not import StockViewService from any location - stock view will not work")
         StockViewService = None
 
@@ -39,9 +41,7 @@ async def get_stock_view_data(
     db_manager = Depends(get_db_manager)
 ):
     """Get stock view data - optimized with timeout handling"""
-    import logging
     import asyncio
-    logger = logging.getLogger(__name__)
     
     try:
         if StockViewService is None:
