@@ -319,7 +319,17 @@ async def sync_database(
     if success:
         return {"success": True, "message": "Database synced from Google Drive"}
     else:
-        return {"success": False, "message": "Failed to sync database. Database may not exist in Drive yet - try uploading first."}
+        return {
+            "success": False, 
+            "message": (
+                "Database not found in Google Drive.\n\n"
+                "To fix this:\n"
+                "1. Go to Settings and configure API credentials (NILA/DAIMA)\n"
+                "2. Click 'Refresh Now' to fetch data from APIs (this creates a database)\n"
+                "3. Then click 'Upload to Drive' to upload the database\n"
+                "4. After that, you can download it anytime"
+            )
+        }
 
 @router.post("/drive/upload")
 async def upload_database(

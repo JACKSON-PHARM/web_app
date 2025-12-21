@@ -139,7 +139,8 @@ class GoogleDriveManager:
             items = results.get('files', [])
             
             if not items:
-                logger.warning("Database not found in Drive")
+                logger.warning(f"Database '{settings.DB_FILENAME}' not found in Drive folder '{self.folder_id}'")
+                logger.info("💡 Tip: Use 'Upload to Drive' to upload your local database first, or use 'Refresh Now' to fetch data and create a database")
                 return False
             
             file_id = items[0]['id']

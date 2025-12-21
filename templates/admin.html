@@ -268,6 +268,17 @@
                     // Authenticated but database doesn't exist yet
                     html += `<p style="color: #28a745;"><strong>Status:</strong> ✅ Connected</p>`;
                     html += `<p><strong>Database Exists:</strong> ❌ No</p>`;
+                    html += '<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-top: 15px;">';
+                    html += '<p style="color: #856404; font-weight: bold; margin-top: 0;">💡 No Database in Drive Yet</p>';
+                    html += '<p style="color: #856404; font-size: 14px; margin-bottom: 10px;">To create and upload a database:</p>';
+                    html += '<ol style="color: #856404; font-size: 14px; margin-left: 20px; margin-bottom: 0;">';
+                    html += '<li>Go to <a href="/settings" target="_blank">Settings</a> and configure API credentials (NILA/DAIMA)</li>';
+                    html += '<li>Click "Refresh Now" button (top right) to fetch data from APIs</li>';
+                    html += '<li>Wait for the refresh to complete (this creates a database locally)</li>';
+                    html += '<li>Click "Upload to Drive" button below to upload the database</li>';
+                    html += '<li>After that, you can download it anytime</li>';
+                    html += '</ol>';
+                    html += '</div>';
                     if (info.message) {
                         html += `<p style="color: #ffc107; margin-top: 10px;">⚠️ ${info.message}</p>`;
                     }
