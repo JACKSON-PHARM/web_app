@@ -45,11 +45,21 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     global scheduler
     
-    # Startup
+    # Startup - make it very resilient
     logger.info("🚀 Starting PharmaStock Web Application")
     
+    # Initialize database manager first (most critical)
     try:
-        # Initialize Google Drive manager (may not be authenticated yet)
+        db_manager = get_db_manager()
+        logger.info("✅ Database manager initialized")
+    except Exception as e:
+        logger.error(f"❌ Database manager initialization failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        logger.warning("⚠️ App will continue but database features may not work")
+    
+    # Initialize Google Drive manager (optional)
+    try:
         drive_manager = get_drive_manager()
         
         # Check if authenticated (don't block startup if not)
@@ -76,12 +86,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ Google Drive initialization error (non-blocking): {e}")
             logger.info("ℹ️ App will continue without Google Drive features")
-        
-        # Initialize database manager
-        db_manager = get_db_manager()
-        logger.info("✅ Database manager initialized")
-        
-        # Initialize scheduler
+    except Exception as e:
+        logger.warning(f"⚠️ Google Drive manager creation failed (non-blocking): {e}")
+        logger.info("ℹ️ App will continue without Google Drive features")
+    
+    # Initialize scheduler (optional)
+    try:
         scheduler = RefreshScheduler(refresh_callback)
         refresh.set_scheduler(scheduler)
         
@@ -90,11 +100,11 @@ async def lifespan(app: FastAPI):
             logger.info(f"✅ Auto-refresh scheduler started (every 60 minutes between 8:00 AM and 6:00 PM)")
         else:
             logger.info("ℹ️ Auto-refresh is disabled")
-        
     except Exception as e:
-        logger.error(f"❌ Startup error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.warning(f"⚠️ Scheduler initialization failed (non-blocking): {e}")
+        logger.info("ℹ️ App will continue without scheduled refresh")
+    
+    logger.info("✅ Application startup complete - app is ready to serve requests")
     
     yield
     

@@ -33,12 +33,18 @@ def get_db_manager() -> DatabaseManager:
     global _db_manager
     if _db_manager is None:
         # Get local database path - ensure it's absolute
-        if os.path.isabs(settings.LOCAL_CACHE_DIR):
+        # On Render free tier (no persistent disk), use temp directory
+        if os.getenv("RENDER"):
+            # On Render, use /tmp if no persistent disk is mounted
+            cache_dir = os.getenv("RENDER_DISK_PATH", "/tmp/pharmastock_cache")
+            logger.info(f"🌐 Render environment detected - using cache dir: {cache_dir}")
+        elif os.path.isabs(settings.LOCAL_CACHE_DIR):
             cache_dir = settings.LOCAL_CACHE_DIR
         else:
             # Relative to web_app/app directory
             web_app_dir = os.path.dirname(os.path.dirname(__file__))
             cache_dir = os.path.join(web_app_dir, settings.LOCAL_CACHE_DIR.lstrip("./"))
+        
         local_db_path = os.path.join(cache_dir, settings.DB_FILENAME)
         # Ensure directory exists
         os.makedirs(cache_dir, exist_ok=True)
@@ -46,6 +52,8 @@ def get_db_manager() -> DatabaseManager:
         logger.info(f"Database exists: {os.path.exists(local_db_path)}")
         if os.path.exists(local_db_path):
             logger.info(f"Database size: {os.path.getsize(local_db_path) / (1024*1024):.2f} MB")
+        else:
+            logger.info("ℹ️ Database will be created on first use or downloaded from Google Drive")
         _db_manager = DatabaseManager(local_db_path)
     return _db_manager
 

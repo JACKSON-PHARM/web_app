@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     
     # Database Configuration
     DB_FILENAME: str = "pharma_stock.db"
-    LOCAL_CACHE_DIR: str = os.path.join(os.path.dirname(__file__), "..", "cache")
+    # On Render free tier (no persistent disk), use temp directory
+    # Data will be synced from/to Google Drive on startup/shutdown
+    LOCAL_CACHE_DIR: str = os.getenv("RENDER_DISK_PATH", os.path.join(os.path.dirname(__file__), "..", "cache"))
     
     # Application
     SECRET_KEY: str = "pharmastock-secret-key-change-in-production-2024"
