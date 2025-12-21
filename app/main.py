@@ -142,6 +142,11 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(procurement.router, prefix="/api/procurement", tags=["Procurement"])
 app.include_router(suppliers.router, prefix="/api/suppliers", tags=["Suppliers"])
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Render"""
+    return {"status": "ok", "message": "PharmaStock Web App is running"}
+
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     """Root endpoint - redirect to login"""

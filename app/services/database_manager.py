@@ -9,10 +9,18 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 import pandas as pd
 
-# Import the original database manager schema creation methods
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-from database_manager import DatabaseManager as OriginalDatabaseManager
+# Try to import the original database manager, but make it optional
+_OriginalDatabaseManager = None
+try:
+    import sys
+    parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if os.path.exists(parent_path):
+        sys.path.insert(0, parent_path)
+        from database_manager import DatabaseManager as _OriginalDatabaseManager
+        logger.info("✅ Imported original DatabaseManager")
+except ImportError as e:
+    logger.warning(f"⚠️ Could not import original DatabaseManager: {e}")
+    logger.info("ℹ️ Will use standalone database initialization")
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +36,66 @@ class DatabaseManager:
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
         
-        # Initialize using original database manager
-        self._db_manager = OriginalDatabaseManager(db_path)
-        self.logger.info(f"✅ Database manager initialized: {db_path}")
+        # Initialize using original database manager if available, otherwise use standalone
+        if _OriginalDatabaseManager:
+            try:
+                self._db_manager = _OriginalDatabaseManager(db_path)
+                self.logger.info(f"✅ Database manager initialized with original: {db_path}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to initialize original DatabaseManager: {e}")
+                self.logger.info("ℹ️ Using standalone database initialization")
+                self._init_standalone_database()
+        else:
+            self._init_standalone_database()
+    
+    def _init_standalone_database(self):
+        """Initialize database schema standalone (when original manager not available)"""
+        try:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            cursor = conn.cursor()
+            
+            # Create basic tables if they don't exist
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS current_stock (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    branch TEXT NOT NULL,
+                    item_code TEXT NOT NULL,
+                    item_name TEXT,
+                    stock_pieces REAL NOT NULL,
+                    company TEXT NOT NULL,
+                    pack_size REAL DEFAULT 1,
+                    unit_price REAL DEFAULT 0.0,
+                    stock_value REAL DEFAULT 0.0,
+                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(branch, item_code, company)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sales (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    sale_date DATE NOT NULL,
+                    invoice_number TEXT NOT NULL,
+                    item_code TEXT NOT NULL,
+                    item_name TEXT,
+                    quantity_sold REAL NOT NULL,
+                    selling_price REAL NOT NULL,
+                    total_amount REAL NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            conn.commit()
+            conn.close()
+            self.logger.info(f"✅ Standalone database initialized: {self.db_path}")
+            self._db_manager = None  # No wrapper needed
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize standalone database: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
     
     def get_db_connection(self):
         """Get database connection"""
