@@ -229,15 +229,16 @@
                     if (info.message) {
                         html += `<p style="color: #666; font-size: 14px;">${info.message}</p>`;
                     }
+                    const callbackUrl = info.callback_url || (window.location.origin + '/api/admin/drive/callback');
                     html += '<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-top: 15px;">';
                     html += '<p style="color: #856404; font-weight: bold; margin-top: 0;"><strong>⚠️ IMPORTANT: Redirect URI Configuration</strong></p>';
                     html += '<p style="color: #856404; font-size: 14px;">In Google Cloud Console, make sure your <strong>Authorized redirect URI</strong> is:</p>';
-                    html += '<p style="background: white; padding: 10px; border-radius: 3px; font-family: monospace; color: #d63384; font-weight: bold; margin: 10px 0;">http://localhost:8000/api/admin/drive/callback</p>';
+                    html += `<p style="background: white; padding: 10px; border-radius: 3px; font-family: monospace; color: #d63384; font-weight: bold; margin: 10px 0;">${callbackUrl}</p>`;
                     html += '<p style="color: #856404; font-size: 14px; margin-bottom: 0;">This must match exactly (including the path <code>/api/admin/drive/callback</code>)!</p>';
                     html += '</div>';
                     html += '<p style="color: #666; font-size: 14px; margin-top: 15px;"><strong>Steps to enable:</strong></p>';
                     html += '<ol style="color: #666; font-size: 14px; margin-left: 20px;">';
-                    html += '<li>Update redirect URI in Google Cloud Console to: <code>http://localhost:8000/api/admin/drive/callback</code></li>';
+                    html += `<li>Update redirect URI in Google Cloud Console to: <code>${callbackUrl}</code></li>`;
                     html += '<li>Click "Save" and wait 1-2 minutes</li>';
                     html += '<li>Click "Get Authorization URL" button</li>';
                     html += '<li>Authorize the app with your Google account</li>';
@@ -278,13 +279,15 @@
                 document.getElementById('driveInfo').innerHTML = html;
             } else {
                 // Show setup instructions if API call fails
+                // Try to get callback URL from window location
+                const callbackUrl = window.location.origin + '/api/admin/drive/callback';
                 let html = '<div style="padding: 15px; background: #f8f9fa; border-radius: 5px;">';
                 html += '<h3 style="margin-top: 0;">📁 Google Drive Status</h3>';
                 html += '<p style="color: #dc3545;"><strong>Status:</strong> ❌ Not Configured</p>';
                 html += '<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-top: 15px;">';
                 html += '<p style="color: #856404; font-weight: bold; margin-top: 0;"><strong>⚠️ IMPORTANT: Redirect URI Configuration</strong></p>';
                 html += '<p style="color: #856404; font-size: 14px;">In Google Cloud Console, make sure your <strong>Authorized redirect URI</strong> is:</p>';
-                html += '<p style="background: white; padding: 10px; border-radius: 3px; font-family: monospace; color: #d63384; font-weight: bold; margin: 10px 0;">http://localhost:8000/api/admin/drive/callback</p>';
+                html += `<p style="background: white; padding: 10px; border-radius: 3px; font-family: monospace; color: #d63384; font-weight: bold; margin: 10px 0;">${callbackUrl}</p>`;
                 html += '<p style="color: #856404; font-size: 14px; margin-bottom: 0;">This must match exactly!</p>';
                 html += '</div>';
                 html += '<p style="color: #666; font-size: 14px; margin-top: 15px;"><strong>Steps to enable:</strong></p>';
@@ -322,7 +325,8 @@
             
             if (result.success && result.authorization_url) {
                 // Show instructions first
-                const instructions = `IMPORTANT: Before proceeding, make sure you have added this redirect URI in Google Cloud Console:\n\nhttp://localhost:8000/api/admin/drive/callback\n\nSteps:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID\n3. Add the redirect URI above to "Authorized redirect URIs"\n4. Save and wait 1-2 minutes\n5. Then click OK to open the authorization URL`;
+                const callbackUrl = result.callback_url || window.location.origin + '/api/admin/drive/callback';
+                const instructions = `IMPORTANT: Before proceeding, make sure you have added this redirect URI in Google Cloud Console:\n\n${callbackUrl}\n\nSteps:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID\n3. Add the redirect URI above to "Authorized redirect URIs"\n4. Save and wait 1-2 minutes\n5. Then click OK to open the authorization URL`;
                 
                 if (confirm(instructions + '\n\nHave you added the redirect URI in Google Cloud Console?')) {
                     // Open in new window
@@ -339,9 +343,10 @@
             }
             
             // Check for common errors
+            const callbackUrl = window.location.origin + '/api/admin/drive/callback';
             let helpText = '';
             if (errorMsg.includes('redirect_uri_mismatch')) {
-                helpText = '\n\n❌ Redirect URI Mismatch:\nMake sure you have added:\nhttp://localhost:8000/api/admin/drive/callback\nto your Google Cloud Console OAuth credentials.';
+                helpText = `\n\n❌ Redirect URI Mismatch:\nMake sure you have added:\n${callbackUrl}\nto your Google Cloud Console OAuth credentials.`;
             } else if (errorMsg.includes('access_denied') || errorMsg.includes('403')) {
                 helpText = '\n\n❌ Access Denied (403):\nYour app is in "Testing" mode. You need to:\n1. Go to Google Cloud Console → OAuth consent screen\n2. Scroll to "Test users" section\n3. Click "+ ADD USERS"\n4. Add your email: controleddrugsalesdaimamerudda@gmail.com\n5. Click "ADD"\n6. Try authorization again';
             }

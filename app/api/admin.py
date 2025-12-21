@@ -128,6 +128,7 @@ async def get_drive_info(
 ):
     """Get Google Drive database info (admin only)"""
     import logging
+    from app.config import settings
     logger = logging.getLogger(__name__)
     
     # Force authentication check before getting info
@@ -138,6 +139,9 @@ async def get_drive_info(
     
     info = drive_manager.get_database_info()
     logger.info(f"🔍 Database info result: {info.get('error', 'No error')}")
+    
+    # Add callback URL to the response
+    info['callback_url'] = settings.GOOGLE_OAUTH_CALLBACK_URL
     
     return {
         "success": True,
@@ -150,11 +154,13 @@ async def get_authorization_url(
     drive_manager = Depends(get_drive_manager)
 ):
     """Get Google Drive authorization URL (admin only)"""
+    from app.config import settings
     try:
         auth_url = drive_manager.get_authorization_url()
         return {
             "success": True,
             "authorization_url": auth_url,
+            "callback_url": settings.GOOGLE_OAUTH_CALLBACK_URL,
             "message": "Visit this URL to authorize Google Drive access. After authorization, you'll be redirected back.",
             "instructions": "1. Copy the authorization_url\n2. Visit it in your browser\n3. Sign in with 2\n4. Authorize the app\n5. You'll be redirected back automatically"
         }
