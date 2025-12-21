@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+pharma_stock.db
+pharma_data.db
+
+# Cache and logs
+cache/
+logs/
+*.log
+
+# Credentials and tokens (IMPORTANT: Don't commit these!)
+google_credentials.json
+google_token.json
+oauth_flow_state.json
+*.json.bak
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+# User data (local only)
+users_db.json
+license_db.json
+refresh_status.json

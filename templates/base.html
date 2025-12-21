@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PharmaStock{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">🏥 PharmaStock</div>
+            <div class="nav-menu">
+                <a href="/dashboard" class="nav-link">Dashboard</a>
+                <a href="/stock-view" class="nav-link">Stock View</a>
+                <a href="/settings" class="nav-link">Settings</a>
+                <a href="/admin" class="nav-link" id="adminLink" style="display: none;">Admin</a>
+                <span class="nav-user" id="userUsername"></span>
+                <button onclick="logout()" class="btn-logout">Logout</button>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Data Freshness Notification -->
+    <div id="dataFreshnessNotification" class="data-freshness-notification" style="display: none;">
+        <div class="notification-content">
+            <span id="freshnessIcon" class="freshness-icon">📊</span>
+            <span id="freshnessMessage" class="freshness-message">Loading...</span>
+            <button id="refreshDataBtn" class="btn-refresh-small" onclick="triggerRefreshFromNotification()" style="display: none;">
+                🔄 Refresh Now
+            </button>
+        </div>
+    </div>
+    
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <style>
+        /* Data Freshness Notification Styles */
+        .data-freshness-notification {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: #fff;
+            border: 2px solid #007bff;
+            border-radius: 8px;
+            padding: 12px 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 300px;
+            max-width: 400px;
+            animation: slideInRight 0.3s ease-out;
+        }
+        
+        .data-freshness-notification.refreshing {
+            border-color: #ffc107;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        .data-freshness-notification.stale {
+            border-color: #dc3545;
+        }
+        
+        .data-freshness-notification.fresh {
+            border-color: #28a745;
+        }
+        
+        .notification-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .freshness-icon {
+            font-size: 20px;
+            animation: blink 1.5s ease-in-out infinite;
+        }
+        
+        .data-freshness-notification.refreshing .freshness-icon {
+            animation: spin 1s linear infinite;
+        }
+        
+        .freshness-message {
+            flex: 1;
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .btn-refresh-small {
+            padding: 4px 12px;
+            font-size: 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .btn-refresh-small:hover {
+            background: #0056b3;
+        }
+        
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);
+            }
+            50% {
+                box-shadow: 0 4px 20px rgba(255, 193, 7, 0.6);
+            }
+        }
+        
+        @keyframes blink {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+        
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+    
+    <script>
+        // Get token from localStorage (non-blocking)
+        (function() {
+            const token = localStorage.getItem('access_token');
+            const userUsername = localStorage.getItem('user_username');
+            const daysRemaining = localStorage.getItem('days_remaining');
+            const isAdmin = localStorage.getItem('is_admin') === 'true';
+            
+            if (userUsername) {
+                let displayText = userUsername;
+                if (daysRemaining) {
+                    displayText += ` (${daysRemaining} days)`;
+                }
+                const userElement = document.getElementById('userUsername');
+                if (userElement) {
+                    userElement.textContent = displayText;
+                }
+            }
+            
+            // Show/hide admin link based on admin status
+            const adminLink = document.getElementById('adminLink');
+            if (adminLink) {
+                if (isAdmin) {
+                    adminLink.style.display = '';
+                } else {
+                    adminLink.style.display = 'none';
+                }
+            }
+            
+            // Redirect to login if no token (only for protected pages)
+            // Skip redirect on login page itself
+            const currentPath = window.location.pathname;
+            if (!token && currentPath !== '/' && !currentPath.includes('login') && currentPath !== '/login') {
+                // Only redirect if we're on a protected page
+                if (currentPath.startsWith('/dashboard') || currentPath.startsWith('/admin') || 
+                    currentPath.startsWith('/settings') || currentPath.startsWith('/stock-view')) {
+                    window.location.href = '/';
+                }
+            }
+        })();
+        
+        function logout() {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('user_username');
+            localStorage.removeItem('is_admin');
+            localStorage.removeItem('days_remaining');
+            window.location.href = '/';
+        }
+        
+        // Data Freshness Notification System
+        let freshnessCheckInterval = null;
+        
+        async function updateDataFreshnessNotification() {
+            try {
+                const status = await apiRequest('/api/refresh/status');
+                const notification = document.getElementById('dataFreshnessNotification');
+                const icon = document.getElementById('freshnessIcon');
+                const message = document.getElementById('freshnessMessage');
+                const refreshBtn = document.getElementById('refreshDataBtn');
+                
+                if (!notification || !icon || !message) return;
+                
+                const isRefreshing = status.is_refreshing || false;
+                const dataAge = status.data_age || {};
+                const ageMessage = dataAge.message || 'Unknown';
+                const isStale = dataAge.is_stale || false;
+                
+                // Update notification based on state
+                notification.className = 'data-freshness-notification';
+                
+                if (isRefreshing) {
+                    notification.classList.add('refreshing');
+                    icon.textContent = '🔄';
+                    message.textContent = status.refresh_message || 'Refreshing data...';
+                    refreshBtn.style.display = 'none';
+                    notification.style.display = 'block';
+                } else if (dataAge.age === null || ageMessage === 'Never updated') {
+                    notification.classList.add('stale');
+                    icon.textContent = '⚠️';
+                    message.textContent = 'Data never updated';
+                    refreshBtn.style.display = 'inline-block';
+                    notification.style.display = 'block';
+                } else if (isStale) {
+                    notification.classList.add('stale');
+                    icon.textContent = '⚠️';
+                    message.textContent = `Using data from ${ageMessage}`;
+                    refreshBtn.style.display = 'inline-block';
+                    notification.style.display = 'block';
+                } else {
+                    notification.classList.add('fresh');
+                    icon.textContent = '✅';
+                    message.textContent = `Data updated ${ageMessage}`;
+                    refreshBtn.style.display = 'none';
+                    notification.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error updating freshness notification:', error);
+            }
+        }
+        
+        async function triggerRefreshFromNotification() {
+            try {
+                const result = await apiRequest('/api/refresh/all', {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                
+                if (result.status === 'started') {
+                    // Notification will update automatically via polling
+                    updateDataFreshnessNotification();
+                }
+            } catch (error) {
+                console.error('Error triggering refresh:', error);
+                alert('Failed to start refresh: ' + (error.message || 'Unknown error'));
+            }
+        }
+        
+        // Start freshness checking when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            updateDataFreshnessNotification();
+            // Check every 10 seconds
+            freshnessCheckInterval = setInterval(updateDataFreshnessNotification, 10000);
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (freshnessCheckInterval) {
+                clearInterval(freshnessCheckInterval);
+            }
+        });
+        
+        // API request helper with timeout
+        async function apiRequest(url, options = {}) {
+            const token = localStorage.getItem('access_token');
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+            
+            // Add timeout to prevent hanging (longer for large queries)
+            const controller = new AbortController();
+            const isLargeQuery = url.includes('/stock/data') || url.includes('/dashboard/priority-items') || url.includes('/dashboard/new-arrivals');
+            const timeout = isLargeQuery ? 120000 : 30000; // 2 minutes for large queries, 30 seconds for others
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers,
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                // Handle authentication errors
+                if (response.status === 401 || response.status === 403) {
+                    console.warn('Authentication error:', response.status, url);
+                    // Get error details
+                    const errorData = await response.json().catch(() => ({ detail: 'Authentication required' }));
+                    
+                    // For admin pages, don't auto-logout - let them show error message
+                    if (window.location.pathname.includes('/admin')) {
+                        throw new Error(errorData.detail || `Authentication error: ${response.status}`);
+                    }
+                    
+                    // For other pages, logout if we have a token (means it expired)
+                    if (token) {
+                        logout();
+                    }
+                    return null;
+                }
+                
+                // Handle other errors
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    console.error('API error:', response.status, errorData);
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                clearTimeout(timeoutId);
+                if (error.name === 'AbortError') {
+                    console.error('Request timeout:', url);
+                    throw new Error('Request timed out. Please try again.');
+                }
+                throw error;
+            }
+        }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
+

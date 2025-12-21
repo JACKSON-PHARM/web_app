@@ -1,0 +1,1694 @@
+{% extends "base.html" %}
+
+{% block title %}Stock View - PharmaStock{% endblock %}
+
+{% block extra_css %}
+<style>
+    .data-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        width: 100%;
+    }
+    
+    .data-table th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        user-select: none;
+        background: #f8f9fa !important;
+        border: 1px solid #dee2e6;
+        padding: 8px;
+        text-align: left;
+        font-weight: 600;
+        min-width: 100px;
+    }
+    
+    .table-container {
+        position: relative;
+        overflow-y: auto;
+        overflow-x: auto;
+        max-height: calc(100vh - 300px);
+    }
+    
+    .data-table td {
+        border: 1px solid #dee2e6;
+        padding: 8px;
+    }
+    
+    .data-table tbody tr:hover {
+        background: #f8f9fa;
+    }
+    
+    .resizable-col {
+        position: relative;
+        cursor: col-resize;
+    }
+    
+    .filter-icon {
+        cursor: pointer;
+        font-size: 10px;
+        margin-left: 5px;
+        opacity: 0.6;
+    }
+    
+    .filter-icon:hover {
+        opacity: 1;
+    }
+    
+    .item-checkbox {
+        cursor: pointer;
+        width: 18px;
+        height: 18px;
+    }
+    
+    .stock-zero {
+        color: #dc3545 !important;
+        font-weight: bold;
+    }
+    
+    .stock-low {
+        color: #ffc107 !important;
+        font-weight: bold;
+    }
+    
+    .stock-good {
+        color: #28a745 !important;
+    }
+    
+    .abc-class-a {
+        color: #dc3545 !important;
+        font-weight: bold;
+    }
+    
+    .abc-class-b {
+        color: #ffc107 !important;
+        font-weight: bold;
+    }
+    
+    .abc-class-c {
+        color: #6c757d !important;
+    }
+    
+    .stock-pct-critical {
+        background: #ffcccc !important;
+        color: #cc0000 !important;
+        font-weight: bold;
+    }
+    
+    .stock-pct-warning {
+        background: #fff4cc !important;
+        color: #996600 !important;
+        font-weight: bold;
+    }
+    
+    .stock-pct-good {
+        background: #ccffcc !important;
+        color: #006600 !important;
+    }
+    
+    .order-qty-input {
+        transition: background-color 0.2s, border-color 0.2s;
+    }
+    
+    .order-qty-input:disabled {
+        background-color: #e9ecef !important;
+        cursor: not-allowed !important;
+        opacity: 0.7;
+    }
+    
+    .order-qty-input:enabled {
+        background-color: #fff !important;
+        cursor: text !important;
+        border-color: #007bff !important;
+    }
+    
+    .order-qty-input:enabled:focus {
+        border-color: #0056b3 !important;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        outline: none;
+    }
+    
+    /* Recent order color shading */
+    .stock-item-recent {
+        background: #d4edda !important;
+    }
+    
+    /* Procurement Dialog Styles */
+    .procurement-modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        overflow: auto;
+    }
+    
+    .procurement-modal-content {
+        background-color: #fefefe;
+        margin: 5% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 600px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .procurement-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #dee2e6;
+    }
+    
+    .procurement-modal-header h2 {
+        margin: 0;
+        color: #2c3e50;
+    }
+    
+    .close-procurement-modal {
+        color: #aaa;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        border: none;
+        background: none;
+    }
+    
+    .close-procurement-modal:hover {
+        color: #000;
+    }
+    
+    .procurement-form-group {
+        margin-bottom: 20px;
+    }
+    
+    .procurement-form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 600;
+        color: #495057;
+    }
+    
+    .procurement-form-group input[type="radio"] {
+        margin-right: 8px;
+    }
+    
+    .procurement-form-group select,
+    .procurement-form-group input[type="text"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+    
+    .procurement-form-group select:disabled {
+        background-color: #e9ecef;
+        cursor: not-allowed;
+    }
+    
+    .supplier-search-container {
+        position: relative;
+    }
+    
+    .supplier-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #ced4da;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 100;
+        display: none;
+    }
+    
+    .supplier-dropdown-item {
+        padding: 10px;
+        cursor: pointer;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .supplier-dropdown-item:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .supplier-dropdown-item.selected {
+        background-color: #007bff;
+        color: white;
+    }
+    
+    .procurement-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid #dee2e6;
+    }
+    
+    .procurement-info-text {
+        font-size: 12px;
+        color: #6c757d;
+        margin-left: 24px;
+        margin-top: -5px;
+        margin-bottom: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <h1>📦 Stock View</h1>
+    
+    <div class="card">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Target Branch (View Stock For):</label>
+                <select id="branchSelect">
+                    <option>Loading...</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Source Branch (Supply From):</label>
+                <select id="sourceBranchSelect">
+                    <option>Loading...</option>
+                </select>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button onclick="loadStockView()" class="btn btn-primary">Load Stock View</button>
+            <button onclick="runStockViewProcurementBot()" class="btn btn-success" id="stockViewProcurementBtn" style="display: none;">
+                🤖 Order Selected Items
+            </button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="table-container" style="overflow-x: auto; overflow-y: auto; max-height: calc(100vh - 300px); position: relative;">
+            <table id="stockTable" class="data-table">
+                <thead id="stockTableHead">
+                    <tr>
+                        <th style="width: 40px; min-width: 40px;"><input type="checkbox" id="selectAllStockView" onchange="toggleAllStockViewItems(this.checked)"></th>
+                        <th>Loading...</th>
+                    </tr>
+                </thead>
+                <tbody id="stockTableBody">
+                    <tr>
+                        <td colspan="10" class="loading">Select a branch and click Load Stock View</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Procurement Mode Selection Modal -->
+<div id="procurementModal" class="procurement-modal">
+    <div class="procurement-modal-content">
+        <div class="procurement-modal-header">
+            <h2>Select Procurement Mode</h2>
+            <button class="close-procurement-modal" onclick="closeProcurementModal()">&times;</button>
+        </div>
+        
+        <form id="procurementForm">
+            <div class="procurement-form-group">
+                <label>Order Type:</label>
+                <div>
+                    <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <input type="radio" name="orderMode" value="purchase_order" checked onchange="toggleProcurementOptions()">
+                        <span style="margin-left: 8px;">Purchase Order</span>
+                    </label>
+                    <div class="procurement-info-text">• Orders from supplier</div>
+                    
+                    <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <input type="radio" name="orderMode" value="branch_order" onchange="toggleProcurementOptions()">
+                        <span style="margin-left: 8px;">Branch Order</span>
+                    </label>
+                    <div class="procurement-info-text">• Orders from another branch (inter-branch transfer)</div>
+                </div>
+            </div>
+            
+            <!-- Supplier Selection (for Purchase Order) -->
+            <div class="procurement-form-group" id="supplierSelectionGroup">
+                <label for="supplierSearch">Supplier (Purchase Order):</label>
+                <div class="supplier-search-container">
+                    <input type="text" id="supplierSearch" placeholder="Search supplier by name or code..." 
+                           autocomplete="off" oninput="searchSuppliers(this.value)" 
+                           onfocus="showSupplierDropdown()" onblur="hideSupplierDropdown()">
+                    <div id="supplierDropdown" class="supplier-dropdown"></div>
+                </div>
+                <input type="hidden" id="selectedSupplierCode" value="">
+                <input type="hidden" id="selectedSupplierName" value="">
+                <div id="selectedSupplierDisplay" style="margin-top: 8px; padding: 8px; background: #e9ecef; border-radius: 4px; display: none;">
+                    <strong>Selected:</strong> <span id="selectedSupplierText"></span>
+                </div>
+            </div>
+            
+            <!-- Destination Branch Selection (for Branch Order) -->
+            <div class="procurement-form-group" id="branchSelectionGroup" style="display: none;">
+                <label for="destinationBranchSelect">Destination Branch (Branch Order):</label>
+                <select id="destinationBranchSelect">
+                    <option value="">-- Select Branch --</option>
+                </select>
+            </div>
+            
+            <div class="procurement-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeProcurementModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmProcurementOrder()">Create Order</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    window.stockViewData = [];
+    
+    window.addEventListener('DOMContentLoaded', () => {
+        loadBranches();
+        
+        // Add click handler for Load Stock View button
+        const loadBtn = document.querySelector('button[onclick="loadStockView()"]');
+        if (loadBtn) {
+            loadBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                console.log('Load Stock View button clicked');
+                loadStockView();
+            });
+        }
+        
+        // Also check if button exists by text content
+        const buttons = document.querySelectorAll('button');
+        buttons.forEach(btn => {
+            if (btn.textContent.includes('Load Stock View')) {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    console.log('Load Stock View button clicked (by text)');
+                    loadStockView();
+                });
+            }
+        });
+    });
+    
+    async function loadBranches() {
+        const branchSelect = document.getElementById('branchSelect');
+        const sourceSelect = document.getElementById('sourceBranchSelect');
+        
+        // Show loading state
+        if (branchSelect) branchSelect.innerHTML = '<option value="">Loading...</option>';
+        if (sourceSelect) sourceSelect.innerHTML = '<option value="">Loading...</option>';
+        
+        try {
+            console.log('Loading branches...');
+            const data = await apiRequest('/api/dashboard/branches');
+            console.log('Branches API response:', data);
+            
+            if (data && data.success && data.data && data.data.length > 0) {
+                console.log(`Found ${data.data.length} branches`);
+                [branchSelect, sourceSelect].forEach(select => {
+                    if (select) {
+                        select.innerHTML = '<option value="">Select branch...</option>';
+                        data.data.forEach(branch => {
+                            const option = document.createElement('option');
+                            const branchName = branch.branch_name || branch.branch || 'Unknown';
+                            const company = branch.company || 'Unknown';
+                            const value = `${branchName}|${company}`;
+                            option.value = value;
+                            option.textContent = `${branchName} (${company})`;
+                            select.appendChild(option);
+                        });
+                    }
+                });
+                
+                // Set defaults
+                const defaultBranch = 'BABA DOGO HQ|NILA';
+                if (branchSelect && branchSelect.querySelector(`option[value="${defaultBranch}"]`)) {
+                    branchSelect.value = defaultBranch;
+                    console.log('Set default target branch:', defaultBranch);
+                }
+                if (sourceSelect && sourceSelect.querySelector(`option[value="${defaultBranch}"]`)) {
+                    sourceSelect.value = defaultBranch;
+                    console.log('Set default source branch:', defaultBranch);
+                }
+                
+                // If no default was set, try to set first available branch
+                if (branchSelect && !branchSelect.value && branchSelect.options.length > 1) {
+                    branchSelect.selectedIndex = 1;
+                    console.log('Set first available branch as default');
+                }
+                if (sourceSelect && !sourceSelect.value && sourceSelect.options.length > 1) {
+                    sourceSelect.selectedIndex = 1;
+                    console.log('Set first available source branch as default');
+                }
+                
+                // Add change listeners to auto-load when branches change
+                if (branchSelect) {
+                    branchSelect.addEventListener('change', () => {
+                        console.log('Target branch changed to:', branchSelect.value);
+                        // Don't auto-load, let user click button
+                    });
+                }
+                if (sourceSelect) {
+                    sourceSelect.addEventListener('change', () => {
+                        console.log('Source branch changed to:', sourceSelect.value);
+                        // Don't auto-load, let user click button
+                    });
+                }
+            } else {
+                // Error loading branches
+                const errorMsg = data && data.error ? data.error : 'No branches found';
+                console.error('Failed to load branches:', errorMsg, data);
+                if (branchSelect) branchSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+                if (sourceSelect) sourceSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+                
+                // Try fallback: hardcoded branches
+                console.log('Attempting fallback with hardcoded branches...');
+                const fallbackBranches = [
+                    { branch_name: 'BABA DOGO HQ', company: 'NILA' },
+                    { branch_name: 'DAIMA MERU WHOLESALE', company: 'DAIMA' },
+                    { branch_name: 'DAIMA MERU RETAIL', company: 'DAIMA' }
+                ];
+                [branchSelect, sourceSelect].forEach(select => {
+                    if (select) {
+                        select.innerHTML = '<option value="">Select branch...</option>';
+                        fallbackBranches.forEach(branch => {
+                            const option = document.createElement('option');
+                            const value = `${branch.branch_name}|${branch.company}`;
+                            option.value = value;
+                            option.textContent = `${branch.branch_name} (${branch.company})`;
+                            select.appendChild(option);
+                        });
+                    }
+                });
+                if (branchSelect && branchSelect.options.length > 1) {
+                    branchSelect.selectedIndex = 1;
+                }
+                if (sourceSelect && sourceSelect.options.length > 1) {
+                    sourceSelect.selectedIndex = 1;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading branches:', error);
+            const errorMsg = error.message || 'Failed to load';
+            if (branchSelect) branchSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+            if (sourceSelect) sourceSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+            
+            // Try fallback on error too
+            console.log('Attempting fallback with hardcoded branches after error...');
+            const fallbackBranches = [
+                { branch_name: 'BABA DOGO HQ', company: 'NILA' },
+                { branch_name: 'DAIMA MERU WHOLESALE', company: 'DAIMA' },
+                { branch_name: 'DAIMA MERU RETAIL', company: 'DAIMA' }
+            ];
+            [branchSelect, sourceSelect].forEach(select => {
+                if (select) {
+                    select.innerHTML = '<option value="">Select branch...</option>';
+                    fallbackBranches.forEach(branch => {
+                        const option = document.createElement('option');
+                        const value = `${branch.branch_name}|${branch.company}`;
+                        option.value = value;
+                        option.textContent = `${branch.branch_name} (${branch.company})`;
+                        select.appendChild(option);
+                    });
+                }
+            });
+            if (branchSelect && branchSelect.options.length > 1) {
+                branchSelect.selectedIndex = 1;
+            }
+            if (sourceSelect && sourceSelect.options.length > 1) {
+                sourceSelect.selectedIndex = 1;
+            }
+        }
+    }
+    
+    // Date formatting function
+    function formatDate(dateString) {
+        if (!dateString || dateString === 'Never' || dateString === null || dateString === '') {
+            return 'Never';
+        }
+        
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) {
+                return 'Invalid Date';
+            }
+            
+            // Format as "dd mmm, yy" (e.g., "15 Dec, 24")
+            const day = date.getDate();
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const year = date.getFullYear().toString().slice(-2);
+            
+            return `${day} ${month}, ${year}`;
+        } catch (e) {
+            return 'Invalid Date';
+        }
+    }
+    
+    async function loadStockView() {
+        const branchValue = document.getElementById('branchSelect').value;
+        const sourceBranchValue = document.getElementById('sourceBranchSelect').value || branchValue;
+        
+        if (!branchValue) {
+            alert('Please select a target branch');
+            return;
+        }
+        
+        // Show loading indicator
+        const tbody = document.getElementById('stockTableBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="20" class="empty">Loading... (This may take a moment for large databases)</td></tr>';
+        }
+        
+        // Trim whitespace from branch and company names
+        const [branch, company] = branchValue.split('|').map(s => s.trim());
+        const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
+        
+        try {
+            console.log('Loading stock view for:', branch, company, 'from:', sourceBranch, sourceCompany);
+            const apiUrl = `/api/stock/data?branch_name=${encodeURIComponent(branch)}&branch_company=${encodeURIComponent(company)}&source_branch_name=${encodeURIComponent(sourceBranch)}&source_branch_company=${encodeURIComponent(sourceCompany)}`;
+            console.log('API URL:', apiUrl);
+            
+            const data = await apiRequest(apiUrl);
+            console.log('Stock view API response:', data);
+            
+            if (data && data.success && data.data && data.data.length > 0) {
+                console.log(`Found ${data.data.length} stock items`);
+                window.stockViewData = data.data;
+                
+                // Show procurement button
+                const btn = document.getElementById('stockViewProcurementBtn');
+                if (btn) btn.style.display = 'inline-block';
+                
+                // Define column order and display names (all units in packs)
+                const columnOrder = [
+                    { key: 'item_code', label: 'Item Code' },
+                    { key: 'item_name', label: 'Item Name' },
+                    { key: 'supplier_stock', label: 'Source Stock (Packs)', isPack: true },
+                    { key: 'branch_stock', label: 'Branch Stock (Packs)', isPack: true },
+                    { key: 'stock_level_pct', label: 'Stock Level %' },
+                    { key: 'abc_class', label: 'ABC Class' },
+                    { key: 'amc', label: 'AMC (Packs)', isPack: true },
+                    { key: 'order_quantity', label: 'Order Qty (Packs)', isPack: true, isEditable: true },
+                    { key: 'last_order_date', label: 'Last Order Date' },
+                    { key: 'last_order_quantity', label: 'Last Order Qty (Packs)', isPack: true },
+                    { key: 'last_order_doc', label: 'Last Order Doc' },
+                    { key: 'last_invoice_date', label: 'Last Invoice Date' },
+                    { key: 'last_invoice_quantity', label: 'Last Invoice Qty (Packs)', isPack: true },
+                    { key: 'last_invoice_doc', label: 'Last Invoice Doc' },
+                    { key: 'last_supply_date', label: 'Last Supply Date' },
+                    { key: 'last_supply_quantity', label: 'Last Supply Qty (Packs)', isPack: true },
+                    { key: 'last_supply_doc', label: 'Last Supply Doc' },
+                    { key: 'last_grn_date', label: 'Last GRN Date' },
+                    { key: 'last_grn_quantity', label: 'Last GRN Qty (Packs)', isPack: true },
+                    { key: 'last_grn_doc', label: 'Last GRN Doc' },
+                    { key: 'stock_comment', label: 'Reason' }
+                ];
+                
+                // Build table headers with checkbox
+                const thead = document.getElementById('stockTableHead');
+                thead.innerHTML = '<tr>' + 
+                    '<th style="width: 40px; min-width: 40px; position: sticky; left: 0; z-index: 11; background: #f8f9fa !important;"><input type="checkbox" id="selectAllStockView" onchange="toggleAllStockViewItems(this.checked)"></th>' +
+                    columnOrder.map(col => `<th class="resizable-col" style="min-width: 100px; position: sticky; top: 0; z-index: 10; background: #f8f9fa !important;">${col.label} <span class="filter-icon" onclick="showFilter('stock', '${col.key}', event)">🔽</span></th>`).join('') + 
+                    '</tr>';
+                
+                // Build table body with checkboxes and color coding
+                const tbody = document.getElementById('stockTableBody');
+                tbody.innerHTML = data.data.map((row, index) => {
+                    let rowHtml = '<tr>';
+                    
+                    // Checkbox column (sticky)
+                    rowHtml += `<td style="position: sticky; left: 0; z-index: 1; background: white;"><input type="checkbox" class="item-checkbox" data-index="${index}" onchange="toggleOrderQuantityInput(${index}, this.checked)"></td>`;
+                    
+                    // Get pack_size for conversions
+                    const packSize = parseFloat(row['pack_size']) || 1;
+                    
+                    // Data columns in specified order
+                    columnOrder.forEach(col => {
+                        const header = col.key;
+                        const value = row[header] || '';
+                        let cellClass = '';
+                        let cellValue = value;
+                        
+                        // Handle editable order quantity column
+                        if (col.isEditable && header === 'order_quantity') {
+                            // Get AMC value in packs as default
+                            const amcValue = row['amc'] || 0;
+                            const amcPieces = parseFloat(amcValue) || 0;
+                            const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                            const defaultValue = amcPacks > 0 ? amcPacks.toFixed(2) : '0.00';
+                            
+                            // Create editable input field
+                            rowHtml += `<td style="padding: 4px;">
+                                <input type="number" 
+                                       class="order-qty-input" 
+                                       data-index="${index}"
+                                       data-item-code="${row['item_code'] || ''}"
+                                       data-default-value="${defaultValue}"
+                                       value="${defaultValue}"
+                                       min="0"
+                                       step="0.01"
+                                       style="width: 100%; padding: 4px; border: 1px solid #ced4da; border-radius: 4px; text-align: right; background-color: #e9ecef; cursor: pointer;"
+                                       disabled
+                                       title="Click to edit quantity (auto-selects item)"
+                                       onfocus="enableStockOrderQuantityInput(${index})"
+                                       onclick="enableStockOrderQuantityInput(${index})"
+                                       onchange="updateOrderQuantity(${index}, this.value)">
+                            </td>`;
+                            return; // Skip normal cell rendering for this column
+                        }
+                        
+                        // Format based on column type
+                        if (col.isPack) {
+                            // Convert pieces to packs
+                            const piecesVal = parseFloat(value) || 0;
+                            const packsVal = packSize > 0 ? piecesVal / packSize : 0;
+                            cellValue = packsVal.toFixed(2);
+                            
+                            // Color coding for stock columns
+                            if (header === 'supplier_stock' || header === 'branch_stock') {
+                                if (packsVal === 0) {
+                                    cellClass = 'stock-zero';
+                                } else if (packsVal < 10) {
+                                    cellClass = 'stock-low';
+                                } else {
+                                    cellClass = 'stock-good';
+                                }
+                            }
+                        } else if (header === 'abc_class') {
+                            const abc = String(value).trim().toUpperCase();
+                            cellValue = abc;
+                            if (abc === 'A') {
+                                cellClass = 'abc-class-a';
+                            } else if (abc === 'B') {
+                                cellClass = 'abc-class-b';
+                            } else if (abc === 'C') {
+                                cellClass = 'abc-class-c';
+                            }
+                        } else if (header === 'stock_level_pct') {
+                            const pct = parseFloat(value) || 0;
+                            cellValue = (pct * 100).toFixed(1) + '%';
+                            if (pct < 0.2) {
+                                cellClass = 'stock-pct-critical';
+                            } else if (pct < 0.3) {
+                                cellClass = 'stock-pct-warning';
+                            } else {
+                                cellClass = 'stock-pct-good';
+                            }
+                        } else if (header.includes('date') && value) {
+                            cellValue = formatDate(value);
+                        } else if (!value || value === 'None' || value === null) {
+                            cellValue = '-';
+                        }
+                        
+                        rowHtml += `<td class="${cellClass}">${cellValue}</td>`;
+                    });
+                    
+                    // Check if ordered within last 7 days - apply green background to entire row
+                    const lastOrderDateRaw = row['last_order_date'] || null;
+                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null && lastOrderDateRaw !== '-') {
+                        try {
+                            const orderDate = new Date(lastOrderDateRaw);
+                            if (!isNaN(orderDate.getTime())) {
+                                const daysAgo = (new Date() - orderDate) / (1000 * 60 * 60 * 24);
+                                if (daysAgo >= 0 && daysAgo <= 7) {
+                                    rowHtml = rowHtml.replace('<tr>', '<tr class="stock-item-recent">');
+                                }
+                            }
+                        } catch (e) {
+                            // Invalid date format, skip
+                        }
+                    }
+                    
+                    rowHtml += '</tr>';
+                    return rowHtml;
+                }).join('');
+            } else {
+                console.warn('No stock data returned:', data);
+                const tbody = document.getElementById('stockTableBody');
+                if (tbody) {
+                    let message = 'No stock data found';
+                    if (data && data.error) {
+                        message = `Error: ${data.error}`;
+                        console.error('API error:', data.error);
+                    } else if (data && data.success && (!data.data || data.data.length === 0)) {
+                        message = `No stock records found for "${branch}" (${company}). Try selecting "BABA DOGO HQ" which has stock data.`;
+                        console.warn('Empty data array returned');
+                        console.warn('Tip: Check server logs to see which branches have stock data');
+                    }
+                    tbody.innerHTML = `<tr><td colspan="20" class="empty">${message}</td></tr>`;
+                }
+                const btn = document.getElementById('stockViewProcurementBtn');
+                if (btn) btn.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Error loading stock view:', error);
+            const tbody = document.getElementById('stockTableBody');
+            if (tbody) {
+                let errorMsg = 'Unknown error';
+                if (error.name === 'AbortError') {
+                    errorMsg = 'Request timed out. The database is large and may take time to query. Please try again.';
+                } else if (error.message) {
+                    errorMsg = error.message;
+                }
+                // Check if data exists (might be undefined if request failed)
+                if (typeof data !== 'undefined' && data && data.error) {
+                    errorMsg = data.error;
+                    if (data.traceback) {
+                        console.error('Traceback:', data.traceback);
+                    }
+                }
+                tbody.innerHTML = '<tr><td colspan="10" class="empty">Error loading data: ' + errorMsg + '</td></tr>';
+            }
+        }
+    }
+    
+    function toggleAllStockViewItems(checked) {
+        const checkboxes = document.querySelectorAll('#stockTable .item-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = checked;
+            const index = parseInt(cb.dataset.index);
+            toggleOrderQuantityInput(index, checked);
+        });
+    }
+    
+    function enableStockOrderQuantityInput(index) {
+        const input = document.querySelector(`.order-qty-input[data-index="${index}"]`);
+        const checkbox = document.querySelector(`#stockTable .item-checkbox[data-index="${index}"]`);
+        
+        if (input && input.disabled) {
+            // Enable input and check checkbox
+            input.disabled = false;
+            input.style.backgroundColor = '#fff';
+            input.style.cursor = 'text';
+            input.style.borderColor = '#007bff';
+            input.title = 'Enter quantity in packs';
+            
+            if (checkbox) {
+                checkbox.checked = true;
+            }
+            
+            // Select text for easy editing
+            setTimeout(() => input.select(), 10);
+        }
+    }
+    
+    function toggleOrderQuantityInput(index, enabled) {
+        const input = document.querySelector(`.order-qty-input[data-index="${index}"]`);
+        const checkbox = document.querySelector(`#stockTable .item-checkbox[data-index="${index}"]`);
+        
+        if (input) {
+            if (enabled) {
+                // Enable input
+                input.disabled = false;
+                input.style.backgroundColor = '#fff';
+                input.style.cursor = 'text';
+                input.style.borderColor = '#007bff';
+                input.title = 'Enter quantity in packs';
+                input.classList.remove('input-disabled');
+                input.classList.add('input-enabled');
+            } else {
+                // Disable input and reset to default value
+                input.disabled = true;
+                input.style.backgroundColor = '#e9ecef';
+                input.style.cursor = 'pointer';
+                input.style.borderColor = '#ced4da';
+                input.title = 'Click to edit quantity (auto-selects item)';
+                input.classList.remove('input-enabled');
+                input.classList.add('input-disabled');
+                
+                // Reset to default value
+                const defaultValue = input.dataset.defaultValue || '0.00';
+                input.value = defaultValue;
+                
+                // Clear custom quantity from data
+                if (window.stockViewData && window.stockViewData[index]) {
+                    delete window.stockViewData[index].custom_order_quantity;
+                }
+            }
+        }
+        
+        // Ensure checkbox state matches
+        if (checkbox) {
+            checkbox.checked = enabled;
+        }
+    }
+    
+    function updateOrderQuantity(index, value) {
+        const checkbox = document.querySelector(`#stockTable .item-checkbox[data-index="${index}"]`);
+        
+        // Ensure checkbox is checked when quantity is updated
+        if (checkbox && !checkbox.checked) {
+            checkbox.checked = true;
+        }
+        
+        // Store the custom quantity in the data array
+        if (window.stockViewData && window.stockViewData[index]) {
+            const quantity = parseFloat(value) || 0;
+            window.stockViewData[index].custom_order_quantity = quantity;
+            console.log(`Updated order quantity for item ${index}: ${quantity} packs`);
+        }
+    }
+    
+    // Store current sort state
+    let currentSort = { column: null, direction: null };
+    
+    function showFilter(tableType, column, event) {
+        if (event) {
+            event.stopPropagation();
+        }
+        
+        // Create dropdown menu
+        const menu = document.createElement('div');
+        menu.style.cssText = 'position: absolute; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 1000; padding: 5px 0; min-width: 200px;';
+        
+        // Determine column type
+        const isDateColumn = column.toLowerCase().includes('date') || column.toLowerCase().includes('time');
+        const isNumericColumn = column.toLowerCase().includes('stock') || column.toLowerCase().includes('amc') || 
+                               column.toLowerCase().includes('level') || column.toLowerCase().includes('pct') ||
+                               column.toLowerCase().includes('pieces') || column.toLowerCase().includes('packs');
+        
+        // Add sort options
+        const options = [];
+        
+        if (isDateColumn) {
+            options.push({ label: '🔼 Newest to Oldest', value: 'desc' });
+            options.push({ label: '🔽 Oldest to Newest', value: 'asc' });
+        } else if (isNumericColumn) {
+            options.push({ label: '🔢 High to Low', value: 'desc' });
+            options.push({ label: '🔢 Low to High', value: 'asc' });
+        } else {
+            options.push({ label: '🔤 A to Z', value: 'asc' });
+            options.push({ label: '🔤 Z to A', value: 'desc' });
+        }
+        
+        options.push({ label: '❌ Clear Sort', value: 'clear' });
+        
+        // Store closeMenu handler so we can remove it
+        let closeMenuHandler = null;
+        
+        options.forEach(opt => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding: 8px 15px; cursor: pointer; font-size: 14px;';
+            item.textContent = opt.label;
+            item.onmouseover = () => item.style.background = '#f0f0f0';
+            item.onmouseout = () => item.style.background = 'white';
+            item.onclick = (e) => {
+                e.stopPropagation(); // Prevent event from bubbling to document
+                // Remove event listener first
+                if (closeMenuHandler) {
+                    document.removeEventListener('click', closeMenuHandler);
+                    closeMenuHandler = null;
+                }
+                // Remove menu if it still exists
+                if (menu && menu.parentNode) {
+                    document.body.removeChild(menu);
+                }
+                // Execute sort
+                if (opt.value === 'clear') {
+                    sortTable(tableType, column, null);
+                } else {
+                    sortTable(tableType, column, opt.value);
+                }
+            };
+            menu.appendChild(item);
+        });
+        
+        // Position menu near click
+        if (event) {
+            const rect = event.target.getBoundingClientRect();
+            menu.style.left = rect.left + 'px';
+            menu.style.top = (rect.bottom + 5) + 'px';
+        } else {
+            menu.style.left = '50%';
+            menu.style.top = '50%';
+        }
+        
+        document.body.appendChild(menu);
+        
+        // Close menu when clicking outside
+        setTimeout(() => {
+            closeMenuHandler = (e) => {
+                // Check if menu still exists and if click is outside menu
+                if (menu && menu.parentNode && !menu.contains(e.target) && e.target !== event?.target) {
+                    document.body.removeChild(menu);
+                    document.removeEventListener('click', closeMenuHandler);
+                    closeMenuHandler = null;
+                }
+            };
+            document.addEventListener('click', closeMenuHandler);
+        }, 100);
+    }
+    
+    function sortTable(tableType, column, direction) {
+        let tbody, dataArray, dataKey;
+        
+        if (tableType === 'stock') {
+            tbody = document.getElementById('stockTableBody');
+            dataArray = window.stockViewData;
+            dataKey = 'stockViewData';
+        } else {
+            return; // Handle other table types if needed
+        }
+        
+        if (!tbody || !dataArray || dataArray.length === 0) {
+            console.warn('Cannot sort: tbody, dataArray, or data is missing');
+            return;
+        }
+        
+        console.log(`Sorting by column: ${column}, direction: ${direction}`);
+        
+        // Clear sort
+        if (!direction) {
+            currentSort = { column: null, direction: null };
+            // Reload original data
+            loadStockView();
+            return;
+        }
+        
+        // Store sort state
+        currentSort = { column, direction };
+        
+        // Define column order (same as loadStockView, all units in packs)
+        const columnOrder = [
+            { key: 'item_code', label: 'Item Code' },
+            { key: 'item_name', label: 'Item Name' },
+            { key: 'supplier_stock', label: 'Source Stock (Packs)', isPack: true },
+            { key: 'branch_stock', label: 'Branch Stock (Packs)', isPack: true },
+            { key: 'stock_level_pct', label: 'Stock Level %' },
+            { key: 'abc_class', label: 'ABC Class' },
+            { key: 'amc', label: 'AMC (Packs)', isPack: true },
+            { key: 'order_quantity', label: 'Order Qty (Packs)', isPack: true, isEditable: true },
+            { key: 'last_order_date', label: 'Last Order Date' },
+            { key: 'last_order_quantity', label: 'Last Order Qty (Packs)', isPack: true },
+            { key: 'last_order_doc', label: 'Last Order Doc' },
+            { key: 'last_invoice_date', label: 'Last Invoice Date' },
+            { key: 'last_invoice_quantity', label: 'Last Invoice Qty (Packs)', isPack: true },
+            { key: 'last_invoice_doc', label: 'Last Invoice Doc' },
+            { key: 'last_supply_date', label: 'Last Supply Date' },
+            { key: 'last_supply_quantity', label: 'Last Supply Qty (Packs)', isPack: true },
+            { key: 'last_supply_doc', label: 'Last Supply Doc' },
+            { key: 'last_grn_date', label: 'Last GRN Date' },
+            { key: 'last_grn_quantity', label: 'Last GRN Qty (Packs)', isPack: true },
+            { key: 'last_grn_doc', label: 'Last GRN Doc' },
+            { key: 'stock_comment', label: 'Reason' }
+        ];
+        
+        // Find column definition for pack conversion
+        const colDef = columnOrder.find(col => col.key === column);
+        const isPackColumn = colDef && colDef.isPack;
+        
+        // Determine column type
+        const isDateColumn = column.toLowerCase().includes('date') || column.toLowerCase().includes('time');
+        const isNumericColumn = column.toLowerCase().includes('stock') || column.toLowerCase().includes('amc') || 
+                               column.toLowerCase().includes('level') || column.toLowerCase().includes('pct') ||
+                               column.toLowerCase().includes('pieces') || column.toLowerCase().includes('packs') ||
+                               column.toLowerCase().includes('quantity');
+        
+        console.log(`Sorting by column: ${column}, direction: ${direction}`);
+        console.log(`Column type - isDate: ${isDateColumn}, isNumeric: ${isNumericColumn}, isPack: ${isPackColumn}`);
+        console.log(`Sample data keys:`, dataArray.length > 0 ? Object.keys(dataArray[0]) : 'No data');
+        console.log(`Sample value for column '${column}':`, dataArray.length > 0 ? dataArray[0][column] : 'No data');
+        
+        // Helper function to check if value is blank/null/empty
+        const isBlank = (val) => {
+            return val === null || val === undefined || val === '' || val === '-' || val === 'Never' || 
+                   (typeof val === 'string' && val.trim() === '');
+        };
+        
+        // Sort data array
+        const sortedData = [...dataArray].sort((a, b) => {
+            // Get raw values from data objects - try multiple ways to find the column
+            let aVal = a[column];
+            let bVal = b[column];
+            
+            // If not found, try case-insensitive search
+            if (aVal === undefined || aVal === null || aVal === '') {
+                const key = Object.keys(a).find(k => k.toLowerCase() === column.toLowerCase());
+                if (key) {
+                    aVal = a[key];
+                } else {
+                    aVal = null;
+                }
+            }
+            if (bVal === undefined || bVal === null || bVal === '') {
+                const key = Object.keys(b).find(k => k.toLowerCase() === column.toLowerCase());
+                if (key) {
+                    bVal = b[key];
+                } else {
+                    bVal = null;
+                }
+            }
+            
+            // Check if values are blank - always push blanks to end
+            const aIsBlank = isBlank(aVal);
+            const bIsBlank = isBlank(bVal);
+            
+            if (aIsBlank && bIsBlank) return 0; // Both blank, maintain order
+            if (aIsBlank) return 1;  // a is blank, put it last
+            if (bIsBlank) return -1; // b is blank, put it last
+            
+            // Handle dates
+            if (isDateColumn) {
+                const aDate = new Date(aVal);
+                const bDate = new Date(bVal);
+                
+                // Check if dates are valid
+                if (isNaN(aDate.getTime()) && isNaN(bDate.getTime())) return 0;
+                if (isNaN(aDate.getTime())) return 1;  // Invalid date goes last
+                if (isNaN(bDate.getTime())) return -1; // Invalid date goes last
+                
+                const diff = aDate - bDate;
+                return direction === 'asc' ? diff : -diff;
+            }
+            
+            // Handle numbers (including pack conversions)
+            if (isNumericColumn || isPackColumn) {
+                // Convert to packs if needed
+                if (isPackColumn) {
+                    const aPackSize = parseFloat(a['pack_size']) || 1;
+                    const bPackSize = parseFloat(b['pack_size']) || 1;
+                    const aPieces = parseFloat(aVal) || 0;
+                    const bPieces = parseFloat(bVal) || 0;
+                    aVal = aPackSize > 0 ? aPieces / aPackSize : 0;
+                    bVal = bPackSize > 0 ? bPieces / bPackSize : 0;
+                } else {
+                    aVal = parseFloat(aVal) || 0;
+                    bVal = parseFloat(bVal) || 0;
+                }
+                const diff = aVal - bVal;
+                return direction === 'asc' ? diff : -diff;
+            }
+            
+            // Handle text
+            aVal = String(aVal).toLowerCase().trim();
+            bVal = String(bVal).toLowerCase().trim();
+            
+            if (aVal === bVal) return 0;
+            
+            const comparison = aVal.localeCompare(bVal);
+            return direction === 'asc' ? comparison : -comparison;
+        });
+        
+        // Verify sort worked by checking if order changed
+        const orderChanged = sortedData.some((item, idx) => {
+            return item !== dataArray[idx];
+        });
+        console.log(`Sort applied. Order changed: ${orderChanged}`);
+        
+        // Update window data
+        window[dataKey] = sortedData;
+        
+        console.log(`Sorted ${sortedData.length} items. First item:`, sortedData.length > 0 ? sortedData[0] : 'No data');
+        console.log(`First item column '${column}' value:`, sortedData.length > 0 ? sortedData[0][column] : 'No data');
+        
+        // Rebuild table with full formatting (same as loadStockView)
+        const thead = document.getElementById('stockTableHead');
+        if (!thead) {
+            console.error('stockTableHead not found!');
+            return;
+        }
+        thead.innerHTML = '<tr>' + 
+            '<th style="width: 40px; min-width: 40px; position: sticky; left: 0; z-index: 11; background: #f8f9fa !important;"><input type="checkbox" id="selectAllStockView" onchange="toggleAllStockViewItems(this.checked)"></th>' + 
+            columnOrder.map(col => `<th class="resizable-col" style="min-width: 100px; position: sticky; top: 0; z-index: 10; background: #f8f9fa !important;">${col.label} <span class="filter-icon" onclick="showFilter('stock', '${col.key}', event)">🔽</span></th>`).join('') + 
+            '</tr>';
+        
+        // Use existing tbody variable (already declared at function start)
+        if (!tbody) {
+            console.error('tbody not found!');
+            return;
+        }
+        tbody.innerHTML = sortedData.map((row, index) => {
+            let rowHtml = '<tr>';
+            
+            // Checkbox column (sticky)
+            rowHtml += `<td style="position: sticky; left: 0; z-index: 1; background: white;"><input type="checkbox" class="item-checkbox" data-index="${index}" onchange="toggleOrderQuantityInput(${index}, this.checked)"></td>`;
+            
+            // Get pack_size for conversions
+            const packSize = parseFloat(row['pack_size']) || 1;
+            
+            // Data columns in specified order
+            columnOrder.forEach(col => {
+                const header = col.key;
+                const value = row[header] || '';
+                let cellClass = '';
+                let cellValue = value;
+                
+                // Handle editable order quantity column
+                if (col.isEditable && header === 'order_quantity') {
+                    // Get AMC value in packs as default
+                    const amcValue = row['amc'] || 0;
+                    const amcPieces = parseFloat(amcValue) || 0;
+                    const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                    const defaultValue = amcPacks > 0 ? amcPacks.toFixed(2) : '0.00';
+                    
+                    // Check if checkbox is checked to enable/disable input
+                    const checkbox = document.querySelector(`.item-checkbox[data-index="${index}"]`);
+                    const isChecked = checkbox && checkbox.checked;
+                    
+                    // Create editable input field
+                    rowHtml += `<td style="padding: 4px;">
+                        <input type="number" 
+                               class="order-qty-input" 
+                               data-index="${index}"
+                               data-item-code="${row['item_code'] || ''}"
+                               data-default-value="${defaultValue}"
+                               value="${defaultValue}"
+                               min="0"
+                               step="0.01"
+                               style="width: 100%; padding: 4px; border: 1px solid #ced4da; border-radius: 4px; text-align: right; background-color: ${isChecked ? '#fff' : '#e9ecef'}; cursor: ${isChecked ? 'text' : 'pointer'};"
+                               ${isChecked ? '' : 'disabled'}
+                               title="${isChecked ? 'Enter quantity in packs' : 'Click to edit quantity (auto-selects item)'}"
+                               onfocus="enableStockOrderQuantityInput(${index})"
+                               onclick="enableStockOrderQuantityInput(${index})"
+                               onchange="updateOrderQuantity(${index}, this.value)">
+                    </td>`;
+                    return; // Skip normal cell rendering for this column
+                }
+                
+                // Format based on column type (same as loadStockView)
+                if (col.isPack) {
+                    // Convert pieces to packs
+                    const piecesVal = parseFloat(value) || 0;
+                    const packsVal = packSize > 0 ? piecesVal / packSize : 0;
+                    cellValue = packsVal.toFixed(2);
+                    
+                    // Color coding for stock columns
+                    if (header === 'supplier_stock' || header === 'branch_stock') {
+                        if (packsVal === 0) {
+                            cellClass = 'stock-zero';
+                        } else if (packsVal < 10) {
+                            cellClass = 'stock-low';
+                        } else {
+                            cellClass = 'stock-good';
+                        }
+                    }
+                } else if (header === 'abc_class') {
+                    const abc = String(value).trim().toUpperCase();
+                    cellValue = abc;
+                    if (abc === 'A') {
+                        cellClass = 'abc-class-a';
+                    } else if (abc === 'B') {
+                        cellClass = 'abc-class-b';
+                    } else if (abc === 'C') {
+                        cellClass = 'abc-class-c';
+                    }
+                } else if (header === 'stock_level_pct') {
+                    const pct = parseFloat(value) || 0;
+                    cellValue = (pct * 100).toFixed(1) + '%';
+                    if (pct < 0.2) {
+                        cellClass = 'stock-pct-critical';
+                    } else if (pct < 0.3) {
+                        cellClass = 'stock-pct-warning';
+                    } else {
+                        cellClass = 'stock-pct-good';
+                    }
+                } else if (header.includes('date') && value) {
+                    cellValue = formatDate(value);
+                } else if (!value || value === 'None' || value === null) {
+                    cellValue = '-';
+                }
+                
+                rowHtml += `<td class="${cellClass}">${cellValue}</td>`;
+            });
+            
+            rowHtml += '</tr>';
+            return rowHtml;
+        }).join('');
+        
+        // Show procurement button
+        const btn = document.getElementById('stockViewProcurementBtn');
+        if (btn && sortedData.length > 0) {
+            btn.style.display = 'inline-block';
+        }
+        
+        // Update filter icon to show sort direction
+        updateSortIndicator(tableType, column, direction);
+    }
+    
+    function updateSortIndicator(tableType, column, direction) {
+        const icon = event?.target || document.querySelector(`[onclick*="showFilter('${tableType}', '${column}'"]`);
+        if (icon) {
+            icon.textContent = direction === 'asc' ? '🔼' : direction === 'desc' ? '🔽' : '🔽';
+        }
+    }
+    
+    // Global variables for procurement dialog
+    let allSuppliers = [];
+    let filteredSuppliers = [];
+    let selectedSupplier = null;
+    
+    async function runStockViewProcurementBot() {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            alert('Please login first');
+            window.location.href = '/';
+            return;
+        }
+        
+        // Get selected items
+        const checkboxes = document.querySelectorAll('#stockTable .item-checkbox:checked');
+        
+        if (checkboxes.length === 0) {
+            alert('Please select at least one item to order');
+            return;
+        }
+        
+        // Get branch information
+        const branchValue = document.getElementById('branchSelect').value;
+        if (!branchValue) {
+            alert('Please select a target branch first');
+            return;
+        }
+        
+        const [branch, company] = branchValue.split('|').map(s => s.trim());
+        
+        // Extract branch code for supplier API
+        let branchCode = null;
+        try {
+            // Try to get branch code from branch config or extract from branch name
+            // For now, we'll need to get it from the branch selection
+            // You may need to store branch_code when loading branches
+            branchCode = 13; // Default, will be updated when we load suppliers
+        } catch (e) {
+            console.error('Error getting branch code:', e);
+        }
+        
+        // Show procurement modal
+        showProcurementModal(branch, company, branchCode);
+    }
+    
+    function showProcurementModal(branch, company, branchCode) {
+        const modal = document.getElementById('procurementModal');
+        modal.style.display = 'block';
+        
+        // Store branch info for later use
+        modal.dataset.branch = branch;
+        modal.dataset.company = company;
+        modal.dataset.branchCode = branchCode || '';
+        
+        // Reset form
+        document.getElementById('procurementForm').reset();
+        document.querySelector('input[name="orderMode"][value="purchase_order"]').checked = true;
+        toggleProcurementOptions();
+        
+        // Load suppliers if branch code is available
+        if (branchCode) {
+            loadSuppliers(branchCode);
+        } else {
+            // Try to get branch code from branch name
+            getBranchCodeForSupplier(branch, company).then(code => {
+                if (code) {
+                    modal.dataset.branchCode = code;
+                    loadSuppliers(code);
+                }
+            });
+        }
+        
+        // Load destination branches for branch order mode
+        loadDestinationBranches(branch, company);
+    }
+    
+    function closeProcurementModal() {
+        document.getElementById('procurementModal').style.display = 'none';
+        allSuppliers = [];
+        filteredSuppliers = [];
+        selectedSupplier = null;
+        document.getElementById('supplierDropdown').innerHTML = '';
+        document.getElementById('supplierSearch').value = '';
+        document.getElementById('selectedSupplierCode').value = '';
+        document.getElementById('selectedSupplierName').value = '';
+        document.getElementById('selectedSupplierDisplay').style.display = 'none';
+    }
+    
+    function toggleProcurementOptions() {
+        const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
+        const supplierGroup = document.getElementById('supplierSelectionGroup');
+        const branchGroup = document.getElementById('branchSelectionGroup');
+        
+        if (orderMode === 'purchase_order') {
+            supplierGroup.style.display = 'block';
+            branchGroup.style.display = 'none';
+            document.getElementById('destinationBranchSelect').required = false;
+        } else {
+            supplierGroup.style.display = 'none';
+            branchGroup.style.display = 'block';
+            document.getElementById('destinationBranchSelect').required = true;
+            
+            // Reload destination branches when switching to branch order mode
+            // to ensure they're filtered by company
+            const modal = document.getElementById('procurementModal');
+            const branch = modal.dataset.branch;
+            const company = modal.dataset.company;
+            if (branch && company) {
+                loadDestinationBranches(branch, company);
+            }
+        }
+    }
+    
+    async function getBranchCodeForSupplier(branchName, company) {
+        try {
+            // Get branches to find branch code
+            const response = await apiRequest('/api/dashboard/branches');
+            const branches = response.data || response.branches || [];
+            
+            if (response.success && branches.length > 0) {
+                const branch = branches.find(b => {
+                    const bName = (b.branch_name || '').trim();
+                    const bCompany = (b.company || '').trim();
+                    return bName === branchName.trim() && bCompany === company.trim();
+                });
+                
+                if (branch) {
+                    // Try branch_code first, then branchcode
+                    const branchCode = branch.branch_code || branch.branchcode || '';
+                    if (branchCode) {
+                        // Extract numeric part if it's "BR001" format
+                        const code = branchCode.toString().replace(/^BR/i, '');
+                        return parseInt(code) || null;
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Error getting branch code:', e);
+        }
+        return null;
+    }
+    
+    async function loadSuppliers(branchCode) {
+        try {
+            const response = await apiRequest(`/api/suppliers/list?branch_code=${branchCode}&numberofSuppliers=100&isActive=true`);
+            if (response && response.suppliers && response.suppliers.length > 0) {
+                allSuppliers = response.suppliers;
+                filteredSuppliers = allSuppliers.slice(0, 10); // Show first 10 by default
+                console.log(`Loaded ${allSuppliers.length} suppliers`);
+            } else {
+                console.warn('No suppliers found or error loading suppliers');
+                allSuppliers = [];
+                filteredSuppliers = [];
+            }
+        } catch (error) {
+            console.error('Error loading suppliers:', error);
+            // Don't show alert, just log - suppliers might not be critical
+            allSuppliers = [];
+            filteredSuppliers = [];
+        }
+    }
+    
+    function searchSuppliers(query) {
+        const searchTerm = query.toLowerCase().trim();
+        const dropdown = document.getElementById('supplierDropdown');
+        
+        if (!searchTerm) {
+            filteredSuppliers = allSuppliers.slice(0, 10); // Show first 10
+        } else {
+            filteredSuppliers = allSuppliers.filter(supplier => {
+                const code = ((supplier.supP_CODE || supplier.code || '')).toLowerCase();
+                const name = ((supplier.supP_DESC || supplier.name || '')).toLowerCase();
+                return code.includes(searchTerm) || name.includes(searchTerm);
+            }).slice(0, 20); // Limit to 20 results
+        }
+        
+        renderSupplierDropdown();
+    }
+    
+    function renderSupplierDropdown() {
+        const dropdown = document.getElementById('supplierDropdown');
+        dropdown.innerHTML = '';
+        
+        if (filteredSuppliers.length === 0) {
+            dropdown.innerHTML = '<div class="supplier-dropdown-item" style="color: #6c757d;">No suppliers found</div>';
+            dropdown.style.display = 'block';
+            return;
+        }
+        
+        filteredSuppliers.forEach(supplier => {
+            const item = document.createElement('div');
+            item.className = 'supplier-dropdown-item';
+            const code = supplier.supP_CODE || supplier.code || '';
+            const name = supplier.supP_DESC || supplier.name || 'Unknown';
+            item.innerHTML = `
+                <strong>${code}</strong> - ${name}
+            `;
+            item.onclick = () => selectSupplier(supplier);
+            dropdown.appendChild(item);
+        });
+        
+        dropdown.style.display = 'block';
+    }
+    
+    function selectSupplier(supplier) {
+        selectedSupplier = supplier;
+        const code = supplier.supP_CODE || supplier.code || '';
+        const name = supplier.supP_DESC || supplier.name || 'Unknown';
+        document.getElementById('supplierSearch').value = `${code} - ${name}`;
+        document.getElementById('selectedSupplierCode').value = code;
+        document.getElementById('selectedSupplierName').value = name;
+        document.getElementById('selectedSupplierText').textContent = `${code} - ${name}`;
+        document.getElementById('selectedSupplierDisplay').style.display = 'block';
+        hideSupplierDropdown();
+    }
+    
+    function showSupplierDropdown() {
+        if (filteredSuppliers.length > 0 || allSuppliers.length > 0) {
+            if (filteredSuppliers.length === 0 && document.getElementById('supplierSearch').value.trim() === '') {
+                filteredSuppliers = allSuppliers.slice(0, 10);
+            }
+            renderSupplierDropdown();
+        }
+    }
+    
+    function hideSupplierDropdown() {
+        // Delay to allow click events to fire
+        setTimeout(() => {
+            document.getElementById('supplierDropdown').style.display = 'none';
+        }, 200);
+    }
+    
+    async function loadDestinationBranches(currentBranch, currentCompany) {
+        try {
+            console.log(`Loading destination branches for target: ${currentBranch} (${currentCompany})`);
+            const response = await apiRequest('/api/dashboard/branches');
+            const select = document.getElementById('destinationBranchSelect');
+            select.innerHTML = '<option value="">-- Select Branch --</option>';
+            
+            // Check if response has data (API returns response.data, not response.branches)
+            const branches = response.data || response.branches || [];
+            
+            if (!response.success || branches.length === 0) {
+                console.warn('No branches found in API response:', response);
+                select.innerHTML = '<option value="">No branches available</option>';
+                return;
+            }
+            
+            // Filter branches by company - only show branches from the same company as target branch
+            const filteredBranches = branches.filter(branch => {
+                // Must match company
+                const branchCompany = (branch.company || '').trim().toUpperCase();
+                const targetCompany = (currentCompany || '').trim().toUpperCase();
+                
+                if (branchCompany !== targetCompany) {
+                    return false;
+                }
+                
+                // Skip current branch
+                const branchName = (branch.branch_name || '').trim();
+                const targetBranch = (currentBranch || '').trim();
+                
+                if (branchName === targetBranch) {
+                    return false;
+                }
+                
+                return true;
+            });
+            
+            console.log(`Found ${filteredBranches.length} branches for ${currentCompany} (excluding current branch)`);
+            
+            if (filteredBranches.length === 0) {
+                select.innerHTML = `<option value="">No other ${currentCompany} branches available</option>`;
+                return;
+            }
+            
+            // Populate dropdown
+            filteredBranches.forEach(branch => {
+                const option = document.createElement('option');
+                const branchName = branch.branch_name || '';
+                const branchCompany = branch.company || '';
+                option.value = `${branchName}|${branchCompany}`;
+                option.textContent = `${branchName} (${branchCompany})`;
+                option.dataset.branchCode = branch.branch_code || branch.branchcode || '';
+                select.appendChild(option);
+            });
+            
+            console.log(`Successfully loaded ${filteredBranches.length} destination branches`);
+        } catch (error) {
+            console.error('Error loading destination branches:', error);
+            const select = document.getElementById('destinationBranchSelect');
+            select.innerHTML = `<option value="">Error loading branches: ${error.message || 'Unknown error'}</option>`;
+        }
+    }
+    
+    async function confirmProcurementOrder() {
+        const modal = document.getElementById('procurementModal');
+        const branch = modal.dataset.branch;
+        const company = modal.dataset.company;
+        
+        // Get selected items with custom order quantities
+        const checkboxes = document.querySelectorAll('#stockTable .item-checkbox:checked');
+        const selectedItems = Array.from(checkboxes).map(cb => {
+            const index = parseInt(cb.dataset.index);
+            const item = { ...window.stockViewData[index] }; // Copy item to avoid modifying original
+            
+            // Get custom order quantity from input field
+            const qtyInput = document.querySelector(`.order-qty-input[data-index="${index}"]`);
+            if (qtyInput && qtyInput.value) {
+                const customQty = parseFloat(qtyInput.value) || 0;
+                // Store custom quantity (will be used by procurement bot)
+                item.custom_order_quantity = customQty;
+                // Also update amc to the custom quantity for manual selection
+                item.amc = customQty;
+                console.log(`Using custom order quantity for ${item.item_code}: ${customQty} packs`);
+            } else {
+                // Use AMC as fallback
+                const packSize = parseFloat(item.pack_size) || 1;
+                const amcPieces = parseFloat(item.amc) || 0;
+                const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                item.custom_order_quantity = amcPacks;
+                item.amc = amcPacks; // Ensure amc is in packs for manual selection
+                console.log(`Using AMC as order quantity for ${item.item_code}: ${amcPacks} packs`);
+            }
+            
+            return item;
+        });
+        
+        // Get order mode
+        const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
+        
+        // Get source branch (for branch orders)
+        const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
+        const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
+        
+        // Validate based on order mode
+        if (orderMode === 'purchase_order') {
+            // Validate supplier selection
+            const supplierCode = document.getElementById('selectedSupplierCode').value;
+            const supplierName = document.getElementById('selectedSupplierName').value;
+            
+            if (!supplierCode || !supplierName) {
+                alert('Please select a supplier for the purchase order');
+                return;
+            }
+            
+            // Batch items if more than 20
+            await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName);
+        } else {
+            // Branch order mode
+            const destinationBranchValue = document.getElementById('destinationBranchSelect').value;
+            if (!destinationBranchValue) {
+                alert('Please select a destination branch for the branch order');
+                return;
+            }
+            
+            const [destBranch, destCompany] = destinationBranchValue.split('|').map(s => s.trim());
+            
+            // Batch items if more than 20
+            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order');
+        }
+    }
+    
+    async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null) {
+        const BATCH_SIZE = 20;
+        const batches = [];
+        
+        // Split items into batches of max 20
+        for (let i = 0; i < selectedItems.length; i += BATCH_SIZE) {
+            batches.push(selectedItems.slice(i, i + BATCH_SIZE));
+        }
+        
+        console.log(`Creating ${batches.length} batch(es) for ${selectedItems.length} items`);
+        
+        let totalSuccess = 0;
+        let totalFailed = 0;
+        const orderNumbers = [];
+        
+        // Process each batch
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex];
+            const batchNum = batchIndex + 1;
+            
+            try {
+                const requestBody = {
+                    items: batch,
+                    branch_name: branch,
+                    branch_company: company,
+                    source_branch_name: sourceBranch,
+                    source_branch_company: sourceCompany,
+                    order_mode: orderMode,
+                    manual_selection: true
+                };
+                
+                if (orderMode === 'purchase_order' && supplierCode && supplierName) {
+                    requestBody.supplier_code = supplierCode;
+                    requestBody.supplier_name = supplierName;
+                }
+                
+                console.log(`Creating batch ${batchNum}/${batches.length} with ${batch.length} items...`);
+                
+                const result = await apiRequest('/api/procurement/run', {
+                    method: 'POST',
+                    body: JSON.stringify(requestBody)
+                });
+                
+                if (result.success) {
+                    totalSuccess += result.successful_orders || batch.length;
+                    if (result.order_number) {
+                        orderNumbers.push(result.order_number);
+                    }
+                    console.log(`✅ Batch ${batchNum} completed: ${result.successful_orders || batch.length} items`);
+                } else {
+                    totalFailed += batch.length;
+                    console.error(`❌ Batch ${batchNum} failed: ${result.message}`);
+                }
+            } catch (error) {
+                totalFailed += batch.length;
+                console.error(`❌ Batch ${batchNum} error:`, error);
+            }
+        }
+        
+        // Show summary
+        const orderType = orderMode === 'purchase_order' ? 'Purchase Order' : 'Branch Order';
+        let message = `✅ ${orderType} Creation Complete!\n\n`;
+        message += `Total Items: ${selectedItems.length}\n`;
+        message += `Successful: ${totalSuccess}\n`;
+        message += `Failed: ${totalFailed}\n`;
+        message += `Batches: ${batches.length}\n`;
+        if (orderNumbers.length > 0) {
+            message += `\nOrder Numbers:\n${orderNumbers.join('\n')}`;
+        }
+        
+        alert(message);
+        closeProcurementModal();
+        
+        // Reload stock view to reflect new orders
+        loadStockView();
+    }
+    
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('procurementModal');
+        if (event.target === modal) {
+            closeProcurementModal();
+        }
+    }
+</script>
+{% endblock %}
+

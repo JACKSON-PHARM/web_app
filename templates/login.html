@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - PharmaStock</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .login-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .login-header h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .login-header p {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn-login {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .btn-login:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn-login:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .error-message.show {
+            display: block;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            color: #667eea;
+            margin-top: 10px;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>🏥 PharmaStock</h1>
+            <p>Pharmaceutical Inventory Management</p>
+        </div>
+        
+        <div class="error-message" id="errorMessage"></div>
+        
+        <div id="setupNotice" style="display: none; background: #e3f2fd; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #2196f3;">
+            <p style="margin: 0; color: #1976d2; font-size: 14px;">
+                <strong>First Time Setup:</strong> Create your admin account to get started.
+            </p>
+        </div>
+        
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    name="username" 
+                    required 
+                    placeholder="Enter your username"
+                    autocomplete="username"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    required 
+                    placeholder="Enter your password"
+                    autocomplete="current-password"
+                >
+            </div>
+            
+            <button type="submit" class="btn-login" id="loginBtn">
+                Login
+            </button>
+            
+            <div class="loading" id="loading">Logging in...</div>
+        </form>
+    </div>
+    
+    <script>
+        // Check if already logged in
+        if (localStorage.getItem('access_token')) {
+            window.location.href = '/dashboard';
+        }
+        
+        const loginForm = document.getElementById('loginForm');
+        const errorMessage = document.getElementById('errorMessage');
+        const loginBtn = document.getElementById('loginBtn');
+        const loading = document.getElementById('loading');
+        
+        // Login form handler
+        if (loginForm) {
+            loginForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const username = document.getElementById('username')?.value.trim();
+                const password = document.getElementById('password')?.value;
+                
+                if (!username || !password) {
+                    showError('Please enter username and password');
+                    return;
+                }
+                
+                loginBtn.disabled = true;
+                loading.classList.add('show');
+                errorMessage.classList.remove('show');
+                
+                try {
+                    // Add timeout to login request
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                    
+                    const response = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ username, password }),
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        // Save token and user info
+                        localStorage.setItem('access_token', data.access_token);
+                        localStorage.setItem('user_username', data.username);
+                        localStorage.setItem('is_admin', String(data.is_admin || false));
+                        localStorage.setItem('days_remaining', String(data.days_remaining || 0));
+                        
+                        // Redirect to dashboard
+                        window.location.href = '/dashboard';
+                    } else {
+                        showError(data.detail || 'Login failed. Please check your credentials.');
+                    }
+                } catch (error) {
+                    if (error.name === 'AbortError') {
+                        showError('Login request timed out. Please check your connection and try again.');
+                    } else {
+                        showError('Connection error. Please try again.');
+                    }
+                    console.error('Login error:', error);
+                } finally {
+                    loginBtn.disabled = false;
+                    loading.classList.remove('show');
+                }
+            });
+        }
+        
+        function showError(message) {
+            if (errorMessage) {
+                errorMessage.textContent = message;
+                errorMessage.classList.add('show');
+            }
+        }
+    </script>
+</body>
+</html>
+

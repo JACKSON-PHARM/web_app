@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorization Successful</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .message {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            text-align: center;
+            max-width: 500px;
+        }
+        .success {
+            color: #28a745;
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+        .btn {
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #5568d3;
+        }
+    </style>
+</head>
+<body>
+    <div class="message">
+        <div class="success">✅</div>
+        <h1>Authorization Successful!</h1>
+        <p>{{ message }}</p>
+        <p style="margin-top: 20px; font-size: 14px; color: #999;">
+            The application can now access Google Drive.
+        </p>
+        <div style="margin-top: 20px;">
+            <a href="/admin" class="btn" style="margin-right: 10px;">Go to Admin Panel</a>
+            <a href="/dashboard" class="btn">Go to Dashboard</a>
+        </div>
+        <script>
+            // Auto-refresh admin page if opened in parent window
+            if (window.opener) {
+                setTimeout(() => {
+                    window.opener.location.reload();
+                    window.close();
+                }, 2000);
+            }
+        </script>
+    </div>
+</body>
+</html>
+

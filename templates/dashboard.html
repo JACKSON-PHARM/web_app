@@ -1,0 +1,1689 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - PharmaStock{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dashboard-container {
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+    
+    .dashboard-header h1 {
+        color: #333;
+        font-size: 32px;
+    }
+    
+    .refresh-section {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 30px;
+    }
+    
+    .refresh-controls {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .btn-refresh {
+        padding: 12px 24px;
+        background: #28a745 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 5px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.3s;
+        display: inline-block;
+    }
+    
+    .btn-refresh:hover {
+        background: #218838 !important;
+    }
+    
+    .btn-refresh:disabled {
+        background: #6c757d !important;
+        cursor: not-allowed;
+    }
+    
+    button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 5px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: inline-block;
+    }
+    
+    button.btn-primary {
+        background: #667eea;
+        color: white;
+    }
+    
+    button.btn-success {
+        background: #28a745;
+        color: white;
+    }
+    
+    button.btn-danger {
+        background: #dc3545;
+        color: white;
+    }
+    
+    button.btn-warning {
+        background: #ffc107;
+        color: #333;
+    }
+    
+    .refresh-status {
+        color: #666;
+        font-size: 14px;
+    }
+    
+    .section {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 30px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e9ecef;
+    }
+    
+    .section-title {
+        font-size: 24px;
+        color: #333;
+        font-weight: 600;
+    }
+    
+    .table-container {
+        overflow-x: auto;
+    }
+    
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    th, td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #e9ecef;
+    }
+    
+    th {
+        background: #f8f9fa;
+        font-weight: 600;
+        color: #495057;
+    }
+    
+    tr:hover {
+        background: #f8f9fa;
+    }
+    
+    .loading {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+    }
+    
+    .empty {
+        text-align: center;
+        padding: 40px;
+        color: #999;
+    }
+    
+    .priority-item-recent {
+        background: #d4edda !important;
+    }
+    
+    .order-qty-input {
+        transition: background-color 0.2s, border-color 0.2s;
+    }
+    
+    .order-qty-input:disabled {
+        background-color: #e9ecef !important;
+        cursor: not-allowed !important;
+        opacity: 0.7;
+    }
+    
+    .order-qty-input:enabled {
+        background-color: #fff !important;
+        cursor: text !important;
+        border-color: #007bff !important;
+    }
+    
+    .order-qty-input:enabled:focus {
+        border-color: #0056b3 !important;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        outline: none;
+    }
+    
+    /* Procurement Modal Styles */
+    .procurement-modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.4);
+    }
+    
+    .procurement-modal-content {
+        background-color: #fefefe;
+        margin: 5% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 600px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .procurement-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .procurement-modal-header h2 {
+        margin: 0;
+        color: #333;
+    }
+    
+    .close-procurement-modal {
+        color: #aaa;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        border: none;
+        background: none;
+    }
+    
+    .close-procurement-modal:hover,
+    .close-procurement-modal:focus {
+        color: #000;
+    }
+    
+    .procurement-form-group {
+        margin-bottom: 20px;
+    }
+    
+    .procurement-form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+    }
+    
+    .procurement-form-group input[type="text"],
+    .procurement-form-group select {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+    
+    .supplier-search-container {
+        position: relative;
+    }
+    
+    .supplier-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #ced4da;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 100;
+        display: none;
+    }
+    
+    .supplier-dropdown-item {
+        padding: 10px;
+        cursor: pointer;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .supplier-dropdown-item:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .supplier-dropdown-item.selected {
+        background-color: #007bff;
+        color: white;
+    }
+    
+    .procurement-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid #dee2e6;
+    }
+    
+    .procurement-info-text {
+        font-size: 12px;
+        color: #6c757d;
+        margin-left: 24px;
+        margin-top: -5px;
+        margin-bottom: 10px;
+    }
+    
+    .radio-group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .radio-group label {
+        display: flex;
+        align-items: center;
+        font-weight: normal;
+    }
+    
+    .radio-group input[type="radio"] {
+        margin-right: 8px;
+    }
+    
+    /* Stock level color coding */
+    .stock-zero {
+        color: #dc3545 !important;
+        font-weight: bold;
+    }
+    
+    .stock-low {
+        color: #ffc107 !important;
+        font-weight: bold;
+    }
+    
+    .stock-good {
+        color: #28a745 !important;
+    }
+    
+    /* ABC class color coding */
+    .abc-class-a {
+        color: #dc3545 !important;
+        font-weight: bold;
+    }
+    
+    .abc-class-b {
+        color: #ffc107 !important;
+        font-weight: bold;
+    }
+    
+    .abc-class-c {
+        color: #6c757d !important;
+    }
+    
+    /* Stock level percentage color coding */
+    .stock-pct-critical {
+        background: #ffcccc !important;
+        color: #cc0000 !important;
+        font-weight: bold;
+    }
+    
+    .stock-pct-warning {
+        background: #fff4cc !important;
+        color: #996600 !important;
+        font-weight: bold;
+    }
+    
+    .stock-pct-good {
+        background: #ccffcc !important;
+        color: #006600 !important;
+    }
+    
+    /* Table enhancements */
+    .data-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        width: 100%;
+    }
+    
+    .data-table th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        user-select: none;
+        background: #f8f9fa !important;
+        border: 1px solid #dee2e6;
+        padding: 8px;
+        text-align: left;
+        font-weight: 600;
+        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Ensure table container has max height for scrolling */
+    .table-container {
+        max-height: 600px;
+        overflow-y: auto;
+        overflow-x: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        position: relative;
+    }
+    
+    /* Ensure thead stays in place when scrolling */
+    .table-container thead th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: #f8f9fa !important;
+    }
+    
+    /* Ensure table displays as block for sticky headers to work */
+    .data-table {
+        display: block;
+        width: 100%;
+    }
+    
+    .data-table thead {
+        display: block;
+        width: 100%;
+    }
+    
+    .data-table tbody {
+        display: block;
+        width: 100%;
+        max-height: 550px;
+        overflow-y: auto;
+    }
+    
+    .data-table tr {
+        display: table;
+        width: 100%;
+        table-layout: fixed;
+    }
+    
+    .data-table td {
+        border: 1px solid #dee2e6;
+        padding: 8px;
+    }
+    
+    .data-table tbody tr:hover {
+        background: #f8f9fa;
+    }
+    
+    .resizable-col {
+        position: relative;
+    }
+    
+    .resizable-col::after {
+        content: '';
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 5px;
+        cursor: col-resize;
+        background: transparent;
+    }
+    
+    .filter-icon {
+        cursor: pointer;
+        font-size: 10px;
+        margin-left: 5px;
+        opacity: 0.6;
+    }
+    
+    .filter-icon:hover {
+        opacity: 1;
+    }
+    
+    .column-hidden {
+        display: none;
+    }
+    
+    /* Checkbox styling */
+    .item-checkbox {
+        cursor: pointer;
+        width: 18px;
+        height: 18px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <h1>📊 Dashboard</h1>
+        <div class="refresh-status" id="lastRefresh">
+            Last refresh: Never
+        </div>
+    </div>
+    
+    <div class="refresh-section">
+        <h3>Branch Selection</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Target Branch (View Stock For):</label>
+                <select id="targetBranch" style="width: 100%; padding: 8px;">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Source Branch (Supply From):</label>
+                <select id="sourceBranch" style="width: 100%; padding: 8px;">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+        </div>
+        <div class="refresh-controls">
+            <button class="btn-refresh" onclick="triggerRefresh()" id="refreshBtn">
+                🔄 Refresh All Data
+            </button>
+            <span class="refresh-status" id="refreshStatus"></span>
+        </div>
+    </div>
+    
+    <div class="section">
+        <div class="section-header">
+            <h2 class="section-title">⚠️ Priority Items</h2>
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <div>
+                    <label>Show items: </label>
+                    <input type="number" id="priorityLimit" value="50" min="10" max="5000" style="width: 80px; padding: 5px;">
+                </div>
+                <button onclick="runProcurementBot('priority')" class="btn btn-success" id="priorityProcurementBtn" style="display: none;">
+                    🤖 Order Selected Items
+                </button>
+            </div>
+        </div>
+        <div class="table-container" style="overflow-x: auto;">
+            <table id="priorityTable" class="data-table" style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr>
+                        <th style="width: 40px; min-width: 40px;"><input type="checkbox" id="selectAllPriority" onchange="toggleAllItems('priority', this.checked)"></th>
+                        <th style="min-width: 100px;" class="resizable-col" data-col="item_code">Item Code <span class="filter-icon" onclick="showFilter('priority', 'item_code', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 200px;" class="resizable-col" data-col="item_name">Item Name <span class="filter-icon" onclick="showFilter('priority', 'item_name', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 120px;" class="resizable-col" data-col="hq_stock">HQ Stock (Packs) <span class="filter-icon" onclick="showFilter('priority', 'hq_stock', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 100px;" class="resizable-col" data-col="branch">Branch <span class="filter-icon" onclick="showFilter('priority', 'branch', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 120px;" class="resizable-col" data-col="branch_stock">Branch Stock (Packs) <span class="filter-icon" onclick="showFilter('priority', 'branch_stock', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 100px;" class="resizable-col" data-col="abc_class">ABC Class <span class="filter-icon" onclick="showFilter('priority', 'abc_class', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 120px;" class="resizable-col" data-col="stock_level">Stock Level % <span class="filter-icon" onclick="showFilter('priority', 'stock_level', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 100px;" class="resizable-col" data-col="amc">AMC (Packs) <span class="filter-icon" onclick="showFilter('priority', 'amc', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 120px;" class="resizable-col" data-col="order_quantity">Order Qty (Packs) <span class="filter-icon" onclick="showFilter('priority', 'order_quantity', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="min-width: 120px;" class="resizable-col" data-col="last_order_date">Last Order Date <span class="filter-icon" onclick="showFilter('priority', 'last_order_date', event)" style="cursor: pointer;">🔽</span></th>
+                    </tr>
+                </thead>
+                <tbody id="priorityBody">
+                    <tr>
+                        <td colspan="10" class="loading">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    let refreshInProgress = false;
+    
+    // Date formatting function
+    function formatDate(dateString) {
+        if (!dateString || dateString === 'Never' || dateString === null || dateString === '') {
+            return 'Never';
+        }
+        
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) {
+                return 'Invalid Date';
+            }
+            
+            // Format as "dd mmm, yy" (e.g., "15 Dec, 24")
+            const day = date.getDate();
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const year = date.getFullYear().toString().slice(-2);
+            
+            return `${day} ${month}, ${year}`;
+        } catch (e) {
+            return 'Invalid Date';
+        }
+    }
+    
+    // Check authentication first
+    window.addEventListener('DOMContentLoaded', () => {
+        const token = localStorage.getItem('access_token');
+        
+        // Redirect to login if not authenticated
+        if (!token) {
+            window.location.href = '/';
+            return;
+        }
+        
+        // Show loading state immediately
+        // Initialize tables
+        const priorityItemsTable = document.getElementById('priorityTable');
+        if (priorityItemsTable) {
+            const tbody = priorityItemsTable.querySelector('tbody');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px;">Loading...</td></tr>';
+            }
+        }
+        
+        // Load branches first, then data
+        loadBranches();
+        
+        // Load data asynchronously
+        setTimeout(() => {
+            loadDashboardData();
+            checkRefreshStatus();
+        }, 100); // Small delay to ensure page is rendered
+        
+        // Add event listeners for branch changes
+        const targetBranch = document.getElementById('targetBranch');
+        const sourceBranch = document.getElementById('sourceBranch');
+        
+        if (targetBranch) {
+            targetBranch.addEventListener('change', () => {
+                loadDashboardData();
+            });
+        }
+        
+        if (sourceBranch) {
+            sourceBranch.addEventListener('change', () => {
+                loadPriorityItems();
+            });
+        }
+        
+        // Initialize priority limit change handler
+        const priorityLimitInput = document.getElementById('priorityLimit');
+        if (priorityLimitInput) {
+            priorityLimitInput.addEventListener('change', loadPriorityItems);
+        }
+    });
+    
+    async function loadDashboardData() {
+        await loadPriorityItems();
+    }
+    
+    async function loadBranches() {
+        try {
+            const data = await apiRequest('/api/dashboard/branches');
+            if (data.success && data.data) {
+                const targetSelect = document.getElementById('targetBranch');
+                const sourceSelect = document.getElementById('sourceBranch');
+                
+                // Clear and populate both selects
+                [targetSelect, sourceSelect].forEach(select => {
+                    select.innerHTML = '<option value="">Select branch...</option>';
+                    data.data.forEach(branch => {
+                        const option = document.createElement('option');
+                        const value = `${branch.branch_name || branch.branch}|${branch.company}`;
+                        option.value = value;
+                        option.textContent = `${branch.branch_name || branch.branch} (${branch.company})`;
+                        select.appendChild(option);
+                    });
+                });
+                
+                // Set defaults
+                const defaultTarget = 'BABA DOGO HQ|NILA';
+                const defaultSource = 'BABA DOGO HQ|NILA';
+                
+                if (targetSelect.querySelector(`option[value="${defaultTarget}"]`)) {
+                    targetSelect.value = defaultTarget;
+                }
+                if (sourceSelect.querySelector(`option[value="${defaultSource}"]`)) {
+                    sourceSelect.value = defaultSource;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading branches:', error);
+        }
+    }
+    
+    async function loadPriorityItems() {
+        // Check token before making request
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            window.location.href = '/';
+            return;
+        }
+        
+        // Show loading indicator
+        const tbody = document.getElementById('priorityBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="11" class="empty">Loading...</td></tr>';
+        }
+        
+        // Get selected branches
+        const targetBranch = document.getElementById('targetBranch')?.value || 'BABA DOGO HQ|NILA';
+        const sourceBranch = document.getElementById('sourceBranch')?.value || 'BABA DOGO HQ|NILA';
+        const [targetBranchName, targetCompany] = targetBranch.split('|');
+        const [sourceBranchName, sourceCompany] = sourceBranch.split('|');
+        const limit = parseInt(document.getElementById('priorityLimit')?.value || '50');
+        
+        try {
+            const data = await apiRequest(`/api/dashboard/priority-items?target_branch=${encodeURIComponent(targetBranchName)}&target_company=${encodeURIComponent(targetCompany)}&source_branch=${encodeURIComponent(sourceBranchName)}&source_company=${encodeURIComponent(sourceCompany)}&limit=${limit}`);
+            
+            const tbody = document.getElementById('priorityBody');
+            if (!tbody) {
+                console.error('priorityBody element not found');
+                return;
+            }
+            tbody.innerHTML = '';
+            
+            // Log response for debugging
+            console.log('Priority items response:', data);
+            
+            if (!data.success) {
+                let errorMsg = data.error || 'Unknown error';
+                if (data.traceback) {
+                    console.error('Traceback:', data.traceback);
+                }
+                tbody.innerHTML = '<tr><td colspan="11" class="empty">Error: ' + errorMsg + '</td></tr>';
+                return;
+            }
+            
+            if (data.success && data.data && data.data.length > 0) {
+                // Store items for procurement bot
+                window.priorityItemsData = data.data;
+                
+                // Show procurement button
+                const btn = document.getElementById('priorityProcurementBtn');
+                if (btn) btn.style.display = 'inline-block';
+                
+                data.data.forEach((item, index) => {
+                    const row = tbody.insertRow();
+                    
+                    // Column 0: Checkbox
+                    const checkboxCell = row.insertCell(0);
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'item-checkbox';
+                    checkbox.dataset.index = index;
+                    checkboxCell.appendChild(checkbox);
+                    
+                    // Column 1: Item Code
+                    row.insertCell(1).textContent = item.item_code || '';
+                    
+                    // Column 2: Item Name
+                    row.insertCell(2).textContent = item.item_name || '';
+                    
+                    // Column 3: HQ Stock (Packs) - source_stock_packs
+                    const hqStock = parseFloat(item.source_stock_packs || item.hq_stock_packs || 0);
+                    const hqCell = row.insertCell(3);
+                    hqCell.textContent = hqStock.toFixed(0);
+                    if (hqStock === 0) {
+                        hqCell.classList.add('stock-zero');
+                    } else if (hqStock < 10) {
+                        hqCell.classList.add('stock-low');
+                    } else {
+                        hqCell.classList.add('stock-good');
+                    }
+                    
+                    // Column 4: Branch - branch_name (target branch)
+                    row.insertCell(4).textContent = item.branch_name || item.target_branch || '';
+                    
+                    // Column 5: Branch Stock (Packs) - target_stock_packs
+                    const branchStock = parseFloat(item.target_stock_packs || item.branch_stock_packs || 0);
+                    const branchStockCell = row.insertCell(5);
+                    branchStockCell.textContent = branchStock.toFixed(0);
+                    if (branchStock === 0) {
+                        branchStockCell.classList.add('stock-zero');
+                    } else if (branchStock < 10) {
+                        branchStockCell.classList.add('stock-low');
+                    } else {
+                        branchStockCell.classList.add('stock-good');
+                    }
+                    
+                    // Column 6: ABC Class (with color coding)
+                    const abcClass = (item.abc_class || '').trim().toUpperCase();
+                    const abcCell = row.insertCell(6);
+                    abcCell.textContent = abcClass;
+                    if (abcClass === 'A') {
+                        abcCell.classList.add('abc-class-a');
+                    } else if (abcClass === 'B') {
+                        abcCell.classList.add('abc-class-b');
+                    } else if (abcClass === 'C') {
+                        abcCell.classList.add('abc-class-c');
+                    }
+                    
+                    // Column 7: Stock Level % (with color coding)
+                    const stockLevel = parseFloat(item.stock_level_pct || 0);
+                    const stockLevelCell = row.insertCell(7);
+                    stockLevelCell.textContent = stockLevel.toFixed(1) + '%';
+                    if (stockLevel < 20) {
+                        stockLevelCell.classList.add('stock-pct-critical');
+                    } else if (stockLevel < 30) {
+                        stockLevelCell.classList.add('stock-pct-warning');
+                    } else {
+                        stockLevelCell.classList.add('stock-pct-good');
+                    }
+                    
+                    // Column 8: AMC (Packs)
+                    const amc = parseFloat(item.amc_packs || item.amc || 0);
+                    row.insertCell(8).textContent = amc.toFixed(2);
+                    
+                    // Column 9: Order Qty (Packs) - Editable
+                    const packSize = parseFloat(item.pack_size) || 1;
+                    const amcPieces = parseFloat(item.amc) || 0;
+                    const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                    const defaultValue = amcPacks > 0 ? amcPacks.toFixed(2) : '0.00';
+                    
+                    const orderQtyCell = row.insertCell(9);
+                    const qtyInput = document.createElement('input');
+                    qtyInput.type = 'number';
+                    qtyInput.className = 'order-qty-input priority-order-qty-input';
+                    qtyInput.dataset.index = index;
+                    qtyInput.dataset.defaultValue = defaultValue; // Store default for reset
+                    qtyInput.value = defaultValue;
+                    qtyInput.min = '0';
+                    qtyInput.step = '0.01';
+                    qtyInput.style.cssText = 'width: 100%; padding: 4px; border: 1px solid #ced4da; border-radius: 4px; text-align: right; background-color: #e9ecef; cursor: pointer;';
+                    qtyInput.disabled = true;
+                    qtyInput.title = 'Click to edit quantity (auto-selects item)';
+                    
+                    // Enable input and check checkbox when user clicks/focuses on quantity field
+                    qtyInput.addEventListener('focus', function() {
+                        if (this.disabled) {
+                            checkbox.checked = true;
+                            togglePriorityOrderQuantityInput(index, true);
+                            this.select(); // Select text for easy editing
+                        }
+                    });
+                    
+                    qtyInput.addEventListener('click', function() {
+                        if (this.disabled) {
+                            checkbox.checked = true;
+                            togglePriorityOrderQuantityInput(index, true);
+                            this.select(); // Select text for easy editing
+                        }
+                    });
+                    
+                    qtyInput.onchange = function() { 
+                        updatePriorityOrderQuantity(index, this.value);
+                        // Ensure checkbox stays checked when quantity changes
+                        if (!checkbox.checked) {
+                            checkbox.checked = true;
+                        }
+                    };
+                    orderQtyCell.appendChild(qtyInput);
+                    
+                    // Add change listener to checkbox to enable/disable input and reset quantity
+                    checkbox.addEventListener('change', function() {
+                        togglePriorityOrderQuantityInput(index, this.checked);
+                    });
+                    
+                    // Column 10: Last Order Date (with green background if recent)
+                    const lastOrderDateRaw = item.last_order_date || null;
+                    const dateCell = row.insertCell(10);
+                    const formattedDate = formatDate(lastOrderDateRaw);
+                    dateCell.textContent = formattedDate;
+                    
+                    // Check if ordered within last 7 days - apply green background to entire row
+                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null) {
+                        try {
+                            const orderDate = new Date(lastOrderDateRaw);
+                            if (!isNaN(orderDate.getTime())) {
+                                const daysAgo = (new Date() - orderDate) / (1000 * 60 * 60 * 24);
+                                if (daysAgo >= 0 && daysAgo <= 7) {
+                                    row.classList.add('priority-item-recent');
+                                }
+                            }
+                        } catch (e) {
+                            // Invalid date format, skip
+                        }
+                    }
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="11" class="empty">No priority items found</td></tr>';
+                const btn = document.getElementById('priorityProcurementBtn');
+                if (btn) btn.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Error loading priority items:', error);
+            const tbody = document.getElementById('priorityBody');
+            if (tbody) {
+                let errorMsg = 'Unknown error';
+                if (error.name === 'AbortError') {
+                    errorMsg = 'Request timed out. The database is large and may take time to query. Please try again.';
+                } else if (error.message) {
+                    errorMsg = error.message;
+                }
+                // Check if data exists (might be undefined if request failed)
+                if (typeof data !== 'undefined' && data && data.error) {
+                    errorMsg = data.error;
+                    if (data.traceback) {
+                        console.error('Traceback:', data.traceback);
+                    }
+                }
+                tbody.innerHTML = 
+                    '<tr><td colspan="11" class="empty">Error loading data: ' + errorMsg + '</td></tr>';
+            }
+        }
+    }
+    
+    async function triggerRefresh() {
+        if (refreshInProgress) {
+            alert('Refresh already in progress');
+            return;
+        }
+        
+        // Check if credentials are already saved
+        let useSavedCredentials = false;
+        try {
+            const credStatus = await apiRequest('/api/credentials/status');
+            if (credStatus.success && credStatus.credentials) {
+                const nilaConfigured = credStatus.credentials.NILA?.configured;
+                const daimaConfigured = credStatus.credentials.DAIMA?.configured;
+                
+                if (nilaConfigured || daimaConfigured) {
+                    // Auto-use saved credentials, but allow user to override
+                    useSavedCredentials = true;
+                }
+            }
+        } catch (e) {
+            console.error('Error checking credentials:', e);
+        }
+        
+        let nilaUsername = null;
+        let nilaPassword = null;
+        let daimaUsername = null;
+        let daimaPassword = null;
+        
+        // If saved credentials exist, use them automatically (no prompt)
+        // User can still configure new credentials in Settings if needed
+        if (!useSavedCredentials) {
+            // Only prompt if no saved credentials exist
+            nilaUsername = prompt('Enter NILA username (or leave empty):');
+            nilaPassword = nilaUsername ? prompt('Enter NILA password:') : null;
+            
+            daimaUsername = prompt('Enter DAIMA username (or leave empty):');
+            daimaPassword = daimaUsername ? prompt('Enter DAIMA password:') : null;
+            
+            // If nothing provided and no saved credentials, show error
+            if (!nilaUsername && !daimaUsername) {
+                try {
+                    const credStatus = await apiRequest('/api/credentials/status');
+                    if (credStatus.success && credStatus.credentials) {
+                        const nilaConfigured = credStatus.credentials.NILA?.configured;
+                        const daimaConfigured = credStatus.credentials.DAIMA?.configured;
+                        if (!nilaConfigured && !daimaConfigured) {
+                            alert('Please provide credentials for at least one company or configure them in Settings first.');
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    alert('Please provide credentials for at least one company');
+                    return;
+                }
+            }
+        }
+        
+        refreshInProgress = true;
+        const refreshBtn = document.getElementById('refreshBtn');
+        const refreshStatus = document.getElementById('refreshStatus');
+        
+        refreshBtn.disabled = true;
+        refreshStatus.textContent = '🔄 Refreshing data...';
+        
+        try {
+            const result = await apiRequest('/api/refresh/all', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nila_username: nilaUsername || null,
+                    nila_password: nilaPassword || null,
+                    daima_username: daimaUsername || null,
+                    daima_password: daimaPassword || null
+                })
+            });
+            
+            if (result && result.status === 'started') {
+                refreshStatus.textContent = '✅ Refresh started. Data will update when complete.';
+                setTimeout(() => {
+                    loadDashboardData();
+                    checkRefreshStatus();
+                }, 5000);
+            } else {
+                refreshStatus.textContent = '❌ Refresh failed';
+            }
+        } catch (error) {
+            console.error('Refresh error:', error);
+            refreshStatus.textContent = '❌ Error triggering refresh';
+        } finally {
+            refreshBtn.disabled = false;
+            refreshInProgress = false;
+        }
+    }
+    
+    async function checkRefreshStatus() {
+        try {
+            const status = await apiRequest('/api/refresh/status');
+            if (status && status.last_refresh) {
+                document.getElementById('lastRefresh').textContent = 
+                    `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
+            }
+        } catch (error) {
+            console.error('Error checking refresh status:', error);
+        }
+    }
+    
+    // Check refresh status every minute
+    setInterval(checkRefreshStatus, 60000);
+    
+    function toggleAllItems(type, checked) {
+        const tableId = 'priorityTable';
+        const checkboxes = document.querySelectorAll(`#${tableId} .item-checkbox`);
+        checkboxes.forEach(cb => {
+            cb.checked = checked;
+            const index = parseInt(cb.dataset.index);
+            togglePriorityOrderQuantityInput(index, checked);
+        });
+    }
+    
+    function togglePriorityOrderQuantityInput(index, enabled) {
+        const input = document.querySelector(`.priority-order-qty-input[data-index="${index}"]`);
+        const checkbox = document.querySelector(`#priorityTable .item-checkbox[data-index="${index}"]`);
+        
+        if (input) {
+            if (enabled) {
+                // Enable input
+                input.disabled = false;
+                input.style.backgroundColor = '#fff';
+                input.style.cursor = 'text';
+                input.title = 'Enter quantity in packs';
+            } else {
+                // Disable input and reset to default value
+                input.disabled = true;
+                input.style.backgroundColor = '#e9ecef';
+                input.style.cursor = 'pointer';
+                input.title = 'Click to edit quantity (auto-selects item)';
+                
+                // Reset to default value
+                const defaultValue = input.dataset.defaultValue || '0.00';
+                input.value = defaultValue;
+                
+                // Clear custom quantity from data
+                if (window.priorityItemsData && window.priorityItemsData[index]) {
+                    delete window.priorityItemsData[index].custom_order_quantity;
+                }
+            }
+        }
+        
+        // Ensure checkbox state matches
+        if (checkbox) {
+            checkbox.checked = enabled;
+        }
+    }
+    
+    function updatePriorityOrderQuantity(index, value) {
+        const checkbox = document.querySelector(`#priorityTable .item-checkbox[data-index="${index}"]`);
+        
+        // Ensure checkbox is checked when quantity is updated
+        if (checkbox && !checkbox.checked) {
+            checkbox.checked = true;
+        }
+        
+        if (window.priorityItemsData && window.priorityItemsData[index]) {
+            const quantity = parseFloat(value) || 0;
+            window.priorityItemsData[index].custom_order_quantity = quantity;
+            console.log(`Updated order quantity for priority item ${index}: ${quantity} packs`);
+        }
+    }
+    
+    function openProcurementModal() {
+        const modal = document.getElementById('procurementModal');
+        const targetBranch = document.getElementById('targetBranch')?.value || 'BABA DOGO HQ|NILA';
+        const [targetBranchName, targetCompany] = targetBranch.split('|');
+        
+        // Store branch info in modal dataset
+        modal.dataset.branch = targetBranchName;
+        modal.dataset.company = targetCompany;
+        
+        // Load suppliers and branches
+        loadSuppliers();
+        loadDestinationBranches(targetBranchName, targetCompany);
+        
+        modal.style.display = 'block';
+    }
+    
+    function closeProcurementModal() {
+        document.getElementById('procurementModal').style.display = 'none';
+    }
+    
+    function toggleProcurementOptions() {
+        const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
+        const supplierGroup = document.getElementById('supplierSelectionGroup');
+        const branchGroup = document.getElementById('branchSelectionGroup');
+        
+        if (orderMode === 'purchase_order') {
+            supplierGroup.style.display = 'block';
+            branchGroup.style.display = 'none';
+        } else {
+            supplierGroup.style.display = 'none';
+            branchGroup.style.display = 'block';
+        }
+    }
+    
+    async function loadSuppliers() {
+        try {
+            const targetBranch = document.getElementById('targetBranch')?.value || 'BABA DOGO HQ|NILA';
+            const [targetBranchName, targetCompany] = targetBranch.split('|');
+            
+            // Get branch code for supplier API
+            let branchCode = 1; // Default to BABA DOGO HQ
+            if (targetCompany === 'DAIMA') {
+                branchCode = 13; // DAIMA MERU WHOLESALE
+            }
+            
+            const suppliers = await apiRequest(`/api/suppliers/list?bcode=${branchCode}`);
+            window.suppliersList = suppliers || [];
+            console.log(`Loaded ${window.suppliersList.length} suppliers`);
+        } catch (error) {
+            console.error('Error loading suppliers:', error);
+            window.suppliersList = [];
+        }
+    }
+    
+    function searchSuppliers(searchTerm) {
+        const dropdown = document.getElementById('supplierDropdown');
+        dropdown.innerHTML = '';
+        
+        if (!searchTerm || searchTerm.length < 2) {
+            dropdown.style.display = 'none';
+            return;
+        }
+        
+        const filtered = (window.suppliersList || []).filter(s => 
+            s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            s.code.toLowerCase().includes(searchTerm.toLowerCase())
+        ).slice(0, 10);
+        
+        if (filtered.length === 0) {
+            dropdown.style.display = 'none';
+            return;
+        }
+        
+        filtered.forEach(supplier => {
+            const item = document.createElement('div');
+            item.className = 'supplier-dropdown-item';
+            item.textContent = `${supplier.name} (${supplier.code})`;
+            item.onclick = () => selectSupplier(supplier.code, supplier.name);
+            dropdown.appendChild(item);
+        });
+        
+        dropdown.style.display = 'block';
+    }
+    
+    function selectSupplier(code, name) {
+        document.getElementById('selectedSupplierCode').value = code;
+        document.getElementById('selectedSupplierName').value = name;
+        document.getElementById('selectedSupplierText').textContent = `${name} (${code})`;
+        document.getElementById('selectedSupplierDisplay').style.display = 'block';
+        document.getElementById('supplierSearch').value = '';
+        document.getElementById('supplierDropdown').style.display = 'none';
+    }
+    
+    function showSupplierDropdown() {
+        const dropdown = document.getElementById('supplierDropdown');
+        const searchTerm = document.getElementById('supplierSearch').value;
+        if (searchTerm && searchTerm.length >= 2) {
+            searchSuppliers(searchTerm);
+        }
+    }
+    
+    function hideSupplierDropdown() {
+        // Delay hiding to allow click events
+        setTimeout(() => {
+            document.getElementById('supplierDropdown').style.display = 'none';
+        }, 200);
+    }
+    
+    async function loadDestinationBranches(currentBranch, currentCompany) {
+        try {
+            console.log(`Loading destination branches for target: ${currentBranch} (${currentCompany})`);
+            const response = await apiRequest('/api/dashboard/branches');
+            const select = document.getElementById('destinationBranchSelect');
+            select.innerHTML = '<option value="">-- Select Branch --</option>';
+            
+            const branches = response.data || response.branches || [];
+            
+            if (!response.success || branches.length === 0) {
+                console.warn('No branches found in API response:', response);
+                select.innerHTML = '<option value="">No branches available</option>';
+                return;
+            }
+            
+            const filteredBranches = branches.filter(branch => {
+                const branchCompany = (branch.company || '').trim().toUpperCase();
+                const targetCompany = (currentCompany || '').trim().toUpperCase();
+                
+                if (branchCompany !== targetCompany) {
+                    return false;
+                }
+                
+                const branchName = (branch.branch_name || '').trim();
+                const targetBranch = (currentBranch || '').trim();
+                
+                if (branchName === targetBranch) {
+                    return false;
+                }
+                
+                return true;
+            });
+            
+            console.log(`Found ${filteredBranches.length} branches for ${currentCompany} (excluding current branch)`);
+            
+            if (filteredBranches.length === 0) {
+                select.innerHTML = `<option value="">No other ${currentCompany} branches available</option>`;
+                return;
+            }
+            
+            filteredBranches.forEach(branch => {
+                const option = document.createElement('option');
+                const branchName = branch.branch_name || '';
+                const branchCompany = branch.company || '';
+                option.value = `${branchName}|${branchCompany}`;
+                option.textContent = `${branchName} (${branchCompany})`;
+                option.dataset.branchCode = branch.branch_code || branch.branchcode || '';
+                select.appendChild(option);
+            });
+            
+            console.log(`Successfully loaded ${filteredBranches.length} destination branches`);
+        } catch (error) {
+            console.error('Error loading destination branches:', error);
+            const select = document.getElementById('destinationBranchSelect');
+            select.innerHTML = '<option value="">Error loading branches</option>';
+        }
+    }
+    
+    async function runProcurementBot(type) {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            alert('Please login first');
+            window.location.href = '/';
+            return;
+        }
+        
+        // Get selected items
+        const tableId = 'priorityTable';
+        const checkboxes = document.querySelectorAll(`#${tableId} .item-checkbox:checked`);
+        
+        if (checkboxes.length === 0) {
+            alert('Please select at least one item to order');
+            return;
+        }
+        
+        // Get items data with custom order quantities
+        const itemsData = window.priorityItemsData;
+        const selectedItems = Array.from(checkboxes).map(cb => {
+            const index = parseInt(cb.dataset.index);
+            const item = { ...itemsData[index] }; // Copy item
+            
+            // Get custom order quantity from input field
+            const qtyInput = document.querySelector(`.priority-order-qty-input[data-index="${index}"]`);
+            if (qtyInput && qtyInput.value) {
+                const customQty = parseFloat(qtyInput.value) || 0;
+                item.custom_order_quantity = customQty;
+                console.log(`Using custom order quantity for ${item.item_code}: ${customQty} packs`);
+            } else {
+                // Use AMC as fallback
+                const packSize = parseFloat(item.pack_size) || 1;
+                const amcPieces = parseFloat(item.amc) || 0;
+                const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                item.custom_order_quantity = amcPacks;
+                console.log(`Using AMC as order quantity for ${item.item_code}: ${amcPacks} packs`);
+            }
+            
+            return item;
+        });
+        
+        // Open procurement modal
+        openProcurementModal();
+        
+        // Store selected items in modal dataset for later use
+        document.getElementById('procurementModal').dataset.selectedItems = JSON.stringify(selectedItems);
+    }
+    
+    async function confirmProcurementOrder() {
+        const modal = document.getElementById('procurementModal');
+        const branch = modal.dataset.branch;
+        const company = modal.dataset.company;
+        
+        // Get selected items from modal dataset
+        const selectedItems = JSON.parse(modal.dataset.selectedItems || '[]');
+        
+        if (selectedItems.length === 0) {
+            alert('No items selected');
+            return;
+        }
+        
+        // Get order mode
+        const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
+        
+        // Get source branch (for branch orders)
+        const sourceBranchValue = document.getElementById('sourceBranch')?.value || `${branch}|${company}`;
+        const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
+        
+        // Validate based on order mode
+        if (orderMode === 'purchase_order') {
+            // Validate supplier selection
+            const supplierCode = document.getElementById('selectedSupplierCode').value;
+            const supplierName = document.getElementById('selectedSupplierName').value;
+            
+            if (!supplierCode || !supplierName) {
+                alert('Please select a supplier for the purchase order');
+                return;
+            }
+            
+            // Batch items if more than 20
+            await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName);
+        } else {
+            // Branch order mode
+            const destinationBranchValue = document.getElementById('destinationBranchSelect').value;
+            if (!destinationBranchValue) {
+                alert('Please select a destination branch for the branch order');
+                return;
+            }
+            
+            const [destBranch, destCompany] = destinationBranchValue.split('|').map(s => s.trim());
+            
+            // Batch items if more than 20
+            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order');
+        }
+    }
+    
+    async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null) {
+        const BATCH_SIZE = 20;
+        const batches = [];
+        
+        // Split items into batches of max 20
+        for (let i = 0; i < selectedItems.length; i += BATCH_SIZE) {
+            batches.push(selectedItems.slice(i, i + BATCH_SIZE));
+        }
+        
+        console.log(`Creating ${batches.length} batch(es) for ${selectedItems.length} items`);
+        
+        let totalSuccess = 0;
+        let totalFailed = 0;
+        const orderNumbers = [];
+        
+        // Process each batch
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex];
+            const batchNum = batchIndex + 1;
+            
+            try {
+                const requestBody = {
+                    items: batch,
+                    branch_name: branch,
+                    branch_company: company,
+                    source_branch_name: sourceBranch,
+                    source_branch_company: sourceCompany,
+                    order_mode: orderMode,
+                    manual_selection: true
+                };
+                
+                if (orderMode === 'purchase_order' && supplierCode && supplierName) {
+                    requestBody.supplier_code = supplierCode;
+                    requestBody.supplier_name = supplierName;
+                }
+                
+                console.log(`Creating batch ${batchNum}/${batches.length} with ${batch.length} items...`);
+                
+                const result = await apiRequest('/api/procurement/run', {
+                    method: 'POST',
+                    body: JSON.stringify(requestBody)
+                });
+                
+                if (result.success) {
+                    totalSuccess += result.successful_orders || batch.length;
+                    if (result.order_number) {
+                        orderNumbers.push(result.order_number);
+                    }
+                    console.log(`✅ Batch ${batchNum} completed: ${result.successful_orders || batch.length} items`);
+                } else {
+                    totalFailed += batch.length;
+                    console.error(`❌ Batch ${batchNum} failed: ${result.message}`);
+                }
+            } catch (error) {
+                totalFailed += batch.length;
+                console.error(`❌ Batch ${batchNum} error:`, error);
+            }
+        }
+        
+        // Show summary
+        const orderType = orderMode === 'purchase_order' ? 'Purchase Order' : 'Branch Order';
+        let message = `✅ ${orderType} Creation Complete!\n\n`;
+        message += `Total Items: ${selectedItems.length}\n`;
+        message += `Successful: ${totalSuccess}\n`;
+        message += `Failed: ${totalFailed}\n`;
+        message += `Batches: ${batches.length}\n`;
+        if (orderNumbers.length > 0) {
+            message += `\nOrder Numbers:\n${orderNumbers.join('\n')}`;
+        }
+        
+        alert(message);
+        closeProcurementModal();
+        
+        // Reload priority items to reflect new orders
+        loadPriorityItems();
+    }
+    
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('procurementModal');
+        if (event.target === modal) {
+            closeProcurementModal();
+        }
+    }
+    
+    // Store current sort state for dashboard tables
+    let dashboardSort = { priority: { column: null, direction: null } };
+    
+    function showFilter(tableType, column, event) {
+        if (event) {
+            event.stopPropagation();
+        }
+        
+        // Create dropdown menu
+        const menu = document.createElement('div');
+        menu.style.cssText = 'position: absolute; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 1000; padding: 5px 0; min-width: 200px;';
+        
+        // Determine column type
+        const isDateColumn = column.toLowerCase().includes('date') || column.toLowerCase().includes('time');
+        const isNumericColumn = column.toLowerCase().includes('stock') || column.toLowerCase().includes('amc') || 
+                               column.toLowerCase().includes('level') || column.toLowerCase().includes('pct') ||
+                               column.toLowerCase().includes('pieces') || column.toLowerCase().includes('packs');
+        
+        // Add sort options
+        const options = [];
+        
+        if (isDateColumn) {
+            options.push({ label: '🔼 Newest to Oldest', value: 'desc' });
+            options.push({ label: '🔽 Oldest to Newest', value: 'asc' });
+        } else if (isNumericColumn) {
+            options.push({ label: '🔢 High to Low', value: 'desc' });
+            options.push({ label: '🔢 Low to High', value: 'asc' });
+        } else {
+            options.push({ label: '🔤 A to Z', value: 'asc' });
+            options.push({ label: '🔤 Z to A', value: 'desc' });
+        }
+        
+        options.push({ label: '❌ Clear Sort', value: 'clear' });
+        
+        options.forEach(opt => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding: 8px 15px; cursor: pointer; font-size: 14px;';
+            item.textContent = opt.label;
+            item.onmouseover = () => item.style.background = '#f0f0f0';
+            item.onmouseout = () => item.style.background = 'white';
+            item.onclick = () => {
+                if (opt.value === 'clear') {
+                    sortDashboardTable(tableType, column, null);
+                } else {
+                    sortDashboardTable(tableType, column, opt.value);
+                }
+                document.body.removeChild(menu);
+            };
+            menu.appendChild(item);
+        });
+        
+        // Position menu near click
+        if (event) {
+            const rect = event.target.getBoundingClientRect();
+            menu.style.left = rect.left + 'px';
+            menu.style.top = (rect.bottom + 5) + 'px';
+        } else {
+            menu.style.left = '50%';
+            menu.style.top = '50%';
+        }
+        
+        document.body.appendChild(menu);
+        
+        // Close menu when clicking outside
+        setTimeout(() => {
+            const closeMenu = (e) => {
+                if (!menu.contains(e.target) && e.target !== event?.target) {
+                    if (document.body.contains(menu)) {
+                        document.body.removeChild(menu);
+                    }
+                    document.removeEventListener('click', closeMenu);
+                }
+            };
+            document.addEventListener('click', closeMenu);
+        }, 100);
+    }
+    
+    function sortDashboardTable(tableType, column, direction) {
+        let tbody, dataArray, dataKey;
+        
+        if (tableType === 'priority') {
+            tbody = document.getElementById('priorityBody');
+            dataArray = window.priorityItemsData;
+            dataKey = 'priorityItemsData';
+        } else {
+            return;
+        }
+        
+        if (!tbody || !dataArray || dataArray.length === 0) return;
+        
+        // Clear sort
+        if (!direction) {
+            dashboardSort['priority'] = { column: null, direction: null };
+            // Reload original data
+            loadPriorityItems();
+            return;
+        }
+        
+        // Store sort state
+        dashboardSort['priority'] = { column, direction };
+        
+        // Map column names to data keys
+        const columnMap = {
+            'item_code': 'item_code',
+            'item_name': 'item_name',
+            'stock': 'stock_pieces',
+            'invoice_date': 'invoice_date',
+            'hq_stock': 'source_stock_packs',
+            'branch': 'branch_name',
+            'branch_stock': 'target_stock_packs',
+            'abc_class': 'abc_class',
+            'stock_level': 'stock_level_pct',
+            'amc': 'amc_packs',
+            'last_order_date': 'last_order_date'
+        };
+        
+        const dataKeyName = columnMap[column] || column;
+        
+        // Determine column type
+        const isDateColumn = column.toLowerCase().includes('date') || column.toLowerCase().includes('time');
+        const isNumericColumn = column.toLowerCase().includes('stock') || column.toLowerCase().includes('amc') || 
+                               column.toLowerCase().includes('level') || column.toLowerCase().includes('pct') ||
+                               column.toLowerCase().includes('pieces') || column.toLowerCase().includes('packs');
+        
+        // Sort data array
+        const sortedData = [...dataArray].sort((a, b) => {
+            let aVal = a[dataKeyName] || '';
+            let bVal = b[dataKeyName] || '';
+            
+            // Handle dates
+            if (isDateColumn) {
+                aVal = aVal ? new Date(aVal) : new Date(0);
+                bVal = bVal ? new Date(bVal) : new Date(0);
+                return direction === 'asc' ? aVal - bVal : bVal - aVal;
+            }
+            
+            // Handle numbers
+            if (isNumericColumn) {
+                aVal = parseFloat(aVal) || 0;
+                bVal = parseFloat(bVal) || 0;
+                return direction === 'asc' ? aVal - bVal : bVal - aVal;
+            }
+            
+            // Handle text
+            aVal = String(aVal).toLowerCase();
+            bVal = String(bVal).toLowerCase();
+            if (direction === 'asc') {
+                return aVal.localeCompare(bVal);
+            } else {
+                return bVal.localeCompare(aVal);
+            }
+        });
+        
+        // Update window data
+        window[dataKey] = sortedData;
+        
+        // Rebuild table rows
+        tbody.innerHTML = '';
+        
+        if (tableType === 'new_arrivals') {
+            sortedData.forEach((item, index) => {
+                const row = tbody.insertRow();
+                
+                const checkboxCell = row.insertCell(0);
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'item-checkbox';
+                checkbox.dataset.index = index;
+                checkboxCell.appendChild(checkbox);
+                
+                row.insertCell(1).textContent = item.item_code || '';
+                row.insertCell(2).textContent = item.item_name || '';
+                
+                const stockPieces = parseFloat(item.stock_pieces || item.branch_stock_pieces || 0);
+                const stockCell = row.insertCell(3);
+                stockCell.textContent = stockPieces.toFixed(0);
+                if (stockPieces === 0) {
+                    stockCell.classList.add('stock-zero');
+                } else if (stockPieces < 10) {
+                    stockCell.classList.add('stock-low');
+                } else {
+                    stockCell.classList.add('stock-good');
+                }
+                
+                const invoiceDateRaw = item.invoice_date || item.document_date || null;
+                const invoiceDateFormatted = formatDate(invoiceDateRaw);
+                row.insertCell(4).textContent = invoiceDateFormatted;
+            });
+        } else {
+            // Priority items table
+            sortedData.forEach((item, index) => {
+                const row = tbody.insertRow();
+                
+                const checkboxCell = row.insertCell(0);
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'item-checkbox';
+                checkbox.dataset.index = index;
+                checkboxCell.appendChild(checkbox);
+                
+                row.insertCell(1).textContent = item.item_code || '';
+                row.insertCell(2).textContent = item.item_name || '';
+                
+                const hqStock = parseFloat(item.source_stock_packs || item.hq_stock_packs || 0);
+                const hqCell = row.insertCell(3);
+                hqCell.textContent = hqStock.toFixed(0);
+                if (hqStock === 0) {
+                    hqCell.classList.add('stock-zero');
+                } else if (hqStock < 10) {
+                    hqCell.classList.add('stock-low');
+                } else {
+                    hqCell.classList.add('stock-good');
+                }
+                
+                row.insertCell(4).textContent = item.branch_name || item.target_branch || '';
+                
+                const branchStock = parseFloat(item.target_stock_packs || item.branch_stock_packs || 0);
+                const branchStockCell = row.insertCell(5);
+                branchStockCell.textContent = branchStock.toFixed(0);
+                if (branchStock === 0) {
+                    branchStockCell.classList.add('stock-zero');
+                } else if (branchStock < 10) {
+                    branchStockCell.classList.add('stock-low');
+                } else {
+                    branchStockCell.classList.add('stock-good');
+                }
+                
+                const abcClass = item.abc_class || '';
+                const abcCell = row.insertCell(6);
+                abcCell.textContent = abcClass;
+                if (abcClass === 'A') {
+                    abcCell.classList.add('abc-class-a');
+                } else if (abcClass === 'B') {
+                    abcCell.classList.add('abc-class-b');
+                } else if (abcClass === 'C') {
+                    abcCell.classList.add('abc-class-c');
+                }
+                
+                const stockLevel = parseFloat(item.stock_level_pct || 0);
+                const stockLevelCell = row.insertCell(7);
+                stockLevelCell.textContent = stockLevel.toFixed(1) + '%';
+                if (stockLevel < 20) {
+                    stockLevelCell.classList.add('stock-pct-critical');
+                } else if (stockLevel < 30) {
+                    stockLevelCell.classList.add('stock-pct-warning');
+                } else {
+                    stockLevelCell.classList.add('stock-pct-good');
+                }
+                
+                const amc = parseFloat(item.amc_packs || item.amc || 0);
+                row.insertCell(8).textContent = amc.toFixed(2);
+                
+                const lastOrderDateRaw = item.last_order_date || null;
+                const dateCell = row.insertCell(10);
+                const formattedDate = formatDate(lastOrderDateRaw);
+                dateCell.textContent = formattedDate;
+                
+                if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null) {
+                    try {
+                        const orderDate = new Date(lastOrderDateRaw);
+                        if (!isNaN(orderDate.getTime())) {
+                            const daysAgo = (new Date() - orderDate) / (1000 * 60 * 60 * 24);
+                            if (daysAgo >= 0 && daysAgo <= 7) {
+                                row.classList.add('priority-item-recent');
+                            }
+                        }
+                    } catch (e) {
+                        // Invalid date format, skip
+                    }
+                }
+            });
+        }
+        
+        // Show procurement button if items exist
+        const btn = document.getElementById('priorityProcurementBtn');
+        if (btn && sortedData.length > 0) {
+            btn.style.display = 'inline-block';
+        }
+    }
+</script>
+{% endblock %}
+
