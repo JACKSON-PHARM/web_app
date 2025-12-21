@@ -70,6 +70,11 @@ async def lifespan(app: FastAPI):
                     db_size = os.path.getsize(local_db_path) / (1024 * 1024)
                     logger.info(f"✅ Database downloaded successfully ({db_size:.2f} MB)")
                     logger.info(f"📁 Database location: {local_db_path}")
+                    
+                    # Reset db_manager singleton so it reinitializes with the downloaded database
+                    from app.dependencies import reset_db_manager
+                    reset_db_manager()
+                    logger.info("🔄 Database manager will be reinitialized with downloaded database")
                 else:
                     logger.info("ℹ️ No existing database found in Drive, will create new one on first refresh")
             else:
