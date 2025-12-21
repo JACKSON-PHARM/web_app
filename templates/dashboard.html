@@ -1035,6 +1035,38 @@
     checkSyncStatus();
     setInterval(checkSyncStatus, 5000);
     
+    // Check sync status
+    async function checkSyncStatus() {
+        try {
+            const status = await apiRequest('/api/dashboard/sync-status');
+            const syncStatusText = document.getElementById('syncStatusText');
+            if (syncStatusText) {
+                const syncStatus = status.status?.sync_status || 'unknown';
+                const message = status.status?.message || '';
+                
+                if (syncStatus === 'synced') {
+                    syncStatusText.textContent = '✅ Database synced';
+                    syncStatusText.style.color = '#28a745';
+                } else if (syncStatus === 'outdated') {
+                    syncStatusText.textContent = '🔄 Syncing newer data in background...';
+                    syncStatusText.style.color = '#ffc107';
+                } else if (syncStatus === 'missing') {
+                    syncStatusText.textContent = '📥 Downloading database...';
+                    syncStatusText.style.color = '#007bff';
+                } else {
+                    syncStatusText.textContent = message || 'Sync status unknown';
+                    syncStatusText.style.color = '#666';
+                }
+            }
+        } catch (error) {
+            console.error('Error checking sync status:', error);
+        }
+    }
+    
+    // Check sync status on load and every 5 seconds
+    checkSyncStatus();
+    setInterval(checkSyncStatus, 5000);
+    
     function toggleAllItems(type, checked) {
         const tableId = 'priorityTable';
         const checkboxes = document.querySelectorAll(`#${tableId} .item-checkbox`);
