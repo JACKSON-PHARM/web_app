@@ -29,9 +29,19 @@
             <div style="margin-bottom: 15px; padding: 15px; background: #e7f3ff; border-radius: 5px; border: 1px solid #b3d9ff;">
                 <h4 style="margin-top: 0;">📤 Upload Google Credentials</h4>
                 <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
-                    Upload your <code>google_credentials.json</code> file from Google Cloud Console to enable Google Drive features.
+                    <strong>How to get your credentials file:</strong>
                 </p>
-                <input type="file" id="credentialsFile" accept=".json" style="margin-bottom: 10px;">
+                <ol style="font-size: 14px; color: #666; margin-left: 20px; margin-bottom: 15px;">
+                    <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → APIs & Services → Credentials</a></li>
+                    <li>Click on your OAuth 2.0 Client ID (or create one if you don't have it)</li>
+                    <li>Click "Download JSON" button</li>
+                    <li>Rename the downloaded file to <code>google_credentials.json</code></li>
+                    <li>Upload it below</li>
+                </ol>
+                <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                    <strong>Upload your credentials file:</strong>
+                </p>
+                <input type="file" id="credentialsFile" accept=".json" style="margin-bottom: 10px; display: block;">
                 <button onclick="uploadCredentials()" class="btn btn-primary">Upload Credentials</button>
             </div>
         </div>
@@ -278,12 +288,6 @@
                         html += `<p style="color: #666; font-size: 12px; margin-top: 10px;">Folder ID: ${info.folder_id}</p>`;
                     }
                 }
-                
-                // Add action buttons
-                html += '<div style="margin-top: 15px; display: flex; gap: 10px;">';
-                html += '<button onclick="syncDatabase()" class="btn btn-primary">📥 Download from Drive</button>';
-                html += '<button onclick="uploadDatabase()" class="btn btn-success">📤 Upload to Drive</button>';
-                html += '</div>';
                 
                 html += '</div>';
                 document.getElementById('driveInfo').innerHTML = html;
