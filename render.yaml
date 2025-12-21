@@ -3,15 +3,17 @@ services:
     name: pharmastock-web
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 300
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: PORT
         value: 8000
       # RENDER_EXTERNAL_URL is automatically set by Render - no need to set manually
-    disk:
-      name: pharmastock-data
-      mountPath: /app/cache
-      sizeGB: 10
+    # Note: Disk removed for free tier compatibility
+    # If upgrading to paid tier, uncomment below:
+    # disk:
+    #   name: pharmastock-data
+    #   mountPath: /app/cache
+    #   sizeGB: 10
 
