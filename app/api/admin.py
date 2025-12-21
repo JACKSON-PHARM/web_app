@@ -1,12 +1,13 @@
 """
 Admin API Routes
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, UploadFile, File
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import os
+import json
 from app.dependencies import get_current_admin, get_drive_manager
 from app.services.user_service import UserService
 
@@ -155,6 +156,7 @@ async def get_authorization_url(
 ):
     """Get Google Drive authorization URL (admin only)"""
     from app.config import settings
+    import os
     try:
         auth_url = drive_manager.get_authorization_url()
         return {
@@ -164,8 +166,81 @@ async def get_authorization_url(
             "message": "Visit this URL to authorize Google Drive access. After authorization, you'll be redirected back.",
             "instructions": "1. Copy the authorization_url\n2. Visit it in your browser\n3. Sign in with 2\n4. Authorize the app\n5. You'll be redirected back automatically"
         }
+    except FileNotFoundError as e:
+        # Provide helpful error message for missing credentials
+        creds_path = settings.GOOGLE_CREDENTIALS_FILE
+        error_msg = str(e)
+        if "google_credentials.json" in error_msg.lower():
+            error_msg = (
+                f"Google credentials file not found.\n\n"
+                f"To fix this:\n"
+                f"1. Download your OAuth 2.0 credentials from Google Cloud Console\n"
+                f"2. Name the file 'google_credentials.json'\n"
+                f"3. Upload it via the admin panel (upload feature) OR\n"
+                f"4. Set GOOGLE_CREDENTIALS_JSON environment variable in Render with the file contents\n\n"
+                f"Expected location: {creds_path}"
+            )
+        raise HTTPException(status_code=404, detail=error_msg)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/drive/upload-credentials")
+async def upload_credentials(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_admin)
+):
+    """Upload Google credentials file (admin only)"""
+    from app.config import settings
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Validate file name
+        if file.filename != "google_credentials.json":
+            raise HTTPException(
+                status_code=400, 
+                detail="File must be named 'google_credentials.json'"
+            )
+        
+        # Read file contents
+        contents = await file.read()
+        
+        # Validate JSON
+        try:
+            creds_data = json.loads(contents)
+            # Validate it has required fields
+            if "web" not in creds_data and "installed" not in creds_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid credentials file. Must contain 'web' or 'installed' section."
+                )
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid JSON file"
+            )
+        
+        # Save to credentials file location
+        creds_path = settings.GOOGLE_CREDENTIALS_FILE
+        os.makedirs(os.path.dirname(creds_path), exist_ok=True)
+        
+        with open(creds_path, 'wb') as f:
+            f.write(contents)
+        
+        logger.info(f"✅ Credentials file uploaded successfully to: {creds_path}")
+        
+        return {
+            "success": True,
+            "message": "Credentials file uploaded successfully. You can now use 'Get Authorization URL' to authorize Google Drive access.",
+            "path": creds_path
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading credentials: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error uploading credentials: {str(e)}")
 
 @router.get("/drive/callback")
 async def oauth_callback(

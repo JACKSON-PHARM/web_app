@@ -366,7 +366,23 @@ class GoogleDriveManager:
     def get_authorization_url(self) -> str:
         """Get Google Drive OAuth authorization URL"""
         if not os.path.exists(self.credentials_file):
-            raise FileNotFoundError(f"Google credentials file not found: {self.credentials_file}")
+            # Check if credentials are provided via environment variable
+            creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+            if creds_json:
+                try:
+                    # Write credentials from environment variable to file
+                    os.makedirs(os.path.dirname(self.credentials_file), exist_ok=True)
+                    with open(self.credentials_file, 'w') as f:
+                        f.write(creds_json)
+                    logger.info(f"✅ Created credentials file from environment variable")
+                except Exception as e:
+                    logger.error(f"❌ Error writing credentials from environment: {e}")
+                    raise FileNotFoundError(f"Google credentials file not found and failed to create from environment: {self.credentials_file}")
+            else:
+                raise FileNotFoundError(
+                    f"Google credentials file not found: {self.credentials_file}\n"
+                    f"Please upload google_credentials.json via the admin panel or set GOOGLE_CREDENTIALS_JSON environment variable."
+                )
         
         redirect_uri = settings.GOOGLE_OAUTH_CALLBACK_URL
         logger.info(f"🔵 Using redirect URI: {redirect_uri}")

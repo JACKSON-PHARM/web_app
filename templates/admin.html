@@ -25,6 +25,16 @@
     <div class="card">
         <div class="card-header">Google Drive Info</div>
         <div id="driveInfo" class="loading">Loading...</div>
+        <div style="margin-top: 15px;">
+            <div style="margin-bottom: 15px; padding: 15px; background: #e7f3ff; border-radius: 5px; border: 1px solid #b3d9ff;">
+                <h4 style="margin-top: 0;">📤 Upload Google Credentials</h4>
+                <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                    Upload your <code>google_credentials.json</code> file from Google Cloud Console to enable Google Drive features.
+                </p>
+                <input type="file" id="credentialsFile" accept=".json" style="margin-bottom: 10px;">
+                <button onclick="uploadCredentials()" class="btn btn-primary">Upload Credentials</button>
+            </div>
+        </div>
         <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
             <button onclick="getAuthorizationUrl()" class="btn btn-success">Get Authorization URL</button>
             <button onclick="syncDatabase()" class="btn btn-primary">📥 Download from Drive</button>
@@ -308,12 +318,62 @@
             if (error.message && error.message.includes('401')) {
                 html += '<p style="color: #dc3545;"><strong>Status:</strong> ❌ Authentication Required</p>';
                 html += '<p style="color: #666; font-size: 14px;">Please make sure you are logged in as an admin user.</p>';
+            } else if (error.message && error.message.includes('credentials')) {
+                html += '<p style="color: #dc3545;"><strong>Status:</strong> ❌ Credentials File Missing</p>';
+                html += '<p style="color: #666; font-size: 14px; margin-top: 10px;">';
+                html += 'To enable Google Drive features:<br>';
+                html += '1. Download your OAuth 2.0 credentials from Google Cloud Console<br>';
+                html += '2. Name the file "google_credentials.json"<br>';
+                html += '3. Upload it using the "Upload Credentials" section above';
+                html += '</p>';
             } else {
                 html += `<p style="color: #dc3545;"><strong>Status:</strong> ❌ Error: ${error.message || 'Unknown error'}</p>`;
             }
-            html += '<p style="color: #666; font-size: 14px; margin-top: 15px;">Click "Get Authorization URL" to start the setup process.</p>';
+            html += '<p style="color: #666; font-size: 14px; margin-top: 15px;">Click "Get Authorization URL" to start the setup process (after uploading credentials).</p>';
             html += '</div>';
             document.getElementById('driveInfo').innerHTML = html;
+        }
+    }
+    
+    async function uploadCredentials() {
+        const fileInput = document.getElementById('credentialsFile');
+        const file = fileInput.files[0];
+        
+        if (!file) {
+            alert('❌ Please select a file to upload');
+            return;
+        }
+        
+        if (file.name !== 'google_credentials.json') {
+            alert('❌ File must be named "google_credentials.json"');
+            return;
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const response = await fetch('/api/admin/drive/upload-credentials', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                },
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                alert(`✅ ${result.message}`);
+                // Clear file input
+                fileInput.value = '';
+                // Reload drive info
+                loadDriveInfo();
+            } else {
+                alert(`❌ Error: ${result.detail || result.message || 'Failed to upload credentials'}`);
+            }
+        } catch (error) {
+            alert(`❌ Error uploading credentials: ${error.message}`);
         }
     }
     
