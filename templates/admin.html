@@ -291,7 +291,15 @@
                     if (info.exists) {
                         html += `<p><strong>Size:</strong> ${info.size_mb} MB</p>`;
                         html += `<p><strong>Last Modified:</strong> ${info.modified ? new Date(info.modified).toLocaleString() : 'Unknown'}</p>`;
-                        html += `<p style="color: #666; font-size: 14px; margin-top: 10px;">✅ Database is synced and available in Google Drive</p>`;
+                        html += `<p style="color: #28a745; font-size: 14px; margin-top: 10px;">✅ Database is synced and available in Google Drive</p>`;
+                        html += '<div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 5px; padding: 10px; margin-top: 10px;">';
+                        html += '<p style="color: #0c5460; font-size: 13px; margin: 0;"><strong>💡 How it works:</strong></p>';
+                        html += '<ul style="color: #0c5460; font-size: 12px; margin: 5px 0 0 20px; padding: 0;">';
+                        html += '<li>On startup, the app downloads the latest database from Drive</li>';
+                        html += '<li>When you click "Refresh Now", it downloads from Drive, merges new data, and uploads back</li>';
+                        html += '<li>This ensures everyone always has the most recent data</li>';
+                        html += '</ul>';
+                        html += '</div>';
                     } else {
                         html += `<p style="color: #ffc107; margin-top: 10px;">⚠️ Database not found in Drive. Use the refresh function to upload it.</p>`;
                     }
