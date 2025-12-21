@@ -7,9 +7,19 @@ from app.dependencies import get_current_user, get_db_manager
 import sys
 import os
 
-# Add parent directory to import stock view service
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-from ui.stock_view_service import StockViewService
+# Add parent directory to import stock view service (if available)
+parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+if os.path.exists(parent_path):
+    sys.path.insert(0, parent_path)
+
+try:
+    from ui.stock_view_service import StockViewService
+except ImportError:
+    # Fallback: Try to import from a local copy if parent doesn't exist
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("Could not import StockViewService from parent directory - stock view may not work")
+    StockViewService = None
 
 router = APIRouter()
 
@@ -28,10 +38,22 @@ async def get_stock_view_data(
     logger = logging.getLogger(__name__)
     
     try:
+        if StockViewService is None:
+            return {
+                "success": False,
+                "error": "StockViewService not available - parent directory import failed",
+                "data": [],
+                "count": 0
+            }
+        
         logger.info(f"Stock view request: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
         logger.info(f"Database path: {db_manager.db_path}")
         
-        stock_service = StockViewService(db_manager.db_path, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        app_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+        if not os.path.exists(app_root):
+            app_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        
+        stock_service = StockViewService(db_manager.db_path, app_root)
         
         # Use defaults if not provided
         if not source_branch_name:

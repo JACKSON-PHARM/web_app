@@ -155,7 +155,24 @@ app.include_router(suppliers.router, prefix="/api/suppliers", tags=["Suppliers"]
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Render"""
-    return {"status": "ok", "message": "PharmaStock Web App is running"}
+    try:
+        # Test database connection
+        db_manager = get_db_manager()
+        db_info = db_manager.get_database_info()
+        return {
+            "status": "ok", 
+            "message": "PharmaStock Web App is running",
+            "database": {
+                "exists": db_info.get("exists", False),
+                "path": db_info.get("path", "unknown")
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "message": "PharmaStock Web App is running but some services may be unavailable",
+            "error": str(e)
+        }
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
