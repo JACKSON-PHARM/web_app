@@ -184,14 +184,22 @@ async def get_new_arrivals(
                 """, item_codes + [target_branch, target_company])
                 branch_stock_dict = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
                 
-                # Batch query for last order dates
+                # Batch query for last order dates (combining purchase_orders and branch_orders)
                 cursor.execute(f"""
                     SELECT item_code, MAX(document_date) as last_order_date
-                    FROM purchase_orders
-                    WHERE item_code IN ({placeholders})
-                    AND branch = ? AND company = ?
+                    FROM (
+                        SELECT item_code, document_date
+                        FROM purchase_orders
+                        WHERE item_code IN ({placeholders})
+                        AND branch = ? AND company = ?
+                        UNION ALL
+                        SELECT item_code, document_date
+                        FROM branch_orders
+                        WHERE item_code IN ({placeholders})
+                        AND source_branch = ? AND company = ?
+                    ) combined_orders
                     GROUP BY item_code
-                """, item_codes + [target_branch, target_company])
+                """, item_codes + [target_branch, target_company] + item_codes + [target_branch, target_company])
                 last_order_dict = {row[0]: row[1] for row in cursor.fetchall()}
                 
                 conn.close()

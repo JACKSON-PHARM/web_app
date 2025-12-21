@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
         
         if settings.AUTO_REFRESH_ENABLED:
             await scheduler.start()
-            logger.info(f"✅ Auto-refresh scheduler started (interval: {settings.AUTO_REFRESH_INTERVAL_MINUTES} minutes)")
+            logger.info(f"✅ Auto-refresh scheduler started (every 60 minutes between 8:00 AM and 6:00 PM)")
         else:
             logger.info("ℹ️ Auto-refresh is disabled")
         
