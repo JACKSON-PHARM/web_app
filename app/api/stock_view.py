@@ -7,19 +7,25 @@ from app.dependencies import get_current_user, get_db_manager
 import sys
 import os
 
-# Add parent directory to import stock view service (if available)
-parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-if os.path.exists(parent_path):
-    sys.path.insert(0, parent_path)
-
+# Try to import StockViewService - first from local web_app copy, then from parent ui folder
 try:
-    from ui.stock_view_service import StockViewService
+    # First try: Import from web_app/app/services (for Render deployment)
+    from app.services.stock_view_service import StockViewService
+    logger.info("✅ Imported StockViewService from app.services")
 except ImportError:
-    # Fallback: Try to import from a local copy if parent doesn't exist
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning("Could not import StockViewService from parent directory - stock view may not work")
-    StockViewService = None
+    try:
+        # Second try: Import from parent ui folder (for local development)
+        parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+        if os.path.exists(parent_path):
+            sys.path.insert(0, parent_path)
+        from ui.stock_view_service import StockViewService
+        logger.info("✅ Imported StockViewService from parent ui folder")
+    except ImportError:
+        # Fallback: Service not available
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error("❌ Could not import StockViewService from any location - stock view will not work")
+        StockViewService = None
 
 router = APIRouter()
 
