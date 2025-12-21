@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 # Try to import the original database manager, but make it optional
 _OriginalDatabaseManager = None
 try:
@@ -21,8 +23,6 @@ try:
 except ImportError as e:
     logger.warning(f"⚠️ Could not import original DatabaseManager: {e}")
     logger.info("ℹ️ Will use standalone database initialization")
-
-logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     """Database manager for web application - wraps original with web-specific features"""
