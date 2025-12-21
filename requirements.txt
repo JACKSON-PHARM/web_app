@@ -15,4 +15,4 @@ urllib3==2.1.0
 python-dateutil==2.8.2
 numpy==1.26.2
 pydantic==2.12.5
-pydantic-settings==2.1.0
+pydantic-settings
