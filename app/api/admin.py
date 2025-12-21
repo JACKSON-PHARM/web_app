@@ -231,7 +231,7 @@ async def delete_database_file(
 
 @router.post("/drive/cleanup")
 async def cleanup_old_database_files(
-    keep_count: int = 2,
+    request: Request,
     current_user: dict = Depends(get_current_admin),
     drive_manager = Depends(get_drive_manager)
 ):
@@ -241,6 +241,12 @@ async def cleanup_old_database_files(
             "success": False,
             "message": "Google Drive not authenticated"
         }
+    
+    try:
+        body = await request.json()
+        keep_count = body.get('keep_count', 2)
+    except:
+        keep_count = 2
     
     if keep_count < 1:
         keep_count = 1
