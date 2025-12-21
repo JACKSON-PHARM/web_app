@@ -10,15 +10,32 @@ import os
 import pandas as pd
 import logging
 
-# Add parent directory to import procurement bot
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-from scripts.procurement_bot.integrated_procurement_bot import IntegratedProcurementBot
-from scripts.data_fetchers.branch_config import BRANCH_MAPPING, ALL_BRANCHES
+# Set up logger first
+logger = logging.getLogger(__name__)
+
+# Try to import procurement bot and branch config from scripts
+IntegratedProcurementBot = None
+BRANCH_MAPPING = {}
+ALL_BRANCHES = []
+
+try:
+    # Add parent directory to import procurement bot
+    parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if os.path.exists(parent_path):
+        sys.path.insert(0, parent_path)
+    from scripts.procurement_bot.integrated_procurement_bot import IntegratedProcurementBot
+    from scripts.data_fetchers.branch_config import BRANCH_MAPPING, ALL_BRANCHES
+    logger.info("✅ Imported procurement bot and branch config from scripts")
+except ImportError:
+    logger.warning("⚠️ Could not import procurement bot: No module named 'scripts' - procurement features will be limited")
+    # Provide fallback empty values
+    BRANCH_MAPPING = {}
+    ALL_BRANCHES = []
+
 from app.services.credential_manager import CredentialManager
 from app.config import settings
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 class ProcurementRequest(BaseModel):
     items: List[Dict[str, Any]]  # List of items with item_code, quantity, etc.
@@ -38,6 +55,12 @@ async def run_procurement_bot(
     db_manager = Depends(get_db_manager)
 ):
     """Run procurement bot on selected items"""
+    if IntegratedProcurementBot is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Procurement bot not available - scripts module not found. This feature requires the full application codebase."
+        )
+    
     try:
         # Get branch code from branch name
         branch_code = None

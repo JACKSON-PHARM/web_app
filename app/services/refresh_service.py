@@ -36,7 +36,14 @@ class RefreshService:
         
         try:
             # Use DatabaseFetcherOrchestrator to run all fetchers properly
-            from scripts.data_fetchers.database_fetcher_orchestrator import DatabaseFetcherOrchestrator
+            try:
+                from scripts.data_fetchers.database_fetcher_orchestrator import DatabaseFetcherOrchestrator
+            except ImportError:
+                self.logger.error("⚠️ Could not import DatabaseFetcherOrchestrator: No module named 'scripts'")
+                results['success'] = False
+                results['messages'].append("Data refresh not available - scripts module not found")
+                return results
+            
             from app.config import settings
             
             self.logger.info("🔄 Initializing DatabaseFetcherOrchestrator...")
@@ -48,27 +55,34 @@ class RefreshService:
             # We need to ensure they use the same database as the web app
             original_init = None
             try:
-                from scripts.data_fetchers.database_base_fetcher import DatabaseBaseFetcher
+                try:
+                    from scripts.data_fetchers.database_base_fetcher import DatabaseBaseFetcher
+                except ImportError:
+                    self.logger.warning("⚠️ Could not import DatabaseBaseFetcher: No module named 'scripts'")
+                    DatabaseBaseFetcher = None
                 
-                # Store original __init__
-                original_init = DatabaseBaseFetcher.__init__
+                if DatabaseBaseFetcher is None:
+                    self.logger.warning("⚠️ Skipping DatabaseBaseFetcher patching - module not available")
+                else:
+                    # Store original __init__
+                    original_init = DatabaseBaseFetcher.__init__
                 
-                # Patch to use web app's database path
-                refresh_service_instance = self  # Capture self for closure
-                
-                def patched_init(self_instance, script_name, app_root=None):
-                    original_init(self_instance, script_name, app_root or refresh_service_instance.app_root)
-                    # Override database path to use web app's database
-                    web_db_path = refresh_service_instance.db_manager.db_path
-                    if os.path.exists(web_db_path):
-                        # Create a new DatabaseManager with the correct path
-                        from database_manager import DatabaseManager
-                        self_instance.db_manager = DatabaseManager(web_db_path)
-                        refresh_service_instance.logger.info(f"✅ Using web app database: {web_db_path}")
-                    # Use web app's credential manager
-                    self_instance.cred_manager = refresh_service_instance.credential_manager
-                
-                DatabaseBaseFetcher.__init__ = patched_init
+                    # Patch to use web app's database path
+                    refresh_service_instance = self  # Capture self for closure
+                    
+                    def patched_init(self_instance, script_name, app_root=None):
+                        original_init(self_instance, script_name, app_root or refresh_service_instance.app_root)
+                        # Override database path to use web app's database
+                        web_db_path = refresh_service_instance.db_manager.db_path
+                        if os.path.exists(web_db_path):
+                            # Create a new DatabaseManager with the correct path
+                            from database_manager import DatabaseManager
+                            self_instance.db_manager = DatabaseManager(web_db_path)
+                            refresh_service_instance.logger.info(f"✅ Using web app database: {web_db_path}")
+                        # Use web app's credential manager
+                        self_instance.cred_manager = refresh_service_instance.credential_manager
+                    
+                    DatabaseBaseFetcher.__init__ = patched_init
                 
             except Exception as e:
                 self.logger.warning(f"⚠️ Could not patch DatabaseBaseFetcher: {e}")

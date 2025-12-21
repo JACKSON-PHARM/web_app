@@ -7,12 +7,20 @@ import os
 import logging
 from typing import Dict, Any, Optional
 
-# Add parent directory to path to import existing fetchers
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-
-from scripts.fetcher_manager import FetcherManager as OriginalFetcherManager
-
 logger = logging.getLogger(__name__)
+
+# Try to import original fetcher manager from scripts
+OriginalFetcherManager = None
+try:
+    # Add parent directory to path to import existing fetchers
+    parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if os.path.exists(parent_path):
+        sys.path.insert(0, parent_path)
+    from scripts.fetcher_manager import FetcherManager as OriginalFetcherManager
+    logger.info("✅ Imported OriginalFetcherManager from scripts")
+except ImportError:
+    logger.warning("⚠️ Could not import original FetcherManager: No module named 'scripts'")
+    OriginalFetcherManager = None
 
 class FetcherManager:
     """Fetcher manager for web application"""
@@ -22,19 +30,32 @@ class FetcherManager:
         self.app_root = app_root
         self.credential_manager = credential_manager
         
-        # Initialize original fetcher manager
-        self._fetcher_manager = OriginalFetcherManager(
-            db_manager._db_manager,  # Use underlying database manager
-            app_root,
-            credential_manager
-        )
-        
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("✅ Fetcher manager initialized")
+        # Initialize original fetcher manager if available
+        if OriginalFetcherManager is not None:
+            try:
+                self._fetcher_manager = OriginalFetcherManager(
+                    db_manager._db_manager,  # Use underlying database manager
+                    app_root,
+                    credential_manager
+                )
+                self.logger = logging.getLogger(__name__)
+                self.logger.info("✅ Fetcher manager initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize original fetcher manager: {e}")
+                self._fetcher_manager = None
+        else:
+            self._fetcher_manager = None
+            logger.warning("⚠️ Fetcher manager initialized without original fetcher (scripts module not available)")
     
     def refresh_all_data(self) -> Dict[str, Any]:
         """Refresh all data types"""
         results = {}
+        
+        if self._fetcher_manager is None:
+            logger.error("Cannot refresh data: Original fetcher manager not available (scripts module not found)")
+            results['success'] = False
+            results['message'] = 'Fetcher manager not available - scripts module not found'
+            return results
         
         try:
             # Import sync functionality from app_core
@@ -53,9 +74,9 @@ class FetcherManager:
             results['message'] = 'Data refresh completed' if success else 'Data refresh failed'
             
         except Exception as e:
-            self.logger.error(f"Error refreshing data: {e}")
+            logger.error(f"Error refreshing data: {e}")
             import traceback
-            self.logger.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             results['success'] = False
             results['message'] = str(e)
         
@@ -63,9 +84,15 @@ class FetcherManager:
     
     def get_fetcher(self, name: str):
         """Get a specific fetcher"""
+        if self._fetcher_manager is None:
+            logger.warning(f"Cannot get fetcher '{name}': Original fetcher manager not available")
+            return None
         return self._fetcher_manager.get_fetcher(name)
     
     def list_fetchers(self) -> list:
         """List all available fetchers"""
+        if self._fetcher_manager is None:
+            logger.warning("Cannot list fetchers: Original fetcher manager not available")
+            return []
         return self._fetcher_manager.list_fetchers()
 
