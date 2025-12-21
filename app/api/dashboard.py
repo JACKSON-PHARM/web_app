@@ -519,6 +519,72 @@ async def get_priority_items(
             "count": 0
         }
 
+@router.get("/diagnostics")
+async def get_database_diagnostics(
+    current_user: dict = Depends(get_current_user),
+    db_manager = Depends(get_db_manager)
+):
+    """Get database diagnostics to help troubleshoot empty data issues"""
+    import sqlite3
+    diagnostics = {
+        "database_path": db_manager.db_path,
+        "database_exists": False,
+        "database_size_mb": 0,
+        "tables": {},
+        "summary": {}
+    }
+    
+    try:
+        if db_manager.db_path and os.path.exists(db_manager.db_path):
+            diagnostics["database_exists"] = True
+            diagnostics["database_size_mb"] = round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2)
+            
+            conn = sqlite3.connect(db_manager.db_path)
+            cursor = conn.cursor()
+            
+            # Get all tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in cursor.fetchall()]
+            
+            # Count rows in each table
+            for table in tables:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = cursor.fetchone()[0]
+                    diagnostics["tables"][table] = count
+                except Exception as e:
+                    diagnostics["tables"][table] = f"Error: {str(e)}"
+            
+            conn.close()
+            
+            # Summary
+            key_tables = ['current_stock', 'stock_data', 'purchase_orders', 'branch_orders', 'sales']
+            diagnostics["summary"] = {
+                "has_stock_data": diagnostics["tables"].get('current_stock', 0) > 0 or diagnostics["tables"].get('stock_data', 0) > 0,
+                "has_order_data": diagnostics["tables"].get('purchase_orders', 0) > 0 or diagnostics["tables"].get('branch_orders', 0) > 0,
+                "has_sales_data": diagnostics["tables"].get('sales', 0) > 0,
+                "total_tables": len(tables),
+                "key_table_counts": {table: diagnostics["tables"].get(table, 0) for table in key_tables}
+            }
+            
+            if not diagnostics["summary"]["has_stock_data"]:
+                diagnostics["message"] = "⚠️ Database has no stock data. Please refresh data by clicking 'Refresh Now' button."
+            elif diagnostics["summary"]["has_stock_data"] and diagnostics["summary"]["has_order_data"]:
+                diagnostics["message"] = "✅ Database appears to have data. If tables are still empty, check branch selection or query filters."
+            else:
+                diagnostics["message"] = "⚠️ Database has stock data but may be missing order data. Try refreshing."
+        else:
+            diagnostics["message"] = "❌ Database file not found. Please refresh data to create database."
+    except Exception as e:
+        diagnostics["error"] = str(e)
+        import traceback
+        diagnostics["traceback"] = traceback.format_exc()
+    
+    return {
+        "success": True,
+        "diagnostics": diagnostics
+    }
+
 @router.get("/branches")
 async def get_branches(
     company: Optional[str] = None,
