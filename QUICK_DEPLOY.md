@@ -23,10 +23,16 @@
 - **Build Command**: `pip install -r requirements.txt`
 - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
-### 4. Add Persistent Disk (CRITICAL!)
+### 4. Persistent Disk (OPTIONAL - Free Tier)
 
-**Without this, your database will be lost!**
+**Note:** Render free tier doesn't support persistent disks. The app will work without it!
 
+**How it works without disk:**
+- Database is stored in temporary directory (`/tmp/pharmastock_cache`)
+- Data is synced from/to Google Drive on startup/shutdown
+- **Important:** Data will be lost on app restart, but will be restored from Google Drive
+
+**If you upgrade to paid tier ($7/month):**
 1. Scroll to **"Disks"** section
 2. Click **"Create Disk"**
 3. Set:
