@@ -289,7 +289,9 @@
             // Add timeout to prevent hanging (longer for large queries)
             const controller = new AbortController();
             const isLargeQuery = url.includes('/stock/data') || url.includes('/dashboard/priority-items') || url.includes('/dashboard/new-arrivals');
-            const timeout = isLargeQuery ? 120000 : 30000; // 2 minutes for large queries, 30 seconds for others
+            const isStockView = url.includes('/stock/data');
+            // Stock view queries can take up to 5 minutes due to complex joins
+            const timeout = isStockView ? 300000 : (isLargeQuery ? 120000 : 30000); // 5 minutes for stock view, 2 minutes for other large queries, 30 seconds for others
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             
             try {

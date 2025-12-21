@@ -22,8 +22,9 @@ async def get_stock_view_data(
     current_user: dict = Depends(get_current_user),
     db_manager = Depends(get_db_manager)
 ):
-    """Get stock view data"""
+    """Get stock view data - optimized with timeout handling"""
     import logging
+    import asyncio
     logger = logging.getLogger(__name__)
     
     try:
@@ -39,11 +40,20 @@ async def get_stock_view_data(
             source_branch_company = branch_company
         
         logger.info(f"Calling get_stock_view_data with: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
-        stock_data = stock_service.get_stock_view_data(
-            branch_name,
-            branch_company,
-            source_branch_name,
-            source_branch_company
+        
+        # Run query in executor to prevent blocking (with 4 minute timeout)
+        loop = asyncio.get_event_loop()
+        stock_data = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: stock_service.get_stock_view_data(
+                    branch_name,
+                    branch_company,
+                    source_branch_name,
+                    source_branch_company
+                )
+            ),
+            timeout=240.0  # 4 minutes timeout
         )
         
         logger.info(f"Stock view service returned: {len(stock_data) if stock_data is not None and not stock_data.empty else 0} rows")
@@ -71,8 +81,18 @@ async def get_stock_view_data(
                 "data": [],
                 "count": 0
             }
+    except asyncio.TimeoutError:
+        logger.error("Stock view query timed out after 4 minutes")
+        return {
+            "success": False,
+            "error": "Query timed out. The database is large and the query is taking longer than expected. Please try again or contact support.",
+            "data": [],
+            "count": 0
+        }
     except Exception as e:
         import traceback
+        logger.error(f"Stock view error: {e}")
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "error": str(e),
