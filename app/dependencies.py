@@ -21,6 +21,11 @@ license_service = LicenseService()
 _drive_manager: Optional[GoogleDriveManager] = None
 _db_manager: Optional[DatabaseManager] = None
 
+def reset_db_manager():
+    """Reset the database manager singleton (useful after downloading database)"""
+    global _db_manager
+    _db_manager = None
+
 def get_drive_manager() -> GoogleDriveManager:
     """Get Google Drive manager instance"""
     global _drive_manager

@@ -48,17 +48,8 @@ async def lifespan(app: FastAPI):
     # Startup - make it very resilient
     logger.info("🚀 Starting PharmaStock Web Application")
     
-    # Initialize database manager first (most critical)
-    try:
-        db_manager = get_db_manager()
-        logger.info("✅ Database manager initialized")
-    except Exception as e:
-        logger.error(f"❌ Database manager initialization failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        logger.warning("⚠️ App will continue but database features may not work")
-    
-    # Initialize Google Drive manager (optional)
+    # Initialize Google Drive manager FIRST to download database before initializing db_manager
+    drive_manager = None
     try:
         drive_manager = get_drive_manager()
         
@@ -70,15 +61,17 @@ async def lifespan(app: FastAPI):
                 settings.GOOGLE_DRIVE_FOLDER_ID = folder_id
                 logger.info(f"✅ Google Drive folder: {folder_id}")
                 
-                # Download database on startup
+                # Download database on startup BEFORE initializing db_manager
                 local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
-                logger.info(f"📥 Downloading database from Google Drive...")
+                logger.info(f"📥 Downloading database from Google Drive to: {local_db_path}")
                 downloaded = drive_manager.download_database(local_db_path)
                 
                 if downloaded:
-                    logger.info("✅ Database downloaded successfully")
+                    db_size = os.path.getsize(local_db_path) / (1024 * 1024)
+                    logger.info(f"✅ Database downloaded successfully ({db_size:.2f} MB)")
+                    logger.info(f"📁 Database location: {local_db_path}")
                 else:
-                    logger.info("ℹ️ No existing database found, will create new one on first refresh")
+                    logger.info("ℹ️ No existing database found in Drive, will create new one on first refresh")
             else:
                 logger.warning("⚠️ Google Drive not authenticated - authorization required")
                 logger.info("ℹ️ Use /api/admin/drive/authorize endpoint to get authorization URL")
@@ -89,6 +82,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Google Drive manager creation failed (non-blocking): {e}")
         logger.info("ℹ️ App will continue without Google Drive features")
+    
+    # Initialize database manager AFTER downloading from Drive (if available)
+    try:
+        db_manager = get_db_manager()
+        logger.info("✅ Database manager initialized")
+        
+        # Verify database exists and has data
+        if os.path.exists(db_manager.db_path):
+            db_size = os.path.getsize(db_manager.db_path) / (1024 * 1024)
+            logger.info(f"📊 Database file: {db_manager.db_path} ({db_size:.2f} MB)")
+            
+            # Try to verify database has data
+            try:
+                conn = db_manager.get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = cursor.fetchall()
+                logger.info(f"📋 Found {len(tables)} tables in database")
+                conn.close()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not verify database contents: {e}")
+        else:
+            logger.warning(f"⚠️ Database file not found at: {db_manager.db_path}")
+    except Exception as e:
+        logger.error(f"❌ Database manager initialization failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        logger.warning("⚠️ App will continue but database features may not work")
     
     # Initialize scheduler (optional)
     try:
