@@ -396,12 +396,15 @@ async def get_priority_items(
 ):
     """Get priority items between branches"""
     try:
-        # DashboardService needs the original DatabaseManager with db_path attribute
-        original_db_manager = db_manager._db_manager
-        # Ensure db_path is set on the original manager
-        if not hasattr(original_db_manager, 'db_path') or not original_db_manager.db_path:
-            original_db_manager.db_path = db_manager.db_path
-        dashboard_service = DashboardService(original_db_manager)
+        # Use the wrapper db_manager directly - it always has db_path
+        # If original manager exists, use it; otherwise use wrapper
+        manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
+        
+        # Ensure db_path is set
+        if not hasattr(manager_to_use, 'db_path') or not manager_to_use.db_path:
+            manager_to_use.db_path = db_manager.db_path
+        
+        dashboard_service = DashboardService(manager_to_use)
         priority_items = dashboard_service.get_priority_items_between_branches(
             target_branch,
             target_company,
