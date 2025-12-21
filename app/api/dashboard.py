@@ -6,14 +6,30 @@ from typing import Optional
 from app.dependencies import get_current_user, get_db_manager
 import sys
 import os
+import logging
 
-# Add parent directory to import dashboard service
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-from ui.dashboard_service import DashboardService
+# Set up logger first
+logger = logging.getLogger(__name__)
+
+# Try to import DashboardService - first from local web_app copy, then from parent ui folder
+try:
+    # First try: Import from web_app/app/services (for Render deployment)
+    from app.services.dashboard_service import DashboardService
+    logger.info("✅ Imported DashboardService from app.services")
+except ImportError:
+    try:
+        # Second try: Import from parent ui folder (for local development)
+        parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+        if os.path.exists(parent_path):
+            sys.path.insert(0, parent_path)
+        from ui.dashboard_service import DashboardService
+        logger.info("✅ Imported DashboardService from parent ui folder")
+    except ImportError:
+        # Fallback: Service not available
+        logger.error("❌ Could not import DashboardService from any location - dashboard will not work")
+        DashboardService = None
 
 router = APIRouter()
-import logging
-logger = logging.getLogger(__name__)
 
 @router.get("/new-arrivals/test")
 async def test_new_arrivals_api(
