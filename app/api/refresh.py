@@ -47,6 +47,31 @@ async def run_refresh_task():
         # Get local database path
         local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
         
+        # STEP 1: Download latest database from Drive first (if available)
+        # This ensures we're working with the most recent data and merging new data into it
+        if drive_manager.is_authenticated():
+            logger.info("📥 Checking for existing database in Google Drive...")
+            RefreshStatusService.update_progress(0.05, "Checking Drive for existing database...")
+            
+            # Check if database exists in Drive
+            drive_db_info = drive_manager.get_database_info()
+            if drive_db_info and drive_db_info.get('exists'):
+                logger.info("📥 Found database in Drive, downloading latest version...")
+                RefreshStatusService.update_progress(0.08, "Downloading database from Drive...")
+                downloaded = drive_manager.download_database(local_db_path)
+                if downloaded:
+                    logger.info("✅ Downloaded latest database from Drive - will merge new data into it")
+                    RefreshStatusService.update_progress(0.1, "Database downloaded, fetching new data...")
+                else:
+                    logger.warning("⚠️ Failed to download database from Drive, will use/create local one")
+                    RefreshStatusService.update_progress(0.1, "Using local database...")
+            else:
+                logger.info("ℹ️ No database in Drive yet, will create new one on first refresh")
+                RefreshStatusService.update_progress(0.1, "No existing database, will create new one...")
+        else:
+            logger.info("ℹ️ Google Drive not authenticated, using local database only")
+            RefreshStatusService.update_progress(0.1, "Using local database...")
+        
         # Initialize credential manager (credentials already saved or provided)
         cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
         
@@ -54,16 +79,21 @@ async def run_refresh_task():
         from app.services.refresh_service import RefreshService
         refresh_service = RefreshService(db_manager, settings.LOCAL_CACHE_DIR, cred_manager)
         
-        # Run refresh
-        logger.info("🔄 Starting data refresh...")
-        RefreshStatusService.update_progress(0.1, "Fetching stock data...")
+        # STEP 2: Run refresh - this will merge/add new data to existing database
+        logger.info("🔄 Fetching new data from APIs and merging into database...")
+        RefreshStatusService.update_progress(0.2, "Fetching stock data...")
         result = refresh_service.refresh_all_data()
         
         if result.get('success'):
-            # Upload updated database to Google Drive (with conflict resolution)
-            logger.info("📤 Uploading database to Google Drive...")
-            RefreshStatusService.update_progress(0.9, "Uploading to Google Drive...")
-            success = drive_manager.upload_database(local_db_path, check_conflicts=True)
+            # STEP 3: Upload updated database back to Google Drive (with conflict resolution)
+            # This ensures Drive always has the latest version
+            if drive_manager.is_authenticated():
+                logger.info("📤 Uploading updated database to Google Drive...")
+                RefreshStatusService.update_progress(0.9, "Uploading to Google Drive...")
+                success = drive_manager.upload_database(local_db_path, check_conflicts=True)
+            else:
+                logger.warning("⚠️ Google Drive not authenticated - skipping upload")
+                success = False
             
             if success:
                 logger.info("✅ Refresh complete and uploaded to Drive")
