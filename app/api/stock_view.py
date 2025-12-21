@@ -86,6 +86,42 @@ async def get_stock_view_data(
         
         logger.info(f"Stock view service returned: {len(stock_data) if stock_data is not None and not stock_data.empty else 0} rows")
         
+        # Check if database has data if stock_data is empty
+        if (stock_data is None or stock_data.empty):
+            logger.warning("⚠️ Stock view returned empty data, checking database...")
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_manager.db_path)
+                cursor = conn.cursor()
+                
+                # Check table counts
+                cursor.execute("SELECT COUNT(*) FROM current_stock")
+                stock_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM stock_data")
+                stock_data_count = cursor.fetchone()[0]
+                conn.close()
+                
+                logger.info(f"📋 Database check: current_stock={stock_count} rows, stock_data={stock_data_count} rows")
+                
+                if stock_count == 0 and stock_data_count == 0:
+                    return {
+                        "success": False,
+                        "error": "Database is empty. Please refresh data first by clicking 'Refresh Now' button.",
+                        "data": [],
+                        "count": 0,
+                        "diagnostics": {
+                            "database_path": db_manager.db_path,
+                            "database_exists": os.path.exists(db_manager.db_path),
+                            "current_stock_rows": stock_count,
+                            "stock_data_rows": stock_data_count,
+                            "message": "No stock data found. Please refresh data from APIs."
+                        }
+                    }
+            except Exception as e:
+                logger.error(f"Error checking database: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
         # Convert DataFrame to dict - replace NaN with None for JSON serialization
         if stock_data is not None and not stock_data.empty:
             # Replace NaN/NaT values with None for JSON serialization
