@@ -749,11 +749,6 @@
     }
     
     async function loadPriorityItems() {
-        const priorityBody = document.getElementById('priorityBody');
-        if (!priorityBody) return;
-        
-        // Show loading state
-        priorityBody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 20px; color: #666;">Loading priority items...</td></tr>';
         // Check token before making request
         const token = localStorage.getItem('access_token');
         if (!token) {
@@ -792,48 +787,7 @@
                 if (data.traceback) {
                     console.error('Traceback:', data.traceback);
                 }
-                
-                // Special handling for empty database
-                if (errorMsg.includes('empty') || errorMsg.includes('Database is empty') || errorMsg.includes('No stock data')) {
-                    tbody.innerHTML = `
-                        <tr>
-                            <td colspan="11" style="text-align: center; padding: 40px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;">
-                                <div style="font-size: 18px; margin-bottom: 15px;">⚠️ No Data Available</div>
-                                <div style="font-size: 14px; color: #666; margin-bottom: 20px;">
-                                    ${errorMsg}
-                                </div>
-                                <div style="font-size: 14px; color: #856404; margin-bottom: 20px;">
-                                    <strong>To get started:</strong><br>
-                                    1. Go to <strong>Settings</strong> and configure API credentials (NILA/DAIMA)<br>
-                                    2. Click <strong>"Refresh All Data"</strong> button above<br>
-                                    3. Wait for the refresh to complete (this may take a few minutes)
-                                </div>
-                                <button onclick="triggerRefresh()" class="btn btn-success" style="padding: 12px 24px; font-size: 16px;">
-                                    🔄 Refresh Data Now
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="11" class="empty" style="padding: 20px; text-align: center;">Error: ' + errorMsg + '</td></tr>';
-                }
-                return;
-            }
-            
-            if (!data.data || data.data.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="11" style="text-align: center; padding: 40px; background: #e7f3ff; border: 2px solid #b3d9ff; border-radius: 8px;">
-                            <div style="font-size: 18px; margin-bottom: 15px;">📊 No Priority Items Found</div>
-                            <div style="font-size: 14px; color: #666; margin-bottom: 20px;">
-                                No items match the current branch selection or filters.
-                            </div>
-                            <div style="font-size: 14px; color: #0c5460;">
-                                Try selecting different branches or click <strong>"Refresh All Data"</strong> to fetch latest data.
-                            </div>
-                        </td>
-                    </tr>
-                `;
+                tbody.innerHTML = '<tr><td colspan="11" class="empty">Error: ' + errorMsg + '</td></tr>';
                 return;
             }
             
@@ -1092,13 +1046,13 @@
             });
             
             if (result && result.status === 'started') {
-                refreshStatus.textContent = '✅ Refresh started';
-                showProgressModal();
-                startProgressPolling();
-                checkRefreshStatus(); // Check immediately
+                refreshStatus.textContent = '✅ Refresh started. Data will update when complete.';
+                setTimeout(() => {
+                    loadDashboardData();
+                    checkRefreshStatus();
+                }, 5000);
             } else {
                 refreshStatus.textContent = '❌ Refresh failed';
-                closeProgressModal();
             }
         } catch (error) {
             console.error('Refresh error:', error);

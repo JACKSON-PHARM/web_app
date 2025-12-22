@@ -598,7 +598,7 @@ async def get_sync_status(
     status = {
         "local_database": {
             "exists": False,
-            "path": db_manager.db_path,
+            "path": str(db_manager.db_path) if db_manager.db_path else None,
             "size_mb": 0,
             "modified": None
         },
@@ -618,38 +618,48 @@ async def get_sync_status(
             status["local_database"]["modified"] = os.path.getmtime(db_manager.db_path)
         
         # Check Drive database
-        drive_manager = get_drive_manager()
-        if drive_manager.is_authenticated():
-            drive_info = drive_manager.get_database_info()
-            if drive_info.get('exists'):
-                status["drive_database"]["exists"] = True
-                status["drive_database"]["modified"] = drive_info.get('modified')
-                
-                # Compare timestamps
-                if status["local_database"]["exists"]:
-                    from datetime import datetime
-                    local_mtime = datetime.fromtimestamp(status["local_database"]["modified"])
-                    drive_timestamp = drive_info.get('modified')
-                    if drive_timestamp:
-                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
-                        if drive_mtime > local_mtime:
-                            status["sync_status"] = "outdated"
-                            status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
+        try:
+            drive_manager = get_drive_manager()
+            if drive_manager.is_authenticated():
+                drive_info = drive_manager.get_database_info()
+                if drive_info and drive_info.get('exists'):
+                    status["drive_database"]["exists"] = True
+                    status["drive_database"]["modified"] = drive_info.get('modified')
+                    
+                    # Compare timestamps
+                    if status["local_database"]["exists"]:
+                        from datetime import datetime
+                        local_mtime = datetime.fromtimestamp(status["local_database"]["modified"])
+                        drive_timestamp = drive_info.get('modified')
+                        if drive_timestamp:
+                            try:
+                                drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                                if drive_mtime > local_mtime:
+                                    status["sync_status"] = "outdated"
+                                    status["message"] = "Drive has newer data. Syncing in background..."
+                                else:
+                                    status["sync_status"] = "synced"
+                                    status["message"] = "Database is up to date."
+                            except Exception as e:
+                                logger.error(f"Error parsing drive timestamp: {e}")
+                                status["sync_status"] = "synced"
+                                status["message"] = "Database is available."
                         else:
                             status["sync_status"] = "synced"
-                            status["message"] = "Database is up to date."
+                            status["message"] = "Database is available."
                     else:
-                        status["sync_status"] = "unknown"
-                        status["message"] = "Could not compare timestamps."
+                        status["sync_status"] = "missing"
+                        status["message"] = "Downloading database from Drive..."
                 else:
-                    status["sync_status"] = "missing"
-                    status["message"] = "Local database not found. Will download on next refresh."
+                    status["sync_status"] = "no_drive_db"
+                    status["message"] = "No database in Drive. Click 'Refresh All Data' to create one."
             else:
-                status["sync_status"] = "no_drive_db"
-                status["message"] = "No database in Drive. Create one by refreshing data."
-        else:
-            status["sync_status"] = "not_authenticated"
-            status["message"] = "Google Drive not authenticated."
+                status["sync_status"] = "not_authenticated"
+                status["message"] = "Google Drive not authenticated. Using local database only."
+        except Exception as e:
+            logger.error(f"Error checking Drive status: {e}")
+            status["sync_status"] = "error"
+            status["message"] = "Could not check Drive status. Using local database."
     
     except Exception as e:
         status["sync_status"] = "error"
