@@ -1314,9 +1314,20 @@
     async function checkRefreshStatus() {
         try {
             const status = await apiRequest('/api/refresh/status');
-            if (status && status.last_refresh) {
-                document.getElementById('lastRefresh').textContent = 
-                    `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
+            if (status) {
+                if (status.last_refresh) {
+                    document.getElementById('lastRefresh').textContent = 
+                        `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
+                }
+                
+                // If refresh is in progress, show modal and start polling
+                if (status.is_refreshing) {
+                    const modal = document.getElementById('progressModal');
+                    if (modal && !modal.classList.contains('show')) {
+                        showProgressModal();
+                        startProgressPolling();
+                    }
+                }
             }
         } catch (error) {
             console.error('Error checking refresh status:', error);
@@ -1325,6 +1336,9 @@
     
     // Check refresh status every minute
     setInterval(checkRefreshStatus, 60000);
+    
+    // Check on initial load too
+    checkRefreshStatus();
     
     // Check sync status
     async function checkSyncStatus() {
