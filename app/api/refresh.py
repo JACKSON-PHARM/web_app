@@ -80,6 +80,8 @@ async def run_refresh_task():
                         else:
                             logger.info(f"✅ Local database is recent ({local_age}) and Drive isn't significantly newer - skipping download")
                             logger.info(f"   Local: {local_mtime.isoformat()}, Drive: {drive_mtime.isoformat()}")
+                            logger.info(f"💡 Optimization: Skipping 600MB download - using cached database saves ~10 minutes!")
+                            RefreshStatusService.update_progress(0.1, f"Using recent local database (saved ~10 min download time)...")
                             should_download = False
                     else:
                         logger.info("ℹ️ Could not get Drive timestamp, using local database")
@@ -163,7 +165,8 @@ async def run_refresh_task():
                     success = drive_manager.upload_database(local_db_path, check_conflicts=True)
                 else:
                     logger.info("ℹ️ Database was not modified during refresh, skipping upload (saves time!)")
-                    RefreshStatusService.update_progress(0.95, "No changes to upload...")
+                    logger.info("💡 Optimization: No changes detected - skipping 600MB upload saves ~10 minutes!")
+                    RefreshStatusService.update_progress(0.95, "No changes to upload (saved ~10 min upload time)...")
                     success = True  # Consider it successful since there's nothing to upload
             else:
                 logger.warning("⚠️ Google Drive not authenticated - skipping upload")
