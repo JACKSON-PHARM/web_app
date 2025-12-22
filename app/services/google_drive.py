@@ -141,12 +141,35 @@ class GoogleDriveManager:
             # If not found in app folder, search Drive-wide (fallback)
             if not items:
                 logger.info(f"Database not found in folder '{self.folder_id}', searching Drive-wide...")
+                
+                # First, try searching for database file directly
                 query_wide = f"name='{settings.DB_FILENAME}' and trashed=false"
-                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=1).execute()
+                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=10).execute()
                 items_wide = results_wide.get('files', [])
                 
+                # If still not found, search inside PharmaStock_Database folders
+                if not items_wide:
+                    logger.info("Searching inside PharmaStock_Database folders...")
+                    # Find all PharmaStock_Database folders
+                    folder_query = "name='PharmaStock_Database' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                    folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
+                    folders = folder_results.get('files', [])
+                    
+                    logger.info(f"Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
+                    
+                    # Search for database file inside each folder
+                    for folder in folders:
+                        folder_id = folder['id']
+                        file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                        file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=1).execute()
+                        folder_files = file_results.get('files', [])
+                        if folder_files:
+                            logger.info(f"✅ Found database inside folder '{folder['name']}' (ID: {folder_id})")
+                            items_wide = folder_files
+                            break
+                
                 if items_wide:
-                    logger.info(f"✅ Found database elsewhere in Drive, downloading...")
+                    logger.info(f"✅ Found database in Drive, downloading...")
                     items = items_wide  # Use the found file
                 else:
                     logger.warning(f"Database '{settings.DB_FILENAME}' not found anywhere in Drive")
@@ -187,6 +210,22 @@ class GoogleDriveManager:
             query = f"name='{settings.DB_FILENAME}' and '{self.folder_id}' in parents and trashed=false"
             results = self.service.files().list(q=query).execute()
             items = results.get('files', [])
+            
+            # If not found in app folder, search inside PharmaStock_Database folders
+            if not items:
+                logger.info("Searching inside PharmaStock_Database folders for timestamp...")
+                folder_query = "name='PharmaStock_Database' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
+                folders = folder_results.get('files', [])
+                
+                for folder in folders:
+                    folder_id = folder['id']
+                    file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                    file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=1).execute()
+                    folder_files = file_results.get('files', [])
+                    if folder_files:
+                        items = folder_files
+                        break
             
             if items:
                 file_id = items[0]['id']
@@ -330,9 +369,37 @@ class GoogleDriveManager:
             # If not found in specific folder, search Drive-wide (fallback)
             if not items:
                 logger.info(f"Database not found in folder '{self.folder_id}', searching Drive-wide...")
+                
+                # First, try searching for database file directly
                 query_wide = f"name='{settings.DB_FILENAME}' and trashed=false"
-                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=1).execute()
+                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=10).execute()
                 items_wide = results_wide.get('files', [])
+                
+                # If still not found, search inside PharmaStock_Database folders
+                if not items_wide:
+                    logger.info("Searching inside PharmaStock_Database folders...")
+                    # Find all PharmaStock_Database folders
+                    folder_query = "name='PharmaStock_Database' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                    folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
+                    folders = folder_results.get('files', [])
+                    
+                    logger.info(f"Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
+                    
+                    # Search for database file inside each folder (newest first)
+                    all_found_files = []
+                    for folder in folders:
+                        folder_id = folder['id']
+                        file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                        file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=1).execute()
+                        folder_files = file_results.get('files', [])
+                        if folder_files:
+                            all_found_files.extend(folder_files)
+                    
+                    # Use the most recently modified file
+                    if all_found_files:
+                        # Sort by modifiedTime (newest first)
+                        items_wide = sorted(all_found_files, key=lambda x: x.get('modifiedTime', ''), reverse=True)[:1]
+                        logger.info(f"✅ Found {len(all_found_files)} database file(s) inside PharmaStock_Database folders")
                 
                 if items_wide:
                     # Found database elsewhere in Drive
