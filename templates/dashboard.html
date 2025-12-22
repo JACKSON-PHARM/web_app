@@ -846,20 +846,47 @@
             // Log response for debugging
             console.log('Priority items response:', data);
             
-            if (!data.success) {
-                let errorMsg = data.error || 'Unknown error';
-                if (data.traceback) {
-                    console.error('Traceback:', data.traceback);
-                }
+            // Handle both error and empty data cases
+            if (!data.success || (data.count === 0 && (!data.data || data.data.length === 0))) {
+                const isRefreshing = data.is_refreshing || false;
+                const message = data.message || (data.error || 'No data available');
                 
-                // Show helpful message if database is empty
-                if (errorMsg.includes('empty') || errorMsg.includes('No stock data')) {
+                // Show helpful message
+                if (isRefreshing) {
+                    // Refresh in progress - show encouraging message
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="11" class="empty" style="padding: 40px; text-align: center;">
+                                <div style="font-size: 20px; margin-bottom: 15px;">🔄 Data Refresh In Progress</div>
+                                <div style="color: #666; margin-bottom: 20px; line-height: 1.6;">
+                                    <p>Your data is being fetched from APIs. This may take 10-30 minutes.</p>
+                                    <p style="margin-top: 10px; font-size: 14px; color: #999;">
+                                        <strong>You can:</strong><br>
+                                        • Keep this page open - data will appear automatically when ready<br>
+                                        • Check the progress modal for detailed status<br>
+                                        • The page will auto-refresh every 30 seconds
+                                    </p>
+                                </div>
+                                <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 5px; color: #1976d2;">
+                                    <strong>💡 Tip:</strong> On future visits, cached data will load instantly!
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                    // Auto-refresh every 30 seconds while refreshing
+                    setTimeout(() => {
+                        if (document.getElementById('progressModal') && document.getElementById('progressModal').classList.contains('show')) {
+                            loadPriorityItems();
+                        }
+                    }, 30000);
+                } else {
+                    // No refresh in progress - show refresh button
                     tbody.innerHTML = `
                         <tr>
                             <td colspan="11" class="empty" style="padding: 40px; text-align: center;">
                                 <div style="font-size: 18px; margin-bottom: 15px;">📊 No Data Available</div>
                                 <div style="color: #666; margin-bottom: 20px;">
-                                    The database is empty. Click the button below to fetch data from APIs.
+                                    ${message}
                                 </div>
                                 <button onclick="triggerRefresh()" class="btn-refresh" style="padding: 12px 24px; font-size: 16px;">
                                     🔄 Refresh Data Now
@@ -871,8 +898,6 @@
                             </td>
                         </tr>
                     `;
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="11" class="empty">Error: ' + errorMsg + '</td></tr>';
                 }
                 return;
             }

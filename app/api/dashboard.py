@@ -423,19 +423,25 @@ async def get_priority_items(
                 
                 conn.close()
                 
-                # If no data in key tables, return helpful error
+                # Check if refresh is in progress
+                from app.services.refresh_status import RefreshStatusService
+                refresh_status = RefreshStatusService.get_status()
+                is_refreshing = refresh_status.get("is_refreshing", False)
+                
+                # If no data in key tables, return success with empty data but indicate refresh status
                 if table_counts.get('current_stock', 0) == 0 and table_counts.get('stock_data', 0) == 0:
-                    logger.error("❌ Database has no stock data!")
+                    logger.warning("⚠️ Database has no stock data yet")
                     return {
-                        "success": False,
-                        "error": "Database is empty. Please refresh data first by clicking 'Refresh Now' button.",
+                        "success": True,  # Return success so UI can handle gracefully
                         "data": [],
                         "count": 0,
+                        "is_refreshing": is_refreshing,
+                        "message": "No data available yet. Refresh in progress..." if is_refreshing else "Database is empty. Please refresh data.",
                         "diagnostics": {
                             "database_path": db_manager.db_path,
                             "database_exists": True,
                             "table_counts": table_counts,
-                            "message": "No stock data found. Please refresh data from APIs."
+                            "refresh_in_progress": is_refreshing
                         }
                     }
             except Exception as e:
@@ -474,10 +480,17 @@ async def get_priority_items(
                     if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
                         record[key] = None
             logger.info(f"✅ Returning {len(records)} priority items")
+            # Check if refresh is in progress
+            from app.services.refresh_status import RefreshStatusService
+            refresh_status = RefreshStatusService.get_status()
+            is_refreshing = refresh_status.get("is_refreshing", False)
+            
             return {
                 "success": True,
                 "data": records,
-                "count": len(priority_items)
+                "count": len(priority_items),
+                "is_refreshing": is_refreshing,
+                "message": "Data refresh in progress. This data may update automatically." if is_refreshing else None
             }
         else:
             logger.warning("⚠️ No priority items returned from DashboardService")
@@ -598,7 +611,7 @@ async def get_sync_status(
     status = {
         "local_database": {
             "exists": False,
-            "path": str(db_manager.db_path) if db_manager.db_path else None,
+            "path": db_manager.db_path,
             "size_mb": 0,
             "modified": None
         },
@@ -618,48 +631,38 @@ async def get_sync_status(
             status["local_database"]["modified"] = os.path.getmtime(db_manager.db_path)
         
         # Check Drive database
-        try:
-            drive_manager = get_drive_manager()
-            if drive_manager.is_authenticated():
-                drive_info = drive_manager.get_database_info()
-                if drive_info and drive_info.get('exists'):
-                    status["drive_database"]["exists"] = True
-                    status["drive_database"]["modified"] = drive_info.get('modified')
-                    
-                    # Compare timestamps
-                    if status["local_database"]["exists"]:
-                        from datetime import datetime
-                        local_mtime = datetime.fromtimestamp(status["local_database"]["modified"])
-                        drive_timestamp = drive_info.get('modified')
-                        if drive_timestamp:
-                            try:
-                                drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
-                                if drive_mtime > local_mtime:
-                                    status["sync_status"] = "outdated"
-                                    status["message"] = "Drive has newer data. Syncing in background..."
-                                else:
-                                    status["sync_status"] = "synced"
-                                    status["message"] = "Database is up to date."
-                            except Exception as e:
-                                logger.error(f"Error parsing drive timestamp: {e}")
-                                status["sync_status"] = "synced"
-                                status["message"] = "Database is available."
+        drive_manager = get_drive_manager()
+        if drive_manager.is_authenticated():
+            drive_info = drive_manager.get_database_info()
+            if drive_info.get('exists'):
+                status["drive_database"]["exists"] = True
+                status["drive_database"]["modified"] = drive_info.get('modified')
+                
+                # Compare timestamps
+                if status["local_database"]["exists"]:
+                    from datetime import datetime
+                    local_mtime = datetime.fromtimestamp(status["local_database"]["modified"])
+                    drive_timestamp = drive_info.get('modified')
+                    if drive_timestamp:
+                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                        if drive_mtime > local_mtime:
+                            status["sync_status"] = "outdated"
+                            status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
                         else:
                             status["sync_status"] = "synced"
-                            status["message"] = "Database is available."
+                            status["message"] = "Database is up to date."
                     else:
-                        status["sync_status"] = "missing"
-                        status["message"] = "Downloading database from Drive..."
+                        status["sync_status"] = "unknown"
+                        status["message"] = "Could not compare timestamps."
                 else:
-                    status["sync_status"] = "no_drive_db"
-                    status["message"] = "No database in Drive. Click 'Refresh All Data' to create one."
+                    status["sync_status"] = "missing"
+                    status["message"] = "Local database not found. Will download on next refresh."
             else:
-                status["sync_status"] = "not_authenticated"
-                status["message"] = "Google Drive not authenticated. Using local database only."
-        except Exception as e:
-            logger.error(f"Error checking Drive status: {e}")
-            status["sync_status"] = "error"
-            status["message"] = "Could not check Drive status. Using local database."
+                status["sync_status"] = "no_drive_db"
+                status["message"] = "No database in Drive. Create one by refreshing data."
+        else:
+            status["sync_status"] = "not_authenticated"
+            status["message"] = "Google Drive not authenticated."
     
     except Exception as e:
         status["sync_status"] = "error"
