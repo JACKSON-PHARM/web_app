@@ -469,6 +469,9 @@ class GoogleDriveManager:
             return []
         
         try:
+            files = []
+            
+            # First, search for database files directly (not in folders)
             query = f"name='{settings.DB_FILENAME}' and trashed=false"
             results = self.service.files().list(
                 q=query,
@@ -476,7 +479,6 @@ class GoogleDriveManager:
                 fields='files(id,name,size,modifiedTime,createdTime,parents)'
             ).execute()
             
-            files = []
             for file_info in results.get('files', []):
                 # Get parent folder names
                 parent_folders = []
@@ -499,6 +501,42 @@ class GoogleDriveManager:
                     'parent_ids': file_info.get('parents', [])
                 })
             
+            # Also search inside PharmaStock_Database folders
+            logger.info("Searching inside PharmaStock_Database folders...")
+            folder_query = "name='PharmaStock_Database' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
+            folders = folder_results.get('files', [])
+            
+            logger.info(f"Found {len(folders)} PharmaStock_Database folder(s)")
+            
+            for folder in folders:
+                folder_id = folder['id']
+                file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                file_results = self.service.files().list(
+                    q=file_query,
+                    orderBy='modifiedTime desc',
+                    fields='files(id,name,size,modifiedTime,createdTime,parents)'
+                ).execute()
+                
+                for file_info in file_results.get('files', []):
+                    # Check if we already have this file (avoid duplicates)
+                    if not any(f['id'] == file_info.get('id') for f in files):
+                        parent_folders = [folder.get('name', 'PharmaStock_Database')]
+                        files.append({
+                            'id': file_info.get('id'),
+                            'name': file_info.get('name'),
+                            'size': int(file_info.get('size', 0)),
+                            'size_mb': round(int(file_info.get('size', 0)) / (1024 * 1024), 2),
+                            'modified': file_info.get('modifiedTime'),
+                            'created': file_info.get('createdTime'),
+                            'location': ', '.join(parent_folders) if parent_folders else 'My Drive',
+                            'parent_ids': file_info.get('parents', [])
+                        })
+            
+            # Sort all files by modifiedTime (newest first)
+            files.sort(key=lambda x: x.get('modified', ''), reverse=True)
+            
+            logger.info(f"Found {len(files)} total database file(s)")
             return files
         except Exception as e:
             logger.error(f"Error listing database files: {e}")
