@@ -258,20 +258,109 @@ class GoogleDriveManager:
                     return False
             
             file_id = items[0]['id']
+            file_name = items[0].get('name', 'Unknown')
+            file_size = items[0].get('size', 0)
+            file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
             
-            # Download file
-            request = self.service.files().get_media(fileId=file_id)
-            fh = io.FileIO(local_path, 'wb')
-            downloader = MediaIoBaseDownload(fh, request)
+            logger.info(f"📥 Starting download: {file_name} ({file_size_mb} MB)")
+            logger.info(f"📁 File ID: {file_id}")
+            logger.info(f"💾 Saving to: {local_path}")
             
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-                if status:
-                    logger.info(f"Download progress: {int(status.progress() * 100)}%")
+            # Download file with retry logic and timeout handling
+            max_retries = 3
+            retry_count = 0
+            download_success = False
             
-            logger.info(f"✅ Downloaded database: {local_path}")
-            return True
+            while retry_count < max_retries and not download_success:
+                try:
+                    if retry_count > 0:
+                        logger.info(f"🔄 Retry attempt {retry_count + 1}/{max_retries}")
+                    
+                    request = self.service.files().get_media(fileId=file_id)
+                    fh = io.FileIO(local_path, 'wb')
+                    
+                    # Use MediaIoBaseDownload with chunk size for large files
+                    # For 579MB file, use 10MB chunks to avoid memory issues
+                    chunk_size = 10 * 1024 * 1024  # 10MB chunks
+                    downloader = MediaIoBaseDownload(fh, request, chunksize=chunk_size)
+                    
+                    done = False
+                    last_progress = 0
+                    start_time = time.time()
+                    
+                    while done is False:
+                        try:
+                            status, done = downloader.next_chunk()
+                            if status:
+                                progress = int(status.progress() * 100)
+                                elapsed = time.time() - start_time
+                                
+                                # Log progress every 10% or every 30 seconds
+                                if progress - last_progress >= 10 or elapsed >= 30:
+                                    downloaded_mb = (file_size_mb * progress / 100) if file_size_mb else 0
+                                    speed_mb_per_sec = downloaded_mb / elapsed if elapsed > 0 else 0
+                                    remaining_mb = file_size_mb - downloaded_mb if file_size_mb else 0
+                                    eta_seconds = remaining_mb / speed_mb_per_sec if speed_mb_per_sec > 0 else 0
+                                    eta_minutes = int(eta_seconds / 60)
+                                    
+                                    logger.info(f"📥 Download progress: {progress}% ({downloaded_mb:.1f}/{file_size_mb:.1f} MB) - Speed: {speed_mb_per_sec:.2f} MB/s - ETA: {eta_minutes}m")
+                                    last_progress = progress
+                        except Exception as chunk_error:
+                            logger.error(f"❌ Error during download chunk: {chunk_error}")
+                            # Close file handle before retry
+                            fh.close()
+                            if os.path.exists(local_path):
+                                os.remove(local_path)
+                            raise
+                    
+                    fh.close()
+                    
+                    # Verify download completed
+                    if os.path.exists(local_path):
+                        downloaded_size = os.path.getsize(local_path)
+                        expected_size = int(file_size) if file_size else 0
+                        
+                        if expected_size > 0 and abs(downloaded_size - expected_size) > (1024 * 1024):  # Allow 1MB difference
+                            logger.warning(f"⚠️ Size mismatch: Expected {expected_size} bytes, got {downloaded_size} bytes")
+                            if retry_count < max_retries - 1:
+                                retry_count += 1
+                                continue
+                        else:
+                            logger.info(f"✅ Downloaded database: {local_path} ({downloaded_size / (1024*1024):.2f} MB)")
+                            download_success = True
+                    else:
+                        logger.error(f"❌ Download completed but file not found at {local_path}")
+                        if retry_count < max_retries - 1:
+                            retry_count += 1
+                            continue
+                            
+                except Exception as e:
+                    logger.error(f"❌ Download error (attempt {retry_count + 1}/{max_retries}): {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    
+                    # Clean up partial download
+                    if os.path.exists(local_path):
+                        try:
+                            os.remove(local_path)
+                        except:
+                            pass
+                    
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = retry_count * 5  # Wait 5, 10, 15 seconds between retries
+                        logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"❌ Failed to download after {max_retries} attempts")
+                        return False
+            
+            if download_success:
+                logger.info(f"✅ Successfully downloaded database: {local_path}")
+                return True
+            else:
+                logger.error(f"❌ Failed to download database after {max_retries} attempts")
+                return False
             
         except Exception as e:
             logger.error(f"❌ Error downloading database: {e}")
