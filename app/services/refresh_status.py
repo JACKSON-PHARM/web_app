@@ -40,10 +40,11 @@ class RefreshStatusService:
         status = RefreshStatusService.get_status()
         status["is_refreshing"] = is_refreshing
         if is_refreshing:
+            # Store the timestamp when refresh started (before any DB modifications)
             status["refresh_started"] = datetime.now().isoformat()
             status["refresh_message"] = message or "Refreshing data..."
         else:
-            status["refresh_started"] = None
+            # Don't clear refresh_started immediately - keep it for a bit to check if DB was modified
             status["refresh_message"] = None
         
         RefreshStatusService._save_status(status)
@@ -53,7 +54,8 @@ class RefreshStatusService:
         """Mark refresh as complete"""
         status = RefreshStatusService.get_status()
         status["is_refreshing"] = False
-        status["refresh_started"] = None
+        # Keep refresh_started for a bit to check if DB was modified
+        # It will be cleared on next refresh start
         status["refresh_message"] = None
         
         if success:

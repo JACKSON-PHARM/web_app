@@ -47,8 +47,11 @@ async def run_refresh_task():
         # Get local database path
         local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
         
-        # STEP 1: Download latest database from Drive first (if available)
-        # This ensures we're working with the most recent data and merging new data into it
+        # STEP 1: Smart database sync - only download if necessary
+        # OPTIMIZATION: Skip download if local DB is recent (< 24 hours) and Drive version isn't significantly newer
+        should_download = False
+        local_db_exists = os.path.exists(local_db_path)
+        
         if drive_manager.is_authenticated():
             logger.info("📥 Checking for existing database in Google Drive...")
             RefreshStatusService.update_progress(0.05, "Checking Drive for existing database...")
@@ -56,18 +59,55 @@ async def run_refresh_task():
             # Check if database exists in Drive
             drive_db_info = drive_manager.get_database_info()
             if drive_db_info and drive_db_info.get('exists'):
-                logger.info("📥 Found database in Drive, downloading latest version...")
-                RefreshStatusService.update_progress(0.08, "Downloading database from Drive...")
-                downloaded = drive_manager.download_database(local_db_path)
-                if downloaded:
-                    logger.info("✅ Downloaded latest database from Drive - will merge new data into it")
-                    RefreshStatusService.update_progress(0.1, "Database downloaded, fetching new data...")
+                if local_db_exists:
+                    # Check if Drive version is significantly newer (more than 1 hour)
+                    drive_timestamp = drive_manager.get_drive_database_timestamp()
+                    if drive_timestamp:
+                        from datetime import datetime, timedelta
+                        local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
+                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                        local_age = datetime.now() - local_mtime
+                        
+                        # Only download if:
+                        # 1. Local DB is older than 24 hours AND Drive is newer, OR
+                        # 2. Drive is significantly newer (> 1 hour difference)
+                        if local_age > timedelta(hours=24) and drive_mtime > local_mtime:
+                            logger.info(f"📥 Local DB is old ({local_age}), Drive version is newer - downloading...")
+                            should_download = True
+                        elif drive_mtime > local_mtime + timedelta(hours=1):
+                            logger.info(f"📥 Drive version is significantly newer (Drive: {drive_mtime}, Local: {local_mtime}) - downloading...")
+                            should_download = True
+                        else:
+                            logger.info(f"✅ Local database is recent ({local_age}) and Drive isn't significantly newer - skipping download")
+                            logger.info(f"   Local: {local_mtime.isoformat()}, Drive: {drive_mtime.isoformat()}")
+                            should_download = False
+                    else:
+                        logger.info("ℹ️ Could not get Drive timestamp, using local database")
+                        should_download = False
                 else:
-                    logger.warning("⚠️ Failed to download database from Drive, will use/create local one")
-                    RefreshStatusService.update_progress(0.1, "Using local database...")
+                    # No local DB - must download
+                    logger.info("📥 No local database found, downloading from Drive...")
+                    should_download = True
+                
+                if should_download:
+                    logger.info("📥 Downloading database from Drive...")
+                    RefreshStatusService.update_progress(0.08, "Downloading database from Drive...")
+                    downloaded = drive_manager.download_database(local_db_path)
+                    if downloaded:
+                        logger.info("✅ Downloaded latest database from Drive - will merge new data into it")
+                        RefreshStatusService.update_progress(0.1, "Database downloaded, fetching new data...")
+                    else:
+                        logger.warning("⚠️ Failed to download database from Drive, will use/create local one")
+                        RefreshStatusService.update_progress(0.1, "Using local database...")
+                else:
+                    RefreshStatusService.update_progress(0.1, "Using recent local database, skipping download...")
             else:
-                logger.info("ℹ️ No database in Drive yet, will create new one on first refresh")
-                RefreshStatusService.update_progress(0.1, "No existing database, will create new one...")
+                if local_db_exists:
+                    logger.info("ℹ️ No database in Drive, using existing local database")
+                    RefreshStatusService.update_progress(0.1, "Using local database...")
+                else:
+                    logger.info("ℹ️ No database in Drive yet, will create new one on first refresh")
+                    RefreshStatusService.update_progress(0.1, "No existing database, will create new one...")
         else:
             logger.info("ℹ️ Google Drive not authenticated, using local database only")
             RefreshStatusService.update_progress(0.1, "Using local database...")
@@ -85,12 +125,46 @@ async def run_refresh_task():
         result = refresh_service.refresh_all_data()
         
         if result.get('success'):
-            # STEP 3: Upload updated database back to Google Drive (with conflict resolution)
-            # This ensures Drive always has the latest version
+            # STEP 3: Upload updated database back to Google Drive (only if there are changes)
+            # OPTIMIZATION: Check if database was actually modified before uploading
             if drive_manager.is_authenticated():
-                logger.info("📤 Uploading updated database to Google Drive...")
-                RefreshStatusService.update_progress(0.9, "Uploading to Google Drive...")
-                success = drive_manager.upload_database(local_db_path, check_conflicts=True)
+                # Check if database was modified during refresh
+                db_modified_after_refresh = False
+                if local_db_exists:
+                    from datetime import datetime
+                    # Get modification time before refresh started
+                    pre_refresh_mtime = RefreshStatusService.get_status().get('refresh_started')
+                    if pre_refresh_mtime:
+                        pre_refresh_dt = datetime.fromisoformat(pre_refresh_mtime)
+                        current_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
+                        # If DB was modified after refresh started, upload it
+                        if current_mtime > pre_refresh_dt:
+                            db_modified_after_refresh = True
+                    else:
+                        # No pre-refresh timestamp, assume it was modified
+                        db_modified_after_refresh = True
+                else:
+                    # New database was created
+                    db_modified_after_refresh = True
+                
+                # Check if database was actually modified by comparing mtime before and after
+                db_modified_after_refresh = False
+                if os.path.exists(local_db_path):
+                    db_mtime_after = os.path.getmtime(local_db_path)
+                    if db_mtime_before is None or db_mtime_after > db_mtime_before:
+                        db_modified_after_refresh = True
+                else:
+                    # New database was created
+                    db_modified_after_refresh = True
+                
+                if db_modified_after_refresh:
+                    logger.info("📤 Database was updated during refresh, uploading to Google Drive...")
+                    RefreshStatusService.update_progress(0.9, "Uploading to Google Drive...")
+                    success = drive_manager.upload_database(local_db_path, check_conflicts=True)
+                else:
+                    logger.info("ℹ️ Database was not modified during refresh, skipping upload (saves time!)")
+                    RefreshStatusService.update_progress(0.95, "No changes to upload...")
+                    success = True  # Consider it successful since there's nothing to upload
             else:
                 logger.warning("⚠️ Google Drive not authenticated - skipping upload")
                 success = False
