@@ -2076,6 +2076,52 @@
             btn.style.display = 'inline-block';
         }
     }
+    
+    // Database Status Check Functions
+    async function checkDatabaseStatus() {
+        try {
+            const diagnostics = await apiRequest('/api/dashboard/diagnostics');
+            if (diagnostics.success && diagnostics.diagnostics) {
+                const summary = diagnostics.diagnostics.summary || {};
+                return summary.has_stock_data || false;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error checking database status:', error);
+            return false;
+        }
+    }
+    
+    function showEmptyDatabaseMessage() {
+        // Show message in priority items table
+        const tbody = document.getElementById('priorityBody');
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="11" class="empty" style="padding: 40px; text-align: center;">
+                        <div style="font-size: 20px; margin-bottom: 15px;">👋 Welcome to PharmaStock!</div>
+                        <div style="color: #666; margin-bottom: 20px; line-height: 1.6;">
+                            <p style="font-size: 16px; margin-bottom: 10px;"><strong>No data available yet.</strong></p>
+                            <p>To get started:</p>
+                            <ol style="text-align: left; display: inline-block; margin-top: 10px;">
+                                <li>Make sure API credentials are configured in <strong>Settings</strong></li>
+                                <li>Click the <strong>"Refresh All Data"</strong> button above</li>
+                                <li>Wait for the refresh to complete (progress will be shown)</li>
+                                <li>Data will appear automatically when ready</li>
+                            </ol>
+                        </div>
+                        <button onclick="triggerRefresh()" class="btn-refresh" style="padding: 12px 24px; font-size: 16px; margin-top: 10px;">
+                            🔄 Start First Data Refresh
+                        </button>
+                        <div style="margin-top: 15px; font-size: 12px; color: #999;">
+                            <strong>Note:</strong> First refresh may take 2-5 minutes as it downloads the database from Google Drive and fetches data from APIs.
+                            <br>You'll see a progress window showing each step.
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+    }
 </script>
 {% endblock %}
 
