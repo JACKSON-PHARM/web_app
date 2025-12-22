@@ -133,13 +133,18 @@ async def get_drive_info(
     import os
     logger = logging.getLogger(__name__)
     
+    # Check environment variables
+    has_creds_env = bool(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+    has_token_env = bool(os.getenv("GOOGLE_TOKEN_JSON"))
+    is_render = bool(os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_URL"))
+    
     # Force authentication check before getting info
     logger.info(f"🔍 Checking authentication status...")
     is_auth = drive_manager.is_authenticated()
     logger.info(f"🔍 Authentication status: {is_auth}")
     logger.info(f"🔍 Service is None: {drive_manager.service is None}")
     
-    info = drive_manager.get_database_info()
+    info = drive_manager.get_database_info() if is_auth else {'exists': False, 'error': 'Not authenticated'}
     logger.info(f"🔍 Database info result: {info.get('error', 'No error')}")
     
     # Add local database info for comparison
@@ -166,12 +171,85 @@ async def get_drive_info(
                 'local_timestamp': local_mtime.isoformat()
             }
     
+    # Determine setup status
+    credentials_configured = os.path.exists(settings.GOOGLE_CREDENTIALS_FILE) or has_creds_env
+    token_configured = os.path.exists(settings.GOOGLE_TOKEN_FILE) or has_token_env
+    database_found = info.get('exists', False)
+    
+    setup_status = {
+        "credentials_configured": credentials_configured,
+        "credentials_source": "environment" if has_creds_env else ("file" if os.path.exists(settings.GOOGLE_CREDENTIALS_FILE) else "none"),
+        "token_configured": token_configured,
+        "token_source": "environment" if has_token_env else ("file" if os.path.exists(settings.GOOGLE_TOKEN_FILE) else "none"),
+        "authenticated": is_auth,
+        "database_found": database_found,
+        "local_database_exists": local_db_exists,
+        "setup_complete": is_auth and database_found,
+        "is_render": is_render,
+        "needs_setup": not (is_auth and database_found)
+    }
+    
+    # Generate setup steps
+    setup_steps = []
+    if not credentials_configured:
+        setup_steps.append({
+            "step": 1,
+            "title": "Upload Google Credentials",
+            "description": "Upload your google_credentials.json file" + (" or set GOOGLE_CREDENTIALS_JSON environment variable" if is_render else ""),
+            "action": "upload_credentials",
+            "completed": False,
+            "critical": True
+        })
+    else:
+        setup_steps.append({
+            "step": 1,
+            "title": "Upload Google Credentials",
+            "description": f"✅ Credentials configured ({setup_status['credentials_source']})",
+            "completed": True
+        })
+    
+    if not is_auth:
+        setup_steps.append({
+            "step": 2,
+            "title": "Authorize Google Drive",
+            "description": "Click 'Get Authorization URL' and complete OAuth flow" + (" (token can be saved to GOOGLE_TOKEN_JSON env var)" if is_render else ""),
+            "action": "authorize",
+            "completed": False,
+            "critical": True
+        })
+    else:
+        setup_steps.append({
+            "step": 2,
+            "title": "Authorize Google Drive",
+            "description": f"✅ Google Drive authorized ({setup_status['token_source']})",
+            "completed": True
+        })
+    
+    if not database_found:
+        setup_steps.append({
+            "step": 3,
+            "title": "Sync Database",
+            "description": "Download database from Drive or run 'Refresh All Data' to create one",
+            "action": "sync_database",
+            "completed": False,
+            "critical": True
+        })
+    else:
+        setup_steps.append({
+            "step": 3,
+            "title": "Sync Database",
+            "description": f"✅ Database found ({info.get('size_mb', 0)} MB)",
+            "completed": True
+        })
+    
     # Add callback URL to the response
     info['callback_url'] = settings.GOOGLE_OAUTH_CALLBACK_URL
     
     return {
         "success": True,
-        "database_info": info
+        "database_info": info,
+        "setup_status": setup_status,
+        "setup_steps": setup_steps
     }
 
 @router.get("/drive/authorize")

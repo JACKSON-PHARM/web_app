@@ -29,6 +29,29 @@ class GoogleDriveManager:
         self.token_file = settings.GOOGLE_TOKEN_FILE
         self._pending_flow = None  # Store flow for callback handling
         self._flow_state_file = os.path.join(os.path.dirname(self.token_file), "oauth_flow_state.json")  # Store flow state
+        
+        # Check for credentials in environment variable first (for Render persistence)
+        if os.getenv("GOOGLE_CREDENTIALS_JSON"):
+            logger.info("📥 Found Google credentials in environment variable")
+            try:
+                os.makedirs(os.path.dirname(self.credentials_file), exist_ok=True)
+                with open(self.credentials_file, 'w') as f:
+                    f.write(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+                logger.info(f"✅ Wrote credentials from environment variable to {self.credentials_file}")
+            except Exception as e:
+                logger.error(f"❌ Error writing credentials from env var: {e}")
+        
+        # Check for token in environment variable (for Render persistence)
+        if os.getenv("GOOGLE_TOKEN_JSON"):
+            logger.info("📥 Found Google token in environment variable")
+            try:
+                os.makedirs(os.path.dirname(self.token_file), exist_ok=True)
+                with open(self.token_file, 'w') as f:
+                    f.write(os.getenv("GOOGLE_TOKEN_JSON"))
+                logger.info(f"✅ Wrote token from environment variable to {self.token_file}")
+            except Exception as e:
+                logger.error(f"❌ Error writing token from env var: {e}")
+        
         # Don't authenticate immediately - let it fail gracefully if no token
         # Only authenticate if credentials file exists
         if os.path.exists(self.credentials_file):
@@ -39,6 +62,7 @@ class GoogleDriveManager:
                 # Will authenticate when needed or via callback
         else:
             logger.info("Google credentials file not found - Google Drive features will be disabled until configured")
+            logger.info("💡 Tip: Upload credentials via Admin panel or set GOOGLE_CREDENTIALS_JSON environment variable")
     
     def _authenticate(self):
         """Authenticate with Google Drive API"""

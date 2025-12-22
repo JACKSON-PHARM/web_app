@@ -249,9 +249,39 @@
             console.log('📥 Drive info response:', data);
             if (data && data.success && data.database_info) {
                 const info = data.database_info;
+                const setupStatus = data.setup_status || {};
+                const setupSteps = data.setup_steps || [];
+                const isRender = setupStatus.is_render || false;
+                const needsSetup = setupStatus.needs_setup !== false;
+                
                 console.log('📊 Database info:', info);
+                console.log('⚙️ Setup status:', setupStatus);
+                
                 let html = '<div style="padding: 15px; background: #f8f9fa; border-radius: 5px;">';
                 html += '<h3 style="margin-top: 0;">📁 Google Drive Status</h3>';
+                
+                // Show setup status banner if needed
+                if (needsSetup) {
+                    html += '<div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 5px; padding: 15px; margin-bottom: 20px;">';
+                    html += '<h4 style="margin-top: 0; color: #856404;">⚠️ Setup Required</h4>';
+                    html += '<p style="color: #856404; margin-bottom: 15px;">';
+                    if (isRender) {
+                        html += '<strong>After each deployment on Render, you need to configure Google Drive.</strong><br>';
+                        html += 'To avoid this, set environment variables in Render dashboard:<br>';
+                        html += '<code>GOOGLE_CREDENTIALS_JSON</code> and <code>GOOGLE_TOKEN_JSON</code>';
+                    } else {
+                        html += 'Google Drive is not fully configured. Follow the steps below to complete setup.';
+                    }
+                    html += '</p>';
+                    html += '<div style="background: white; padding: 10px; border-radius: 3px; margin-top: 10px;">';
+                    html += '<strong style="color: #856404;">Setup Steps:</strong><ol style="margin: 10px 0 0 20px; color: #856404;">';
+                    setupSteps.forEach(step => {
+                        const icon = step.completed ? '✅' : (step.critical ? '❌' : '⏳');
+                        html += `<li style="margin-bottom: 5px;">${icon} <strong>${step.title}:</strong> ${step.description}</li>`;
+                    });
+                    html += '</ol></div>';
+                    html += '</div>';
+                }
                 
                 // Check if there's an authentication error (not just missing database)
                 if (info.error && (info.error.toLowerCase().includes('not authenticated') || info.error.toLowerCase().includes('authorization'))) {
