@@ -160,13 +160,32 @@ class GoogleDriveManager:
                     # Search for database file inside each folder
                     for folder in folders:
                         folder_id = folder['id']
+                        folder_name = folder.get('name', 'Unknown')
+                        logger.info(f"  🔍 Searching inside folder '{folder_name}' (ID: {folder_id})...")
+                        
                         file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
-                        file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=1).execute()
-                        folder_files = file_results.get('files', [])
-                        if folder_files:
-                            logger.info(f"✅ Found database inside folder '{folder['name']}' (ID: {folder_id})")
-                            items_wide = folder_files
-                            break
+                        try:
+                            file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=10).execute()
+                            folder_files = file_results.get('files', [])
+                            
+                            logger.info(f"  📋 Found {len(folder_files)} file(s) matching '{settings.DB_FILENAME}' in folder '{folder_name}'")
+                            
+                            # List all files in folder for debugging
+                            all_files_query = f"'{folder_id}' in parents and trashed=false"
+                            all_files_results = self.service.files().list(q=all_files_query, fields='files(id,name,mimeType)').execute()
+                            all_files = all_files_results.get('files', [])
+                            logger.info(f"  📁 Total files in folder '{folder_name}': {len(all_files)}")
+                            for f in all_files[:10]:  # Show first 10 files
+                                logger.info(f"    - {f.get('name')} ({f.get('mimeType', 'unknown type')})")
+                            
+                            if folder_files:
+                                logger.info(f"✅ Found database '{folder_files[0].get('name')}' inside folder '{folder_name}' (ID: {folder_id})")
+                                items_wide = folder_files
+                                break
+                        except Exception as e:
+                            logger.error(f"  ❌ Error searching folder '{folder_name}': {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
                 
                 if items_wide:
                     logger.info(f"✅ Found database in Drive, downloading...")
@@ -218,14 +237,20 @@ class GoogleDriveManager:
                 folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
                 folders = folder_results.get('files', [])
                 
+                logger.info(f"Found {len(folders)} PharmaStock_Database folder(s) for timestamp search...")
                 for folder in folders:
                     folder_id = folder['id']
+                    folder_name = folder.get('name', 'Unknown')
                     file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
-                    file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=1).execute()
-                    folder_files = file_results.get('files', [])
-                    if folder_files:
-                        items = folder_files
-                        break
+                    try:
+                        file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=1).execute()
+                        folder_files = file_results.get('files', [])
+                        if folder_files:
+                            logger.info(f"✅ Found database in folder '{folder_name}' for timestamp")
+                            items = folder_files
+                            break
+                    except Exception as e:
+                        logger.error(f"Error searching folder '{folder_name}' for timestamp: {e}")
             
             if items:
                 file_id = items[0]['id']
