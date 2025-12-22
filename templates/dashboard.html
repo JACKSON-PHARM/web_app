@@ -586,6 +586,29 @@
 {% endblock %}
 
 {% block content %}
+<!-- Progress Modal -->
+<div id="progressModal" class="progress-modal">
+    <div class="progress-content">
+        <div class="progress-header">
+            <span id="progressIcon">🔄</span>
+            <span>Refreshing Data</span>
+        </div>
+        <div class="progress-bar-container">
+            <div id="progressBar" class="progress-bar" style="width: 0%">0%</div>
+        </div>
+        <div class="progress-message" id="progressMessage">Starting refresh...</div>
+        <div class="progress-details" id="progressDetails"></div>
+        <div class="progress-steps" id="progressSteps">
+            <div class="progress-step pending" id="step1">📥 Downloading database from Drive...</div>
+            <div class="progress-step pending" id="step2">🔄 Fetching stock data from APIs...</div>
+            <div class="progress-step pending" id="step3">📊 Processing and merging data...</div>
+            <div class="progress-step pending" id="step4">📤 Uploading to Google Drive...</div>
+            <div class="progress-step pending" id="step5">✅ Complete!</div>
+        </div>
+        <div class="progress-time" id="progressTime"></div>
+    </div>
+</div>
+
 <div class="dashboard-container">
     <div class="dashboard-header">
         <h1>📊 Dashboard</h1>
@@ -820,7 +843,29 @@
                 if (data.traceback) {
                     console.error('Traceback:', data.traceback);
                 }
-                tbody.innerHTML = '<tr><td colspan="11" class="empty">Error: ' + errorMsg + '</td></tr>';
+                
+                // Show helpful message if database is empty
+                if (errorMsg.includes('empty') || errorMsg.includes('No stock data')) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="11" class="empty" style="padding: 40px; text-align: center;">
+                                <div style="font-size: 18px; margin-bottom: 15px;">📊 No Data Available</div>
+                                <div style="color: #666; margin-bottom: 20px;">
+                                    The database is empty. Click the button below to fetch data from APIs.
+                                </div>
+                                <button onclick="triggerRefresh()" class="btn-refresh" style="padding: 12px 24px; font-size: 16px;">
+                                    🔄 Refresh Data Now
+                                </button>
+                                <div style="margin-top: 15px; font-size: 12px; color: #999;">
+                                    This will download data from Google Drive (if available) and fetch new data from APIs.
+                                    <br>Progress will be shown in a popup window.
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="11" class="empty">Error: ' + errorMsg + '</td></tr>';
+                }
                 return;
             }
             
