@@ -203,6 +203,7 @@ class GoogleDriveManager:
                             if len(all_files) == 0:
                                 logger.warning(f"  ⚠️ Folder '{folder_name}' appears to be EMPTY or cannot be accessed")
                                 logger.warning(f"     This might explain why the folder can't be opened in Google Drive UI")
+                                logger.warning(f"     The database file might be at the root level of Drive, not inside folders")
                             else:
                                 # Log ALL files in the folder
                                 for f in all_files:
