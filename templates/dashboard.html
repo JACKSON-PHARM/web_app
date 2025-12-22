@@ -733,14 +733,22 @@
             }
         }
         
-        // Load branches first, then data
+        // Load branches first
         loadBranches();
         
-        // Load data asynchronously
-        setTimeout(() => {
-            loadDashboardData();
-            checkRefreshStatus();
-        }, 100); // Small delay to ensure page is rendered
+        // Check database status and load data
+        checkDatabaseStatus().then(hasData => {
+            if (hasData) {
+                // Load data asynchronously
+                setTimeout(() => {
+                    loadDashboardData();
+                    checkRefreshStatus();
+                }, 100);
+            } else {
+                // Show helpful empty state message
+                showEmptyDatabaseMessage();
+            }
+        });
         
         // Add event listeners for branch changes
         const targetBranch = document.getElementById('targetBranch');
