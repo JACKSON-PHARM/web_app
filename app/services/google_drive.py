@@ -182,34 +182,72 @@ class GoogleDriveManager:
                     logger.info(f"Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
                     
                     # Search for database file inside each folder
+                    all_found_files = []
                     for folder in folders:
                         folder_id = folder['id']
                         folder_name = folder.get('name', 'Unknown')
                         logger.info(f"  🔍 Searching inside folder '{folder_name}' (ID: {folder_id})...")
                         
-                        file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                        # List ALL files in folder first to see what's actually there
                         try:
-                            file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=10).execute()
-                            folder_files = file_results.get('files', [])
-                            
-                            logger.info(f"  📋 Found {len(folder_files)} file(s) matching '{settings.DB_FILENAME}' in folder '{folder_name}'")
-                            
-                            # List all files in folder for debugging
                             all_files_query = f"'{folder_id}' in parents and trashed=false"
-                            all_files_results = self.service.files().list(q=all_files_query, fields='files(id,name,mimeType)').execute()
+                            all_files_results = self.service.files().list(
+                                q=all_files_query, 
+                                fields='files(id,name,mimeType,size,modifiedTime)',
+                                pageSize=100
+                            ).execute()
                             all_files = all_files_results.get('files', [])
                             logger.info(f"  📁 Total files in folder '{folder_name}': {len(all_files)}")
-                            for f in all_files[:10]:  # Show first 10 files
-                                logger.info(f"    - {f.get('name')} ({f.get('mimeType', 'unknown type')})")
                             
-                            if folder_files:
-                                logger.info(f"✅ Found database '{folder_files[0].get('name')}' inside folder '{folder_name}' (ID: {folder_id})")
-                                items_wide = folder_files
-                                break
+                            # Log ALL files in the folder
+                            for f in all_files:
+                                file_name = f.get('name', 'Unknown')
+                                file_type = f.get('mimeType', 'unknown')
+                                file_size = f.get('size', 0)
+                                logger.info(f"    📄 {file_name} (Type: {file_type}, Size: {int(file_size)/(1024*1024):.2f} MB if size>0)")
+                                
+                                # Check if this file matches our database filename (exact or partial)
+                                if settings.DB_FILENAME.lower() in file_name.lower() or file_name.lower().endswith('.db'):
+                                    logger.info(f"      ⭐ This file matches database pattern!")
+                                    all_found_files.append(f)
+                            
+                            # Also try exact match query
+                            file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                            file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=10).execute()
+                            exact_matches = file_results.get('files', [])
+                            
+                            if exact_matches:
+                                logger.info(f"  ✅ Found {len(exact_matches)} exact match(es) for '{settings.DB_FILENAME}' in folder '{folder_name}'")
+                                all_found_files.extend(exact_matches)
+                                
                         except Exception as e:
                             logger.error(f"  ❌ Error searching folder '{folder_name}': {e}")
                             import traceback
                             logger.error(traceback.format_exc())
+                    
+                    # Use the most recently modified file if we found any
+                    if all_found_files:
+                        # Remove duplicates by ID
+                        unique_files = {}
+                        for f in all_found_files:
+                            file_id = f.get('id')
+                            if file_id not in unique_files:
+                                unique_files[file_id] = f
+                            else:
+                                # Keep the one with more info
+                                if f.get('size') and not unique_files[file_id].get('size'):
+                                    unique_files[file_id] = f
+                        
+                        # Sort by modifiedTime (newest first)
+                        sorted_files = sorted(
+                            unique_files.values(), 
+                            key=lambda x: x.get('modifiedTime', ''), 
+                            reverse=True
+                        )
+                        items_wide = sorted_files[:1]  # Take the newest one
+                        logger.info(f"✅ Found {len(unique_files)} unique database file(s) across all folders, using newest: {items_wide[0].get('name')}")
+                    else:
+                        logger.warning(f"⚠️ No database files found in any of the {len(folders)} PharmaStock_Database folders")
                 
                 if items_wide:
                     logger.info(f"✅ Found database in Drive, downloading...")
