@@ -118,32 +118,79 @@ class GoogleDriveManager:
         else:
             logger.warning("⚠️ Google Drive not authenticated - app will continue without Drive features")
     
+    def _get_persistent_folder_id(self) -> Optional[str]:
+        """Get folder ID from environment variable or settings"""
+        # Check environment variable first (for Render persistence)
+        env_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+        if env_folder_id:
+            return env_folder_id.strip()
+        
+        # Check settings
+        if self.folder_id:
+            return self.folder_id
+        
+        return None
+    
+    def _save_folder_id(self, folder_id: str):
+        """Save folder ID to settings and optionally to environment variable"""
+        self.folder_id = folder_id
+        # Note: Environment variables should be set manually in Render dashboard
+        # We'll log the folder ID so user can set it
+        logger.info(f"💾 Folder ID: {folder_id}")
+        logger.info(f"💡 To persist across deployments, set GOOGLE_DRIVE_FOLDER_ID={folder_id} in environment variables")
+    
     def ensure_folder_exists(self) -> str:
-        """Ensure the database folder exists in Drive"""
+        """Ensure the database folder exists in Drive - use single consistent folder"""
         if not self.service:
             raise Exception("Google Drive not authenticated. Please authorize first.")
         
-        if self.folder_id:
+        # First, try to get persistent folder ID
+        persistent_id = self._get_persistent_folder_id()
+        if persistent_id:
             try:
-                self.service.files().get(fileId=self.folder_id).execute()
-                logger.info(f"✅ Using existing folder: {self.folder_id}")
-                return self.folder_id
-            except HttpError:
-                logger.info("Folder not found, creating new one...")
+                # Verify folder still exists
+                folder_info = self.service.files().get(fileId=persistent_id, fields='id,name').execute()
+                logger.info(f"✅ Using persistent folder: {folder_info.get('name')} ({persistent_id})")
+                self.folder_id = persistent_id
+                return persistent_id
+            except HttpError as e:
+                logger.warning(f"⚠️ Persistent folder {persistent_id} not found or inaccessible: {e}")
+                logger.info("🔍 Searching for existing PharmaStock_Database folder...")
         
-        # Create folder
+        # If no persistent ID or folder doesn't exist, find or create ONE folder
+        # Search for existing folder (limit to 1 result for efficiency)
+        folder_query = "name='PharmaStock_Database' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        folder_results = self.service.files().list(
+            q=folder_query, 
+            fields='files(id,name,modifiedTime)',
+            orderBy='modifiedTime desc',  # Get most recently modified folder
+            pageSize=1  # Only get the newest one
+        ).execute()
+        folders = folder_results.get('files', [])
+        
+        if folders:
+            # Use the most recent folder
+            folder = folders[0]
+            folder_id = folder.get('id')
+            logger.info(f"✅ Found existing folder: {folder.get('name')} ({folder_id})")
+            self._save_folder_id(folder_id)
+            return folder_id
+        
+        # No existing folder found, create ONE new folder
+        logger.info("📁 Creating new PharmaStock_Database folder...")
         folder_metadata = {
             'name': 'PharmaStock_Database',
             'mimeType': 'application/vnd.google-apps.folder'
         }
         folder = self.service.files().create(
             body=folder_metadata,
-            fields='id'
+            fields='id,name'
         ).execute()
         
-        self.folder_id = folder.get('id')
-        logger.info(f"✅ Created folder: {self.folder_id}")
-        return self.folder_id
+        folder_id = folder.get('id')
+        logger.info(f"✅ Created new folder: {folder.get('name')} ({folder_id})")
+        self._save_folder_id(folder_id)
+        return folder_id
     
     def download_database(self, local_path: str) -> bool:
         """Download database from Google Drive"""
@@ -163,151 +210,31 @@ class GoogleDriveManager:
             results = self.service.files().list(q=query).execute()
             items = results.get('files', [])
             
-            # If not found in app folder, search Drive-wide (fallback)
+            # If not found in configured folder, try to find the correct folder
             if not items:
-                logger.info(f"Database not found in folder '{self.folder_id}', searching Drive-wide...")
+                logger.info(f"Database not found in configured folder '{self.folder_id}'")
                 
-                # STEP 1: Search for database file directly at ROOT LEVEL
-                logger.info(f"🔍 STEP 1: Searching for '{settings.DB_FILENAME}' at ROOT LEVEL of Drive...")
-                query_wide = f"name='{settings.DB_FILENAME}' and trashed=false"
+                # Ensure we have the correct folder (will find or create ONE folder)
                 try:
-                    results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=20).execute()
-                    items_wide = results_wide.get('files', [])
+                    correct_folder_id = self.ensure_folder_exists()
+                    if correct_folder_id != self.folder_id:
+                        logger.info(f"📁 Using folder: {correct_folder_id} (was {self.folder_id})")
+                        self.folder_id = correct_folder_id
                     
-                    if items_wide:
-                        logger.info(f"✅ FOUND {len(items_wide)} database file(s) at ROOT LEVEL!")
-                        for item in items_wide[:3]:
-                            file_name = item.get('name', 'Unknown')
-                            file_size = item.get('size', 0)
-                            file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
-                            logger.info(f"  📄 {file_name} ({file_size_mb} MB) - File ID: {item.get('id')}")
+                    # Search again in the correct folder
+                    query = f"name='{settings.DB_FILENAME}' and '{self.folder_id}' in parents and trashed=false"
+                    results = self.service.files().list(q=query, orderBy='modifiedTime desc', pageSize=1).execute()
+                    items = results.get('files', [])
+                    
+                    if items:
+                        logger.info(f"✅ Found database in folder: {self.folder_id}")
                     else:
-                        logger.warning(f"❌ No files named '{settings.DB_FILENAME}' found at root level")
-                        
-                        # STEP 2: Search for any .db files
-                        logger.info(f"🔍 STEP 2: Searching for ANY .db files in Drive...")
-                        query_db = f"name contains '.db' and trashed=false"
-                        results_db = self.service.files().list(q=query_db, orderBy='modifiedTime desc', pageSize=20).execute()
-                        db_files = results_db.get('files', [])
-                        
-                        if db_files:
-                            logger.info(f"✅ Found {len(db_files)} .db file(s) in Drive:")
-                            for db_file in db_files[:5]:
-                                file_name = db_file.get('name', 'Unknown')
-                                file_size = db_file.get('size', 0)
-                                file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
-                                logger.info(f"  📄 {file_name} ({file_size_mb} MB)")
-                                
-                                # If it's a large database file, consider it
-                                if file_size_mb > 100 or 'pharma' in file_name.lower() or 'stock' in file_name.lower():
-                                    logger.info(f"    ⭐ This looks like our database file!")
-                                    if not items_wide:
-                                        items_wide = []
-                                    items_wide.append(db_file)
-                        else:
-                            logger.warning(f"❌ No .db files found in Drive")
+                        logger.warning(f"Database '{settings.DB_FILENAME}' not found in folder '{self.folder_id}'")
+                        logger.info("💡 Tip: Use 'Upload to Drive' to upload your local database first, or use 'Refresh Now' to fetch data and create a database")
                 except Exception as e:
-                    logger.error(f"❌ Error during root-level search: {e}")
+                    logger.error(f"❌ Error finding folder: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
-                    items_wide = []
-                
-                # STEP 3: If still not found, search inside PharmaStock_Database folders
-                if not items_wide:
-                    logger.info("Searching inside PharmaStock_Database folders...")
-                    # Find all PharmaStock_Database folders
-                    folder_query = "name='PharmaStock_Database' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-                    folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
-                    folders = folder_results.get('files', [])
-                    
-                    logger.info(f"🔍 STEP 3: Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
-                    logger.info(f"   Folder IDs: {[f.get('id') for f in folders]}")
-                    
-                    # Search for database file inside each folder
-                    all_found_files = []
-                    if len(folders) == 0:
-                        logger.warning("  ⚠️ No folders to search!")
-                    else:
-                        for idx, folder in enumerate(folders, 1):
-                            folder_id = folder['id']
-                            folder_name = folder.get('name', 'Unknown')
-                            logger.info(f"  🔍 [{idx}/{len(folders)}] Searching inside folder '{folder_name}' (ID: {folder_id})...")
-                            
-                            # List ALL files in folder first to see what's actually there
-                            try:
-                                logger.info(f"    📋 Executing query for files in folder '{folder_name}'...")
-                                all_files_query = f"'{folder_id}' in parents and trashed=false"
-                                logger.info(f"    📋 Query: {all_files_query}")
-                                all_files_results = self.service.files().list(
-                                    q=all_files_query, 
-                                    fields='files(id,name,mimeType,size,modifiedTime)',
-                                    pageSize=100
-                                ).execute()
-                                all_files = all_files_results.get('files', [])
-                                logger.info(f"    📁 Query returned {len(all_files)} file(s) in folder '{folder_name}'")
-                                
-                                if len(all_files) == 0:
-                                    logger.warning(f"    ⚠️ Folder '{folder_name}' is EMPTY - no files found!")
-                                    logger.warning(f"       This might explain why the folder can't be opened in Google Drive UI")
-                                    logger.warning(f"       The database file might be at the root level of Drive, not inside folders")
-                                else:
-                                    # Log ALL files in the folder
-                                    for f in all_files:
-                                        file_name = f.get('name', 'Unknown')
-                                        file_type = f.get('mimeType', 'unknown')
-                                        file_size = f.get('size', 0)
-                                        file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
-                                        logger.info(f"    📄 {file_name} (Type: {file_type}, Size: {file_size_mb} MB)")
-                                        
-                                        # Check if this file matches our database filename (exact or partial)
-                                        if settings.DB_FILENAME.lower() in file_name.lower() or file_name.lower().endswith('.db'):
-                                            logger.info(f"      ⭐ This file matches database pattern!")
-                                            all_found_files.append(f)
-                                
-                                # Also try exact match query
-                                file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
-                                file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=10).execute()
-                                exact_matches = file_results.get('files', [])
-                                
-                                if exact_matches:
-                                    logger.info(f"  ✅ Found {len(exact_matches)} exact match(es) for '{settings.DB_FILENAME}' in folder '{folder_name}'")
-                                    all_found_files.extend(exact_matches)
-                                    
-                            except Exception as e:
-                                logger.error(f"  ❌ Error searching folder '{folder_name}': {e}")
-                                import traceback
-                                logger.error(traceback.format_exc())
-                    
-                    # Use the most recently modified file if we found any
-                    if all_found_files:
-                        # Remove duplicates by ID
-                        unique_files = {}
-                        for f in all_found_files:
-                            file_id = f.get('id')
-                            if file_id not in unique_files:
-                                unique_files[file_id] = f
-                            else:
-                                # Keep the one with more info
-                                if f.get('size') and not unique_files[file_id].get('size'):
-                                    unique_files[file_id] = f
-                        
-                        # Sort by modifiedTime (newest first)
-                        sorted_files = sorted(
-                            unique_files.values(), 
-                            key=lambda x: x.get('modifiedTime', ''), 
-                            reverse=True
-                        )
-                        items_wide = sorted_files[:1]  # Take the newest one
-                        logger.info(f"✅ Found {len(unique_files)} unique database file(s) across all folders, using newest: {items_wide[0].get('name')}")
-                    else:
-                        logger.warning(f"⚠️ No database files found in any of the {len(folders)} PharmaStock_Database folders")
-                
-                if items_wide:
-                    logger.info(f"✅ Found database in Drive, downloading...")
-                    items = items_wide  # Use the found file
-                else:
-                    logger.warning(f"Database '{settings.DB_FILENAME}' not found anywhere in Drive")
-                    logger.info("💡 Tip: Use 'Upload to Drive' to upload your local database first, or use 'Refresh Now' to fetch data and create a database")
                     return False
             
             file_id = items[0]['id']
