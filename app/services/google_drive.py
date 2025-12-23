@@ -180,17 +180,18 @@ class GoogleDriveManager:
                     folder_results = self.service.files().list(q=folder_query, fields='files(id,name)').execute()
                     folders = folder_results.get('files', [])
                     
-                    logger.info(f"Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
+                    logger.info(f"🔍 STEP 3: Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
                     
                     # Search for database file inside each folder
                     all_found_files = []
-                    for folder in folders:
+                    for idx, folder in enumerate(folders, 1):
                         folder_id = folder['id']
                         folder_name = folder.get('name', 'Unknown')
-                        logger.info(f"  🔍 Searching inside folder '{folder_name}' (ID: {folder_id})...")
+                        logger.info(f"  🔍 [{idx}/{len(folders)}] Searching inside folder '{folder_name}' (ID: {folder_id})...")
                         
                         # List ALL files in folder first to see what's actually there
                         try:
+                            logger.info(f"    📋 Querying files in folder '{folder_name}'...")
                             all_files_query = f"'{folder_id}' in parents and trashed=false"
                             all_files_results = self.service.files().list(
                                 q=all_files_query, 
@@ -198,7 +199,7 @@ class GoogleDriveManager:
                                 pageSize=100
                             ).execute()
                             all_files = all_files_results.get('files', [])
-                            logger.info(f"  📁 Total files in folder '{folder_name}': {len(all_files)}")
+                            logger.info(f"    📁 Query returned {len(all_files)} file(s) in folder '{folder_name}'")
                             
                             if len(all_files) == 0:
                                 logger.warning(f"  ⚠️ Folder '{folder_name}' appears to be EMPTY or cannot be accessed")
