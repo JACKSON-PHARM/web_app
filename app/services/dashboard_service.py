@@ -694,7 +694,17 @@ class DashboardService:
                 return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
                                             'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
                                             'pack_size', 'last_order_date'])
+            # Check if source and target are the same branch (would return no results)
+            if source_branch == target_branch and source_company == target_company:
+                logger.warning(f"⚠️ Source and target branches are the same ({source_branch}), cannot find priority items. Priority items require different branches.")
+                logger.info(f"💡 Tip: Select a different target branch (e.g., a retail branch) to see items that need to be transferred from {source_branch}.")
+                conn.close()
+                return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                                            'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                                            'pack_size', 'last_order_date'])
+            
             # Execute query with appropriate parameters
+            logger.info(f"🔍 Executing priority items query: source={source_branch} ({source_company}), target={target_branch} ({target_company})")
             if use_stock_data_fallback:
                 source_snapshot_date = source_latest_date if source_latest_date else None
                 target_snapshot_date = target_latest_date if target_latest_date else None
@@ -715,8 +725,14 @@ class DashboardService:
                 )
             conn.close()
             
+            logger.info(f"📊 Query returned {len(df)} rows before filtering")
+            
             if df.empty:
                 logger.info(f"No priority items found: source={source_branch} has stock, target={target_branch} doesn't")
+                logger.info(f"💡 This could mean:")
+                logger.info(f"   1. Target branch ({target_branch}) already has all items in stock")
+                logger.info(f"   2. Source branch ({source_branch}) doesn't have stock for items that target needs")
+                logger.info(f"   3. Try selecting different branches")
                 return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
                                             'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
                                             'pack_size', 'last_order_date'])
