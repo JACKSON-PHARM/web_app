@@ -634,6 +634,8 @@ class GoogleDriveManager:
                             'location': ', '.join(parent_folders) if parent_folders else 'My Drive',
                             'parent_ids': file_info.get('parents', [])
                         })
+            except Exception as e:
+                logger.warning(f"⚠️ Error searching configured folder: {e}")
             
             # Sort all files by modifiedTime (newest first)
             files.sort(key=lambda x: x.get('modified', ''), reverse=True)
