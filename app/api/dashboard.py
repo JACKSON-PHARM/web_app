@@ -494,6 +494,16 @@ async def get_priority_items(
             }
         else:
             logger.warning("⚠️ No priority items returned from DashboardService")
+            # Check if source and target are the same (common issue)
+            if target_branch == source_branch and target_company == source_company:
+                return {
+                    "success": True,
+                    "data": [],
+                    "count": 0,
+                    "message": f"⚠️ Source and target branches are the same ({source_branch}). Priority items show items available at the source branch that are needed at a different target branch. Please select different branches.",
+                    "help": "Priority items require: 1) Source branch (e.g., HQ) that HAS stock, 2) Target branch (e.g., retail branch) that NEEDS stock"
+                }
+            
             # Check database again to provide helpful message
             try:
                 import sqlite3
@@ -503,6 +513,15 @@ async def get_priority_items(
                 stock_count = cursor.fetchone()[0]
                 cursor.execute("SELECT COUNT(*) FROM stock_data")
                 stock_data_count = cursor.fetchone()[0]
+                
+                # Check if source branch has stock
+                cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", (source_branch, source_company))
+                source_stock_count = cursor.fetchone()[0]
+                
+                # Check if target branch has stock
+                cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", (target_branch, target_company))
+                target_stock_count = cursor.fetchone()[0]
+                
                 conn.close()
                 
                 if stock_count == 0 and stock_data_count == 0:
@@ -513,6 +532,19 @@ async def get_priority_items(
                         "count": 0,
                         "message": "No stock data found in database. Please refresh data from APIs."
                     }
+                
+                # Provide more specific message
+                if source_stock_count == 0:
+                    return {
+                        "success": True,
+                        "data": [],
+                        "count": 0,
+                        "message": f"Source branch ({source_branch}) has no stock data. Please refresh stock data.",
+                        "diagnostics": {
+                            "source_branch_stock_count": source_stock_count,
+                            "target_branch_stock_count": target_stock_count
+                        }
+                    }
             except Exception as e:
                 logger.error(f"Error checking database: {e}")
             
@@ -520,7 +552,7 @@ async def get_priority_items(
                 "success": True,
                 "data": [],
                 "count": 0,
-                "message": "No priority items found for the selected branches. Try selecting different branches or refresh data."
+                "message": f"No priority items found. Source ({source_branch}) may have all items that target ({target_branch}) needs, or target already has sufficient stock. Try selecting different branches."
             }
     except Exception as e:
         import traceback
