@@ -148,6 +148,13 @@ class GoogleDriveManager:
         if not self.service:
             raise Exception("Google Drive not authenticated. Please authorize first.")
         
+        # Use cached folder info if available and recent (< 5 minutes old)
+        if self._folder_info_cache and self._folder_info_cache_time:
+            from datetime import datetime, timedelta
+            cache_age = datetime.now() - self._folder_info_cache_time
+            if cache_age < timedelta(minutes=5):
+                return self._folder_info_cache
+        
         # First, try to get persistent folder ID
         persistent_id = self._get_persistent_folder_id()
         if persistent_id:
@@ -156,6 +163,10 @@ class GoogleDriveManager:
                 folder_info = self.service.files().get(fileId=persistent_id, fields='id,name').execute()
                 logger.info(f"✅ Using persistent folder: {folder_info.get('name')} ({persistent_id})")
                 self.folder_id = persistent_id
+                # Cache the result
+                self._folder_info_cache = persistent_id
+                from datetime import datetime
+                self._folder_info_cache_time = datetime.now()
                 return persistent_id
             except HttpError as e:
                 logger.warning(f"⚠️ Persistent folder {persistent_id} not found or inaccessible: {e}")
@@ -178,6 +189,10 @@ class GoogleDriveManager:
             folder_id = folder.get('id')
             logger.info(f"✅ Found existing folder: {folder.get('name')} ({folder_id})")
             self._save_folder_id(folder_id)
+            # Cache the result
+            self._folder_info_cache = folder_id
+            from datetime import datetime
+            self._folder_info_cache_time = datetime.now()
             return folder_id
         
         # No existing folder found, create ONE new folder
@@ -194,6 +209,10 @@ class GoogleDriveManager:
         folder_id = folder.get('id')
         logger.info(f"✅ Created new folder: {folder.get('name')} ({folder_id})")
         self._save_folder_id(folder_id)
+        # Cache the result
+        self._folder_info_cache = folder_id
+        from datetime import datetime
+        self._folder_info_cache_time = datetime.now()
         return folder_id
     
     def download_database(self, local_path: str) -> bool:
