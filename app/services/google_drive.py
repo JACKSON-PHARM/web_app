@@ -181,25 +181,33 @@ class GoogleDriveManager:
                     folders = folder_results.get('files', [])
                     
                     logger.info(f"🔍 STEP 3: Found {len(folders)} PharmaStock_Database folder(s), searching inside them...")
+                    logger.info(f"   Folder IDs: {[f.get('id') for f in folders]}")
                     
                     # Search for database file inside each folder
                     all_found_files = []
-                    for idx, folder in enumerate(folders, 1):
-                        folder_id = folder['id']
-                        folder_name = folder.get('name', 'Unknown')
-                        logger.info(f"  🔍 [{idx}/{len(folders)}] Searching inside folder '{folder_name}' (ID: {folder_id})...")
-                        
-                        # List ALL files in folder first to see what's actually there
-                        try:
-                            logger.info(f"    📋 Querying files in folder '{folder_name}'...")
-                            all_files_query = f"'{folder_id}' in parents and trashed=false"
-                            all_files_results = self.service.files().list(
-                                q=all_files_query, 
-                                fields='files(id,name,mimeType,size,modifiedTime)',
-                                pageSize=100
-                            ).execute()
-                            all_files = all_files_results.get('files', [])
-                            logger.info(f"    📁 Query returned {len(all_files)} file(s) in folder '{folder_name}'")
+                    if len(folders) == 0:
+                        logger.warning("  ⚠️ No folders to search!")
+                    else:
+                        for idx, folder in enumerate(folders, 1):
+                            folder_id = folder['id']
+                            folder_name = folder.get('name', 'Unknown')
+                            logger.info(f"  🔍 [{idx}/{len(folders)}] Searching inside folder '{folder_name}' (ID: {folder_id})...")
+                            
+                            # List ALL files in folder first to see what's actually there
+                            try:
+                                logger.info(f"    📋 Executing query for files in folder '{folder_name}'...")
+                                all_files_query = f"'{folder_id}' in parents and trashed=false"
+                                logger.info(f"    📋 Query: {all_files_query}")
+                                all_files_results = self.service.files().list(
+                                    q=all_files_query, 
+                                    fields='files(id,name,mimeType,size,modifiedTime)',
+                                    pageSize=100
+                                ).execute()
+                                all_files = all_files_results.get('files', [])
+                                logger.info(f"    📁 Query returned {len(all_files)} file(s) in folder '{folder_name}'")
+                                
+                                if len(all_files) == 0:
+                                    logger.warning(f"    ⚠️ Folder '{folder_name}' is EMPTY - no files found!")
                             
                             if len(all_files) == 0:
                                 logger.warning(f"  ⚠️ Folder '{folder_name}' appears to be EMPTY or cannot be accessed")
