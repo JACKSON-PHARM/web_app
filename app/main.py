@@ -73,9 +73,11 @@ async def lifespan(app: FastAPI):
                     # Check Drive timestamp to see if it's newer
                     drive_timestamp = drive_manager.get_drive_database_timestamp()
                     if drive_timestamp:
-                        from datetime import datetime
-                        local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
+                        from datetime import datetime, timezone
+                        local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path), tz=timezone.utc)
                         drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                        if drive_mtime.tzinfo is None:
+                            drive_mtime = drive_mtime.replace(tzinfo=timezone.utc)
                         if drive_mtime > local_mtime:
                             logger.info(f"📥 Drive database is newer ({drive_timestamp} vs {local_mtime.isoformat()}), will sync in background")
                             should_download = True
