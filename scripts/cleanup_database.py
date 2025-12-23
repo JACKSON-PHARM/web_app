@@ -63,15 +63,18 @@ def cleanup_database(db_path: str, keep_months: int = 3):
         deleted_inv = cursor.rowcount
         logger.info(f"   Deleted {deleted_inv} old supplier invoices")
         
-        # 4. Clean old stock snapshots (keep only last month)
-        logger.info("🧹 Cleaning old stock snapshots...")
-        stock_cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        cursor.execute("""
-            DELETE FROM stock_data 
-            WHERE snapshot_date < ?
-        """, (stock_cutoff,))
+        # 4. Remove ALL stock snapshots (we only need current_stock, replaced on each refresh)
+        logger.info("🧹 Removing all stock snapshots (keeping only current_stock)...")
+        cursor.execute("DELETE FROM stock_data")
         deleted_stock = cursor.rowcount
-        logger.info(f"   Deleted {deleted_stock} old stock snapshots")
+        logger.info(f"   Deleted {deleted_stock} stock snapshots (keeping only current_stock)")
+        
+        # Optionally drop the stock_data table entirely (not needed for procurement)
+        try:
+            cursor.execute("DROP TABLE IF EXISTS stock_data")
+            logger.info("   Dropped stock_data table (not needed - using current_stock only)")
+        except Exception as e:
+            logger.warning(f"   Could not drop stock_data table: {e}")
         
         # 5. Remove sales data (not needed for procurement)
         logger.info("🧹 Removing sales data (not needed for procurement)...")
@@ -89,7 +92,6 @@ def cleanup_database(db_path: str, keep_months: int = 3):
             "CREATE INDEX IF NOT EXISTS idx_branch_orders_date ON branch_orders(document_date DESC)",
             "CREATE INDEX IF NOT EXISTS idx_supplier_invoices_date ON supplier_invoices(invoice_date DESC)",
             "CREATE INDEX IF NOT EXISTS idx_current_stock_branch ON current_stock(branch, company, item_code)",
-            "CREATE INDEX IF NOT EXISTS idx_stock_data_date ON stock_data(snapshot_date DESC)",
         ]
         
         for index_sql in indexes:
