@@ -640,17 +640,23 @@ async def get_sync_status(
                 
                 # Compare timestamps
                 if status["local_database"]["exists"]:
-                    from datetime import datetime
-                    local_mtime = datetime.fromtimestamp(status["local_database"]["modified"])
+                    from datetime import datetime, timezone
+                    local_mtime = datetime.fromtimestamp(status["local_database"]["modified"], tz=timezone.utc)
                     drive_timestamp = drive_info.get('modified')
                     if drive_timestamp:
-                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
-                        if drive_mtime > local_mtime:
-                            status["sync_status"] = "outdated"
-                            status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
-                        else:
-                            status["sync_status"] = "synced"
-                            status["message"] = "Database is up to date."
+                        try:
+                            # Parse Drive timestamp (already timezone-aware)
+                            drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                            if drive_mtime > local_mtime:
+                                status["sync_status"] = "outdated"
+                                status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
+                            else:
+                                status["sync_status"] = "synced"
+                                status["message"] = "Database is up to date."
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Could not parse Drive timestamp: {e}")
+                            status["sync_status"] = "unknown"
+                            status["message"] = "Could not compare timestamps."
                     else:
                         status["sync_status"] = "unknown"
                         status["message"] = "Could not compare timestamps."

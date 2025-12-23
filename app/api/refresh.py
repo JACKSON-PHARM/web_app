@@ -132,31 +132,25 @@ async def run_refresh_task():
             if drive_manager.is_authenticated():
                 # Check if database was modified during refresh
                 db_modified_after_refresh = False
-                if local_db_exists:
+                if local_db_exists and os.path.exists(local_db_path):
                     from datetime import datetime
                     # Get modification time before refresh started
                     pre_refresh_mtime = RefreshStatusService.get_status().get('refresh_started')
                     if pre_refresh_mtime:
-                        pre_refresh_dt = datetime.fromisoformat(pre_refresh_mtime)
-                        current_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
-                        # If DB was modified after refresh started, upload it
-                        if current_mtime > pre_refresh_dt:
+                        try:
+                            pre_refresh_dt = datetime.fromisoformat(pre_refresh_mtime)
+                            current_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
+                            # If DB was modified after refresh started, upload it
+                            if current_mtime > pre_refresh_dt:
+                                db_modified_after_refresh = True
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Could not parse refresh timestamp: {e}, assuming database was modified")
                             db_modified_after_refresh = True
                     else:
                         # No pre-refresh timestamp, assume it was modified
                         db_modified_after_refresh = True
                 else:
-                    # New database was created
-                    db_modified_after_refresh = True
-                
-                # Check if database was actually modified by comparing mtime before and after
-                db_modified_after_refresh = False
-                if os.path.exists(local_db_path):
-                    db_mtime_after = os.path.getmtime(local_db_path)
-                    if db_mtime_before is None or db_mtime_after > db_mtime_before:
-                        db_modified_after_refresh = True
-                else:
-                    # New database was created
+                    # New database was created or doesn't exist
                     db_modified_after_refresh = True
                 
                 if db_modified_after_refresh:
