@@ -405,6 +405,13 @@ class GoogleDriveManager:
             file_size_mb = os.path.getsize(local_path) / (1024 * 1024)
             logger.info(f"📤 Starting upload: {file_size_mb:.2f} MB")
             
+            # Update upload progress
+            try:
+                from app.services.refresh_status import RefreshStatusService
+                RefreshStatusService.update_upload_progress(5, f"Preparing upload ({file_size_mb:.1f} MB)...")
+            except:
+                pass  # Don't fail if status service unavailable
+            
             # Conflict resolution: Check if Drive database is newer
             if check_conflicts:
                 drive_timestamp = self.get_drive_database_timestamp()
@@ -464,6 +471,12 @@ class GoogleDriveManager:
                         if status:
                             progress = int(status.progress() * 100)
                             logger.info(f"📤 Upload progress: {progress}%")
+                            # Update progress status
+                            try:
+                                from app.services.refresh_status import RefreshStatusService
+                                RefreshStatusService.update_upload_progress(progress, f"Uploading... {progress}%")
+                            except:
+                                pass
                     logger.info(f"✅ Updated database in Drive: {response.get('id')}")
                 else:
                     # Small file, direct upload
@@ -488,6 +501,12 @@ class GoogleDriveManager:
                         if status:
                             progress = int(status.progress() * 100)
                             logger.info(f"📤 Upload progress: {progress}%")
+                            # Update progress status
+                            try:
+                                from app.services.refresh_status import RefreshStatusService
+                                RefreshStatusService.update_upload_progress(progress, f"Uploading... {progress}%")
+                            except:
+                                pass
                     logger.info(f"✅ Uploaded database to Drive: {response.get('id')}")
                 else:
                     # Small file, direct upload
@@ -495,12 +514,24 @@ class GoogleDriveManager:
                     logger.info(f"✅ Uploaded database to Drive: {file.get('id')}")
             
             logger.info(f"✅ Upload complete: {file_size_mb:.2f} MB")
+            # Update upload status
+            try:
+                from app.services.refresh_status import RefreshStatusService
+                RefreshStatusService.set_upload_complete()
+            except:
+                pass
             return True
             
         except Exception as e:
             logger.error(f"❌ Error uploading database: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            # Update upload status
+            try:
+                from app.services.refresh_status import RefreshStatusService
+                RefreshStatusService.set_upload_failed(str(e))
+            except:
+                pass
             return False
     
     def get_database_info(self) -> Dict:

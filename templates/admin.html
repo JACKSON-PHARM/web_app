@@ -511,37 +511,154 @@
     }
     
     async function uploadDatabase() {
-        if (!confirm('Upload local database to Google Drive? This will replace any existing database in Drive.\n\nFor large files (>100MB), this will run in the background and may take several minutes.')) {
+        if (!confirm('Upload local database to Google Drive? This will replace any existing database in Drive.\n\nThis will run in the background to prevent app freezing. You can continue using the app while upload is in progress.')) {
             return;
         }
         
+        // Show upload status indicator
+        const uploadBtn = event.target;
+        const originalText = uploadBtn.textContent;
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = '📤 Uploading...';
+        
         try {
+            // Start upload (non-blocking, returns immediately)
             const result = await apiRequest('/api/admin/drive/upload', {
-                method: 'POST'
+                method: 'POST',
+                timeout: 5000  // Short timeout - upload runs in background
             });
             
             if (result.success) {
-                if (result.in_background) {
-                    alert(`✅ ${result.message}\n\nCheck your server terminal/console for upload progress. The upload is running in the background.`);
-                    // Poll for completion after a delay
-                    setTimeout(() => {
-                        loadDriveInfo();
-                    }, 10000); // Check again in 10 seconds
-                } else {
-                    alert(`✅ ${result.message}`);
-                    loadDriveInfo();
-                }
+                // Show success message and start polling for progress
+                showUploadProgress(result.size_mb || 0);
+                // Poll for upload status
+                pollUploadStatus();
             } else {
                 alert(`❌ Failed: ${result.message}`);
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = originalText;
             }
         } catch (error) {
-            // Timeout is expected for large files - they run in background
-            if (error.message && error.message.includes('timeout')) {
-                alert(`⏳ Upload started in background (large file detected).\n\nCheck your server terminal/console for upload progress. This may take several minutes for a 569MB file.`);
-            } else {
-                alert(`Error: ${error.message || 'Upload failed. Check server logs for details.'}`);
-            }
+            // Even if request times out, upload might have started
+            console.log('Upload request completed (may have timed out, but upload continues in background)');
+            showUploadProgress(0);
+            pollUploadStatus();
         }
+    }
+    
+    function showUploadProgress(sizeMb) {
+        // Create or update upload progress indicator
+        let progressDiv = document.getElementById('uploadProgress');
+        if (!progressDiv) {
+            progressDiv = document.createElement('div');
+            progressDiv.id = 'uploadProgress';
+            progressDiv.className = 'card';
+            progressDiv.style.marginTop = '15px';
+            progressDiv.style.padding = '15px';
+            progressDiv.style.backgroundColor = '#e3f2fd';
+            document.getElementById('driveInfo').parentElement.appendChild(progressDiv);
+        }
+        progressDiv.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="flex: 1;">
+                    <div style="font-weight: bold; margin-bottom: 5px;">📤 Uploading to Google Drive...</div>
+                    <div class="progress" style="height: 25px; background-color: #e0e0e0; border-radius: 5px; overflow: hidden;">
+                        <div id="uploadProgressBar" style="height: 100%; background-color: #4caf50; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">
+                            0%
+                        </div>
+                    </div>
+                    <div id="uploadStatusText" style="margin-top: 5px; font-size: 0.9em; color: #666;">Starting upload...</div>
+                </div>
+                <button onclick="hideUploadProgress()" class="btn btn-sm" style="background: #f44336; color: white;">✕</button>
+            </div>
+        `;
+    }
+    
+    function hideUploadProgress() {
+        const progressDiv = document.getElementById('uploadProgress');
+        if (progressDiv) {
+            progressDiv.remove();
+        }
+    }
+    
+    async function pollUploadStatus() {
+        const maxAttempts = 300; // Poll for up to 5 minutes (300 * 1 second)
+        let attempts = 0;
+        
+        const poll = async () => {
+            try {
+                const status = await apiRequest('/api/admin/drive/upload-status', {
+                    method: 'GET',
+                    timeout: 3000
+                });
+                
+                if (status.is_uploading) {
+                    // Update progress bar
+                    const progressBar = document.getElementById('uploadProgressBar');
+                    const statusText = document.getElementById('uploadStatusText');
+                    if (progressBar) {
+                        const progress = status.upload_progress || 0;
+                        progressBar.style.width = `${progress}%`;
+                        progressBar.textContent = `${Math.round(progress)}%`;
+                    }
+                    if (statusText && status.upload_message) {
+                        statusText.textContent = status.upload_message;
+                    }
+                    
+                    // Continue polling
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(poll, 1000); // Poll every second
+                    } else {
+                        // Timeout after max attempts
+                        const statusText = document.getElementById('uploadStatusText');
+                        if (statusText) {
+                            statusText.textContent = 'Upload taking longer than expected. Check server logs.';
+                        }
+                    }
+                } else {
+                    // Upload complete or failed
+                    const progressBar = document.getElementById('uploadProgressBar');
+                    const statusText = document.getElementById('uploadStatusText');
+                    const uploadBtn = document.querySelector('button[onclick="uploadDatabase()"]');
+                    
+                    if (status.upload_progress === 100) {
+                        if (progressBar) {
+                            progressBar.style.backgroundColor = '#4caf50';
+                            progressBar.textContent = '100%';
+                        }
+                        if (statusText) {
+                            statusText.textContent = '✅ Upload completed successfully!';
+                            statusText.style.color = '#4caf50';
+                        }
+                        // Reload drive info after a delay
+                        setTimeout(() => {
+                            loadDriveInfo();
+                            setTimeout(hideUploadProgress, 3000);
+                        }, 2000);
+                    } else {
+                        if (statusText) {
+                            statusText.textContent = `❌ Upload failed: ${status.upload_message || 'Unknown error'}`;
+                            statusText.style.color = '#f44336';
+                        }
+                    }
+                    
+                    if (uploadBtn) {
+                        uploadBtn.disabled = false;
+                        uploadBtn.textContent = '📤 Upload to Drive';
+                    }
+                }
+            } catch (error) {
+                console.error('Error polling upload status:', error);
+                attempts++;
+                if (attempts < maxAttempts) {
+                    setTimeout(poll, 2000); // Retry after 2 seconds on error
+                }
+            }
+        };
+        
+        // Start polling
+        poll();
     }
 </script>
 {% endblock %}

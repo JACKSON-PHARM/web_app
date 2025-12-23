@@ -8,8 +8,11 @@ from pydantic import BaseModel
 from typing import List, Optional
 import os
 import json
+import logging
 from app.dependencies import get_current_admin, get_drive_manager
 from app.services.user_service import UserService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 user_service = UserService()
@@ -512,7 +515,7 @@ async def upload_database(
     current_user: dict = Depends(get_current_admin),
     drive_manager = Depends(get_drive_manager)
 ):
-    """Upload database to Google Drive (admin only) - runs in background for large files"""
+    """Upload database to Google Drive (admin only) - ALWAYS runs in background to prevent app freezing"""
     if not drive_manager.is_authenticated():
         return {
             "success": False,
@@ -521,6 +524,7 @@ async def upload_database(
     
     from app.config import settings
     import os
+    from app.services.refresh_status import RefreshStatusService
     
     local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
     
@@ -532,24 +536,47 @@ async def upload_database(
     
     db_size_mb = round(os.path.getsize(local_db_path) / (1024 * 1024), 2)
     
-    # For large files (>100MB), run in background
-    if db_size_mb > 100:
-        # Run upload in background
-        background_tasks.add_task(drive_manager.upload_database, local_db_path)
-        return {
-            "success": True,
-            "message": f"Upload started in background ({db_size_mb} MB). This may take several minutes. Check server logs for progress.",
-            "in_background": True
-        }
-    else:
-        # Small files can be synchronous
-        success = drive_manager.upload_database(local_db_path)
-        
-        if success:
-            return {
-                "success": True,
-                "message": f"Database uploaded to Google Drive successfully ({db_size_mb} MB)"
-            }
-        else:
-            return {"success": False, "message": "Failed to upload database to Google Drive"}
+    # ALWAYS run upload in background to prevent app freezing
+    # Set upload status
+    RefreshStatusService.set_uploading(db_size_mb)
+    
+    # Run upload in background
+    def upload_task():
+        try:
+            logger.info(f"📤 Starting background upload: {db_size_mb:.2f} MB")
+            RefreshStatusService.update_upload_progress(0, "Starting upload...")
+            success = drive_manager.upload_database(local_db_path)
+            if success:
+                RefreshStatusService.set_upload_complete()
+                logger.info(f"✅ Background upload completed successfully")
+            else:
+                RefreshStatusService.set_upload_failed("Upload failed - check server logs")
+                logger.error("❌ Background upload failed")
+        except Exception as e:
+            logger.error(f"❌ Error in background upload: {e}")
+            RefreshStatusService.set_upload_failed(str(e))
+    
+    background_tasks.add_task(upload_task)
+    
+    return {
+        "success": True,
+        "message": f"Upload started in background ({db_size_mb} MB). Use /api/admin/drive/upload-status to check progress.",
+        "in_background": True,
+        "size_mb": db_size_mb
+    }
+
+@router.get("/drive/upload-status")
+async def get_upload_status(
+    current_user: dict = Depends(get_current_admin)
+):
+    """Get current upload status"""
+    from app.services.refresh_status import RefreshStatusService
+    status = RefreshStatusService.get_status()
+    
+    return {
+        "is_uploading": status.get("is_uploading", False),
+        "upload_progress": status.get("upload_progress"),
+        "upload_message": status.get("upload_message"),
+        "upload_size_mb": status.get("upload_size_mb")
+    }
 

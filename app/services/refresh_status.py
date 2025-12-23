@@ -31,7 +31,11 @@ class RefreshStatusService:
             "last_refresh": None,
             "refresh_started": None,
             "refresh_progress": None,
-            "refresh_message": None
+            "refresh_message": None,
+            "is_uploading": False,
+            "upload_progress": None,
+            "upload_message": None,
+            "upload_size_mb": None
         }
     
     @staticmethod
@@ -83,6 +87,43 @@ class RefreshStatusService:
                 json.dump(status, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving status file: {e}")
+    
+    @staticmethod
+    def set_uploading(size_mb: float):
+        """Set upload status to uploading"""
+        status = RefreshStatusService.get_status()
+        status["is_uploading"] = True
+        status["upload_progress"] = 0
+        status["upload_message"] = "Starting upload..."
+        status["upload_size_mb"] = size_mb
+        RefreshStatusService._save_status(status)
+    
+    @staticmethod
+    def update_upload_progress(progress: float, message: Optional[str] = None):
+        """Update upload progress (0-100)"""
+        status = RefreshStatusService.get_status()
+        status["upload_progress"] = progress
+        if message:
+            status["upload_message"] = message
+        RefreshStatusService._save_status(status)
+    
+    @staticmethod
+    def set_upload_complete():
+        """Mark upload as complete"""
+        status = RefreshStatusService.get_status()
+        status["is_uploading"] = False
+        status["upload_progress"] = 100
+        status["upload_message"] = "Upload completed successfully"
+        RefreshStatusService._save_status(status)
+    
+    @staticmethod
+    def set_upload_failed(error_message: Optional[str] = None):
+        """Mark upload as failed"""
+        status = RefreshStatusService.get_status()
+        status["is_uploading"] = False
+        status["upload_progress"] = None
+        status["upload_message"] = error_message or "Upload failed"
+        RefreshStatusService._save_status(status)
     
     @staticmethod
     def get_data_age() -> Optional[Dict]:
