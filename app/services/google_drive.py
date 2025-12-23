@@ -27,6 +27,9 @@ class GoogleDriveManager:
         self.service = None
         # Get folder ID from environment variable first (for persistence), then settings
         self.folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip() or settings.GOOGLE_DRIVE_FOLDER_ID
+        # Cache folder info to avoid repeated API calls
+        self._folder_info_cache = None
+        self._folder_info_cache_time = None
         self.credentials_file = settings.GOOGLE_CREDENTIALS_FILE
         self.token_file = settings.GOOGLE_TOKEN_FILE
         self._pending_flow = None  # Store flow for callback handling

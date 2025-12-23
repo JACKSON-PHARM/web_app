@@ -320,9 +320,9 @@
         document.addEventListener('DOMContentLoaded', () => {
             updateDataFreshnessNotification();
             updateSyncStatus();
-            // Check every 10 seconds
-            freshnessCheckInterval = setInterval(updateDataFreshnessNotification, 10000);
-            syncCheckInterval = setInterval(updateSyncStatus, 5000); // Check sync more frequently
+            // Check every 30 seconds (reduced from 10s) to reduce server load
+            freshnessCheckInterval = setInterval(updateDataFreshnessNotification, 30000);
+            syncCheckInterval = setInterval(updateSyncStatus, 30000); // Reduced from 5s to 30s
         });
         
         // Cleanup on page unload
