@@ -248,38 +248,35 @@ class GoogleDriveManager:
                                 
                                 if len(all_files) == 0:
                                     logger.warning(f"    ⚠️ Folder '{folder_name}' is EMPTY - no files found!")
-                            
-                            if len(all_files) == 0:
-                                logger.warning(f"  ⚠️ Folder '{folder_name}' appears to be EMPTY or cannot be accessed")
-                                logger.warning(f"     This might explain why the folder can't be opened in Google Drive UI")
-                                logger.warning(f"     The database file might be at the root level of Drive, not inside folders")
-                            else:
-                                # Log ALL files in the folder
-                                for f in all_files:
-                                    file_name = f.get('name', 'Unknown')
-                                    file_type = f.get('mimeType', 'unknown')
-                                    file_size = f.get('size', 0)
-                                    file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
-                                    logger.info(f"    📄 {file_name} (Type: {file_type}, Size: {file_size_mb} MB)")
-                                    
-                                    # Check if this file matches our database filename (exact or partial)
-                                    if settings.DB_FILENAME.lower() in file_name.lower() or file_name.lower().endswith('.db'):
-                                        logger.info(f"      ⭐ This file matches database pattern!")
-                                        all_found_files.append(f)
-                            
-                            # Also try exact match query
-                            file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
-                            file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=10).execute()
-                            exact_matches = file_results.get('files', [])
-                            
-                            if exact_matches:
-                                logger.info(f"  ✅ Found {len(exact_matches)} exact match(es) for '{settings.DB_FILENAME}' in folder '{folder_name}'")
-                                all_found_files.extend(exact_matches)
+                                    logger.warning(f"       This might explain why the folder can't be opened in Google Drive UI")
+                                    logger.warning(f"       The database file might be at the root level of Drive, not inside folders")
+                                else:
+                                    # Log ALL files in the folder
+                                    for f in all_files:
+                                        file_name = f.get('name', 'Unknown')
+                                        file_type = f.get('mimeType', 'unknown')
+                                        file_size = f.get('size', 0)
+                                        file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
+                                        logger.info(f"    📄 {file_name} (Type: {file_type}, Size: {file_size_mb} MB)")
+                                        
+                                        # Check if this file matches our database filename (exact or partial)
+                                        if settings.DB_FILENAME.lower() in file_name.lower() or file_name.lower().endswith('.db'):
+                                            logger.info(f"      ⭐ This file matches database pattern!")
+                                            all_found_files.append(f)
                                 
-                        except Exception as e:
-                            logger.error(f"  ❌ Error searching folder '{folder_name}': {e}")
-                            import traceback
-                            logger.error(traceback.format_exc())
+                                # Also try exact match query
+                                file_query = f"name='{settings.DB_FILENAME}' and '{folder_id}' in parents and trashed=false"
+                                file_results = self.service.files().list(q=file_query, orderBy='modifiedTime desc', pageSize=10).execute()
+                                exact_matches = file_results.get('files', [])
+                                
+                                if exact_matches:
+                                    logger.info(f"  ✅ Found {len(exact_matches)} exact match(es) for '{settings.DB_FILENAME}' in folder '{folder_name}'")
+                                    all_found_files.extend(exact_matches)
+                                    
+                            except Exception as e:
+                                logger.error(f"  ❌ Error searching folder '{folder_name}': {e}")
+                                import traceback
+                                logger.error(traceback.format_exc())
                     
                     # Use the most recently modified file if we found any
                     if all_found_files:
