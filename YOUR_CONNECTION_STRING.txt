@@ -1,0 +1,17 @@
+# Your Supabase Connection String
+
+## Direct Connection (IPv6 - may not work on all networks):
+postgresql://postgres:b%3F%21HABE69%24TwwSV@db.oagcmmkmypmwmeuodkym.supabase.co:5432/postgres
+
+## Session Pooler (Recommended - IPv4 compatible):
+postgresql://postgres.oagcmmkmypmwmeuodkym:b%3F%21HABE69%24TwwSV@aws-0-[REGION].pooler.supabase.com:6543/postgres
+
+## Notes:
+- Password special characters are URL-encoded:
+  ? = %3F
+  ! = %21
+  $ = %24
+
+## If Direct Connection doesn't work (IPv4 warning):
+Use Session Pooler connection string instead (found in same modal, switch to "Session Pooler" tab)
+
