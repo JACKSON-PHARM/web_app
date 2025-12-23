@@ -263,6 +263,25 @@
     }
     
     .priority-item-recent {
+        background-color: #d4edda !important; /* Light green background */
+        border-left: 4px solid #28a745 !important; /* Green border */
+    }
+    
+    .priority-item-recent:hover {
+        background-color: #c3e6cb !important; /* Slightly darker green on hover */
+    }
+    
+    .priority-item-recent input[type="checkbox"] {
+        opacity: 0.5;
+        cursor: not-allowed;
+        pointer-events: none;
+    }
+    
+    .priority-item-recent .order-quantity-input {
+        opacity: 0.5;
+        cursor: not-allowed;
+        pointer-events: none;
+    }
         background: #d4edda !important;
     }
     
@@ -1038,18 +1057,42 @@
                     const formattedDate = formatDate(lastOrderDateRaw);
                     dateCell.textContent = formattedDate;
                     
-                    // Check if ordered within last 7 days - apply green background to entire row
-                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null) {
+                    // Check if ordered within last 7 days - apply green background and disable checkbox
+                    let isRecentlyOrdered = false;
+                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null && lastOrderDateRaw !== '') {
                         try {
-                            const orderDate = new Date(lastOrderDateRaw);
+                            // Handle ISO date strings or other formats
+                            let orderDate;
+                            if (typeof lastOrderDateRaw === 'string') {
+                                // Try parsing ISO format first
+                                orderDate = new Date(lastOrderDateRaw);
+                                // If that fails, try other common formats
+                                if (isNaN(orderDate.getTime())) {
+                                    // Try parsing as date string
+                                    orderDate = new Date(lastOrderDateRaw.replace(/-/g, '/'));
+                                }
+                            } else {
+                                orderDate = new Date(lastOrderDateRaw);
+                            }
+                            
                             if (!isNaN(orderDate.getTime())) {
-                                const daysAgo = (new Date() - orderDate) / (1000 * 60 * 60 * 24);
+                                const now = new Date();
+                                const daysAgo = (now - orderDate) / (1000 * 60 * 60 * 24);
                                 if (daysAgo >= 0 && daysAgo <= 7) {
+                                    isRecentlyOrdered = true;
                                     row.classList.add('priority-item-recent');
+                                    // Disable checkbox and input for recently ordered items
+                                    checkbox.disabled = true;
+                                    checkbox.title = `Item ordered ${Math.round(daysAgo)} day(s) ago. Cannot reorder within 7 days.`;
+                                    const quantityInput = row.querySelector('.order-quantity-input');
+                                    if (quantityInput) {
+                                        quantityInput.disabled = true;
+                                        quantityInput.title = 'Cannot order - item was recently ordered';
+                                    }
                                 }
                             }
                         } catch (e) {
-                            // Invalid date format, skip
+                            console.warn('Error parsing last_order_date:', lastOrderDateRaw, e);
                         }
                     }
                 });

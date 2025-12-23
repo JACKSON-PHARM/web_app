@@ -130,6 +130,13 @@
     
     /* Recent order color shading */
     .stock-item-recent {
+        background-color: #d4edda !important; /* Light green background */
+        border-left: 4px solid #28a745 !important; /* Green border */
+    }
+    
+    .stock-item-recent:hover {
+        background-color: #c3e6cb !important; /* Slightly darker green on hover */
+    }
         background: #d4edda !important;
     }
     
@@ -715,17 +722,31 @@
                     
                     // Check if ordered within last 7 days - apply green background to entire row
                     const lastOrderDateRaw = row['last_order_date'] || null;
-                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null && lastOrderDateRaw !== '-') {
+                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null && lastOrderDateRaw !== '-' && lastOrderDateRaw !== '') {
                         try {
-                            const orderDate = new Date(lastOrderDateRaw);
+                            // Handle ISO date strings or other formats
+                            let orderDate;
+                            if (typeof lastOrderDateRaw === 'string') {
+                                // Try parsing ISO format first
+                                orderDate = new Date(lastOrderDateRaw);
+                                // If that fails, try other common formats
+                                if (isNaN(orderDate.getTime())) {
+                                    // Try parsing as date string
+                                    orderDate = new Date(lastOrderDateRaw.replace(/-/g, '/'));
+                                }
+                            } else {
+                                orderDate = new Date(lastOrderDateRaw);
+                            }
+                            
                             if (!isNaN(orderDate.getTime())) {
-                                const daysAgo = (new Date() - orderDate) / (1000 * 60 * 60 * 24);
+                                const now = new Date();
+                                const daysAgo = (now - orderDate) / (1000 * 60 * 60 * 24);
                                 if (daysAgo >= 0 && daysAgo <= 7) {
-                                    rowHtml = rowHtml.replace('<tr>', '<tr class="stock-item-recent">');
+                                    rowHtml = rowHtml.replace('<tr>', '<tr class="stock-item-recent" title="Ordered ' + Math.round(daysAgo) + ' day(s) ago">');
                                 }
                             }
                         } catch (e) {
-                            // Invalid date format, skip
+                            console.warn('Error parsing last_order_date:', lastOrderDateRaw, e);
                         }
                     }
                     

@@ -870,6 +870,11 @@ class DashboardService:
                 if 'abc_class' not in df.columns:
                     df['abc_class'] = ''
             
+            # Log detailed diagnostics before reorder filter
+            logger.info(f"📊 Before reorder level filter: {len(df)} items")
+            if len(df) > 0:
+                logger.info(f"   Sample items: {df[['item_code', 'item_name', 'target_stock_pieces', 'source_stock_pieces']].head(3).to_dict('records')}")
+            
             if df.empty:
                 logger.info(f"No priority items found (no A/B/C items in {source_branch} but not in {target_branch})")
                 return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
