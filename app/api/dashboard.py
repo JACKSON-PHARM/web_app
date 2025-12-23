@@ -641,12 +641,20 @@ async def get_sync_status(
                 # Compare timestamps
                 if status["local_database"]["exists"]:
                     from datetime import datetime, timezone
+                    # Ensure both datetimes are timezone-aware
                     local_mtime = datetime.fromtimestamp(status["local_database"]["modified"], tz=timezone.utc)
                     drive_timestamp = drive_info.get('modified')
                     if drive_timestamp:
                         try:
-                            # Parse Drive timestamp (already timezone-aware)
-                            drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
+                            # Parse Drive timestamp and ensure it's timezone-aware
+                            drive_str = drive_timestamp.replace('Z', '+00:00')
+                            drive_mtime = datetime.fromisoformat(drive_str)
+                            # If drive_mtime is naive, make it UTC-aware
+                            if drive_mtime.tzinfo is None:
+                                drive_mtime = drive_mtime.replace(tzinfo=timezone.utc)
+                            # Ensure local_mtime is also timezone-aware (it should be, but double-check)
+                            if local_mtime.tzinfo is None:
+                                local_mtime = local_mtime.replace(tzinfo=timezone.utc)
                             if drive_mtime > local_mtime:
                                 status["sync_status"] = "outdated"
                                 status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
