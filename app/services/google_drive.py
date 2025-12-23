@@ -167,12 +167,52 @@ class GoogleDriveManager:
             if not items:
                 logger.info(f"Database not found in folder '{self.folder_id}', searching Drive-wide...")
                 
-                # First, try searching for database file directly
+                # STEP 1: Search for database file directly at ROOT LEVEL
+                logger.info(f"🔍 STEP 1: Searching for '{settings.DB_FILENAME}' at ROOT LEVEL of Drive...")
                 query_wide = f"name='{settings.DB_FILENAME}' and trashed=false"
-                results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=10).execute()
-                items_wide = results_wide.get('files', [])
+                try:
+                    results_wide = self.service.files().list(q=query_wide, orderBy='modifiedTime desc', pageSize=20).execute()
+                    items_wide = results_wide.get('files', [])
+                    
+                    if items_wide:
+                        logger.info(f"✅ FOUND {len(items_wide)} database file(s) at ROOT LEVEL!")
+                        for item in items_wide[:3]:
+                            file_name = item.get('name', 'Unknown')
+                            file_size = item.get('size', 0)
+                            file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
+                            logger.info(f"  📄 {file_name} ({file_size_mb} MB) - File ID: {item.get('id')}")
+                    else:
+                        logger.warning(f"❌ No files named '{settings.DB_FILENAME}' found at root level")
+                        
+                        # STEP 2: Search for any .db files
+                        logger.info(f"🔍 STEP 2: Searching for ANY .db files in Drive...")
+                        query_db = f"name contains '.db' and trashed=false"
+                        results_db = self.service.files().list(q=query_db, orderBy='modifiedTime desc', pageSize=20).execute()
+                        db_files = results_db.get('files', [])
+                        
+                        if db_files:
+                            logger.info(f"✅ Found {len(db_files)} .db file(s) in Drive:")
+                            for db_file in db_files[:5]:
+                                file_name = db_file.get('name', 'Unknown')
+                                file_size = db_file.get('size', 0)
+                                file_size_mb = round(int(file_size) / (1024 * 1024), 2) if file_size else 0
+                                logger.info(f"  📄 {file_name} ({file_size_mb} MB)")
+                                
+                                # If it's a large database file, consider it
+                                if file_size_mb > 100 or 'pharma' in file_name.lower() or 'stock' in file_name.lower():
+                                    logger.info(f"    ⭐ This looks like our database file!")
+                                    if not items_wide:
+                                        items_wide = []
+                                    items_wide.append(db_file)
+                        else:
+                            logger.warning(f"❌ No .db files found in Drive")
+                except Exception as e:
+                    logger.error(f"❌ Error during root-level search: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    items_wide = []
                 
-                # If still not found, search inside PharmaStock_Database folders
+                # STEP 3: If still not found, search inside PharmaStock_Database folders
                 if not items_wide:
                     logger.info("Searching inside PharmaStock_Database folders...")
                     # Find all PharmaStock_Database folders
