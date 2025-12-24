@@ -16,10 +16,11 @@ class DashboardService:
     
     def __init__(self, db_manager):
         self.db_manager = db_manager
-        # Get database path from db_manager
-        self.db_path = db_manager.db_path if hasattr(db_manager, 'db_path') else None
-        # Check if this is PostgreSQL (Supabase) or SQLite
-        self.is_postgres = hasattr(db_manager, 'connection_string') or 'PostgreSQL' in str(type(db_manager))
+        # ALL data is in Supabase PostgreSQL - no SQLite support
+        # Verify we're using PostgreSQL
+        if not (hasattr(db_manager, 'connection_string') or hasattr(db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(db_manager))):
+            raise ValueError("DashboardService requires PostgresDatabaseManager. All data is stored in Supabase PostgreSQL.")
+        self.is_postgres = True  # Always PostgreSQL now
         # Inventory analysis CSV for ABC mapping (same as stock view)
         self.inventory_analysis_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
@@ -27,120 +28,19 @@ class DashboardService:
         )
         self._abc_cache = None
         self._inventory_analysis_cache = None
-        self._cached_db_path = None  # Cache the working database path
+        # Removed _cached_db_path - not needed for PostgreSQL
     
     def _normalize_query(self, query: str) -> str:
-        """Convert SQLite-style ? placeholders to PostgreSQL-style %s if using PostgreSQL"""
-        if self.is_postgres:
-            # Replace ? with %s for PostgreSQL
-            return query.replace('?', '%s')
-        return query
+        """Convert SQLite-style ? placeholders to PostgreSQL-style %s"""
+        # Always PostgreSQL - replace ? with %s
+        return query.replace('?', '%s')
     
     def _execute_query(self, query: str, params: tuple = None) -> list:
-        """Execute query using database manager (works with both SQLite and PostgreSQL)"""
+        """Execute query using PostgreSQL database manager"""
         normalized_query = self._normalize_query(query)
-        if hasattr(self.db_manager, 'execute_query'):
-            return self.db_manager.execute_query(normalized_query, params)
-        else:
-            # Fallback: try direct connection (SQLite only)
-            if not self.is_postgres and self.db_path and os.path.exists(self.db_path):
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                try:
-                    if params:
-                        cursor.execute(query, params)
-                    else:
-                        cursor.execute(query)
-                    results = cursor.fetchall()
-                    return [dict(row) for row in results]
-                finally:
-                    conn.close()
-            return []
+        return self.db_manager.execute_query(normalized_query, params)
 
-    def _get_database_path(self, prefer_stock: bool = False) -> str:
-        """
-        Get the correct database path that has data (for SQLite only)
-        For PostgreSQL, returns None as we use the database manager directly
-        
-        Args:
-            prefer_stock: If True, prioritize databases with stock data. If False, prefer databases with invoices.
-        """
-        # For PostgreSQL, we don't need file paths - use database manager directly
-        if self.is_postgres:
-            return None
-        
-        # Initialize cache dictionary if needed
-        if not hasattr(self, '_cached_db_paths'):
-            self._cached_db_paths = {}
-        
-        cache_key = f"{prefer_stock}"
-        
-        # Check cache first
-        if cache_key in self._cached_db_paths:
-            cached_path = self._cached_db_paths[cache_key]
-            if cached_path and os.path.exists(cached_path):
-                return cached_path
-
-        app_root = os.path.dirname(os.path.dirname(__file__))
-        alt_paths = [
-            self.db_path,  # Try configured path first
-            os.path.join(app_root, "database", "pharma_stock.db"),  # Database subdirectory (where stock fetcher writes)
-            os.path.join(app_root, "pharma_stock.db"),  # Root directory (where invoices might be)
-            "pharma_stock.db"  # Current directory
-        ]
-
-        best_path = None
-        best_score = 0
-        
-        for db_path in alt_paths:
-            if db_path and os.path.exists(db_path):
-                try:
-                    test_conn = sqlite3.connect(db_path)
-                    test_cursor = test_conn.cursor()
-                    
-                    # Check for supplier invoices
-                    test_cursor.execute("SELECT COUNT(*) FROM supplier_invoices WHERE branch = ?", ("BABA DOGO HQ",))
-                    invoice_count = test_cursor.fetchone()[0]
-                    
-                    # Check for stock data
-                    test_cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", ("BABA DOGO HQ", "NILA"))
-                    stock_count = test_cursor.fetchone()[0]
-                    
-                    test_conn.close()
-
-                    # Score: prioritize based on prefer_stock flag
-                    if prefer_stock:
-                        # For priority items: prioritize stock data
-                        score = invoice_count + (stock_count * 10)
-                    else:
-                        # For new arrivals: prioritize invoices
-                        score = (invoice_count * 10) + stock_count
-                    
-                    if invoice_count > 0 or stock_count > 0:
-                        if score > best_score:
-                            best_score = score
-                            best_path = db_path
-                            logger.debug(f"Found database at {db_path}: {invoice_count} invoices, {stock_count} stock records (score: {score}, prefer_stock={prefer_stock})")
-                except Exception as e:
-                    logger.debug(f"Error checking database at {db_path}: {e}")
-                    continue
-
-        if best_path:
-            self._cached_db_paths[cache_key] = best_path
-            test_conn = sqlite3.connect(best_path)
-            test_cursor = test_conn.cursor()
-            test_cursor.execute("SELECT COUNT(*) FROM supplier_invoices WHERE branch = ?", ("BABA DOGO HQ",))
-            invoice_count = test_cursor.fetchone()[0]
-            test_cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", ("BABA DOGO HQ", "NILA"))
-            stock_count = test_cursor.fetchone()[0]
-            test_conn.close()
-            logger.info(f"Using database at: {best_path} ({invoice_count} invoices, {stock_count} stock records for BABA DOGO HQ, prefer_stock={prefer_stock})")
-            return best_path
-
-        # Fallback to configured path if nothing found
-        logger.warning(f"Could not find database with data, using: {self.db_path}")
-        return self.db_path or os.path.join(app_root, "database", "pharma_stock.db")
+    # Removed _get_database_path - not needed for PostgreSQL
 
     def _load_inventory_analysis(self) -> pd.DataFrame:
         """Load Inventory_Analysis from Supabase (or CSV fallback)"""
@@ -320,7 +220,7 @@ class DashboardService:
                 total_invoices_result = self._execute_query("SELECT COUNT(*) as count FROM supplier_invoices")
                 total_invoices = total_invoices_result[0]['count'] if total_invoices_result else 0
                 logger.warning(f"No supplier invoices found for {hq_branch} (total invoices in table: {total_invoices})")
-                logger.warning(f"Database: {self.db_path if not self.is_postgres else 'Supabase PostgreSQL'}")
+                logger.warning(f"Database: Supabase PostgreSQL")
                 return pd.DataFrame(columns=['item_code', 'item_name', 'quantity', 'document_date', 
                                             'document_number', 'source_type', 'branch_stock_pieces', 
                                             'branch_stock_packs', 'hq_stock_pieces', 'hq_stock_packs'])
@@ -337,7 +237,7 @@ class DashboardService:
             recent_count_result = self._execute_query("""
                 SELECT COUNT(*) as count
                 FROM supplier_invoices 
-                WHERE branch = ? AND document_date >= ? AND document_date <= ?
+                WHERE branch = %s AND document_date >= %s AND document_date <= %s
             """, (hq_branch, start_date, end_date))
             recent_count = recent_count_result[0]['count'] if recent_count_result else 0
             
@@ -347,7 +247,7 @@ class DashboardService:
             max_date_result = self._execute_query("""
                 SELECT MAX(document_date) as max_date
                 FROM supplier_invoices 
-                WHERE branch = ?
+                WHERE branch = %s
             """, (hq_branch,))
             max_date = max_date_result[0]['max_date'] if max_date_result and max_date_result[0].get('max_date') else None
             
@@ -380,7 +280,7 @@ class DashboardService:
             # Show all items received at HQ, regardless of target branch stock
             # Include branch stock from selected branch for reference
             # Check if current_stock has data, if not try stock_data as fallback
-            hq_stock_result = self._execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = ?", (hq_branch,))
+            hq_stock_result = self._execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = %s", (hq_branch,))
             hq_stock_count = hq_stock_result[0]['count'] if hq_stock_result else 0
             use_stock_data_fallback = False
             hq_latest_date = None
@@ -422,12 +322,12 @@ class DashboardService:
             if hq_stock_count == 0:
                 # Try to use stock_data as fallback
                 try:
-                    cursor.execute("SELECT MAX(snapshot_date) FROM stock_data WHERE branch_name = ?", (hq_branch,))
-                    hq_latest_date = cursor.fetchone()[0]
+                    hq_date_result = self._execute_query("SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = %s", (hq_branch,))
+                    hq_latest_date = hq_date_result[0]['max_date'] if hq_date_result and hq_date_result[0].get('max_date') else None
                     
-                    cursor.execute("SELECT MAX(snapshot_date) FROM stock_data WHERE company_name = ? AND branch_name = ?", 
+                    branch_date_result = self._execute_query("SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE company_name = %s AND branch_name = %s", 
                                  (target_company, target_branch))
-                    branch_latest_date = cursor.fetchone()[0]
+                    branch_latest_date = branch_date_result[0]['max_date'] if branch_date_result and branch_date_result[0].get('max_date') else None
                     
                     if hq_latest_date or branch_latest_date:
                         use_stock_data_fallback = True
@@ -454,18 +354,18 @@ class DashboardService:
                             LEFT JOIN stock_data sd_hq
                                 ON sd_hq.item_code = si.item_code 
                                AND sd_hq.company_name = si.company 
-                               AND sd_hq.branch_name = ?
-                               AND (? IS NULL OR sd_hq.snapshot_date = ?)
+                               AND sd_hq.branch_name = %s
+                               AND (%s IS NULL OR sd_hq.snapshot_date = %s)
                             LEFT JOIN stock_data sd_branch
                                 ON sd_branch.item_code = si.item_code
-                               AND sd_branch.company_name = ?
-                               AND sd_branch.branch_name = ?
-                               AND (? IS NULL OR sd_branch.snapshot_date = ?)
-                            WHERE si.branch = ?
-                                AND si.document_date >= ? AND si.document_date <= ?
+                               AND sd_branch.company_name = %s
+                               AND sd_branch.branch_name = %s
+                               AND (%s IS NULL OR sd_branch.snapshot_date = %s)
+                            WHERE si.branch = %s
+                                AND si.document_date >= %s AND si.document_date <= %s
                             GROUP BY si.item_code
                             ORDER BY MAX(si.document_date) DESC, MAX(si.document_number) DESC
-                            LIMIT ?
+                            LIMIT %s
                         """
                     else:
                         logger.warning(f"Both current_stock and stock_data tables are empty. Stock values will show as 0.")
@@ -629,7 +529,7 @@ class DashboardService:
             # Also check stock_data for source branch (if table exists - PostgreSQL might not have this)
             try:
                 stock_data_result = self._execute_query(
-                    "SELECT COUNT(*) as count, MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = ? AND company_name = ?",
+                    "SELECT COUNT(*) as count, MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = %s AND company_name = %s",
                     (source_branch, source_company)
                 )
                 stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
@@ -642,7 +542,7 @@ class DashboardService:
             # Check target branch stock_data
             try:
                 target_latest_date_result = self._execute_query(
-                    "SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = ? AND company_name = ?",
+                    "SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = %s AND company_name = %s",
                     (target_branch, target_company)
                 )
                 target_latest_date = target_latest_date_result[0]['max_date'] if target_latest_date_result and target_latest_date_result[0].get('max_date') else None
@@ -705,8 +605,18 @@ class DashboardService:
                         )
                     GROUP BY cs_source.item_code  -- Ensure one row per item_code
                     ORDER BY MAX(cs_source.stock_pieces) DESC
-                    LIMIT ?
+                    LIMIT %s
                 """
+                # Normalize query for database type
+                query = self._normalize_query(query)
+                params = (
+                    target_company, target_branch,  # For cs_target join
+                    target_company, target_branch,  # For purchase_orders
+                    target_company, target_branch,  # For branch_orders
+                    target_branch,  # For hq_invoices
+                    source_branch, source_company,  # For cs_source WHERE
+                    limit  # For LIMIT
+                )
             elif stock_data_count > 0 and source_latest_date:
                 # Use stock_data with latest snapshot (fallback to most recent available data)
                 use_stock_data_fallback = True
@@ -777,20 +687,29 @@ class DashboardService:
             
             # Execute query with appropriate parameters using database manager
             logger.info(f"🔍 Executing priority items query: source={source_branch} ({source_company}), target={target_branch} ({target_company})")
+            logger.info(f"📊 Query will be normalized for {'PostgreSQL' if self.is_postgres else 'SQLite'}")
+            
             if use_stock_data_fallback:
                 source_snapshot_date = source_latest_date if source_latest_date else None
                 target_snapshot_date = target_latest_date if target_latest_date else None
+                # Normalize query before executing
+                normalized_query = self._normalize_query(query)
+                logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
                 results = self._execute_query(
-                    query,
+                    normalized_query,
                     (target_company, target_branch, target_snapshot_date, target_snapshot_date, 
                      target_company, target_branch, target_company, target_branch, 
                      source_branch, source_company, 
                      source_snapshot_date, source_snapshot_date, limit * 20)
                 )
             else:
+                # Query was already normalized above when params were set
+                # But ensure it's normalized here too
+                normalized_query = self._normalize_query(query) if 'params' not in locals() else query
+                logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
                 results = self._execute_query(
-                    query,
-                    (target_company, target_branch, target_company, target_branch, target_company, target_branch,
+                    normalized_query,
+                    params if 'params' in locals() else (target_company, target_branch, target_company, target_branch, target_company, target_branch,
                      target_branch, source_branch, source_company, limit * 20)  # Get more to filter by ABC later
                 )
             

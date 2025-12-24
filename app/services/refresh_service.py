@@ -7,7 +7,6 @@ import sys
 import os
 from typing import Dict, List, Optional
 from app.services.fetcher_manager import FetcherManager
-from app.services.database_manager import DatabaseManager
 from app.services.credential_manager import CredentialManager
 
 # Add parent directory to import orchestrator
@@ -48,7 +47,12 @@ class RefreshService:
             
             self.logger.info("🔄 Initializing DatabaseFetcherOrchestrator...")
             self.logger.info(f"📁 App root: {self.app_root}")
-            self.logger.info(f"📁 Database path: {self.db_manager.db_path}")
+            # Check if PostgreSQL (doesn't have db_path)
+            is_postgres = hasattr(self.db_manager, 'connection_string') or hasattr(self.db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(self.db_manager))
+            if is_postgres:
+                self.logger.info("📁 Database: Supabase PostgreSQL")
+            else:
+                self.logger.info(f"📁 Database path: {self.db_manager.db_path if hasattr(self.db_manager, 'db_path') else 'None'}")
             
             # Temporarily patch DatabaseBaseFetcher to use the correct database path
             # The orchestrator creates fetchers which use DatabaseBaseFetcher
@@ -72,13 +76,15 @@ class RefreshService:
                     
                     def patched_init(self_instance, script_name, app_root=None):
                         original_init(self_instance, script_name, app_root or refresh_service_instance.app_root)
-                        # Override database path to use web app's database
-                        web_db_path = refresh_service_instance.db_manager.db_path
-                        if os.path.exists(web_db_path):
-                            # Create a new DatabaseManager with the correct path
-                            from database_manager import DatabaseManager
-                            self_instance.db_manager = DatabaseManager(web_db_path)
-                            refresh_service_instance.logger.info(f"✅ Using web app database: {web_db_path}")
+                        # Override database manager to use web app's database manager
+                        # Check if PostgreSQL (doesn't have db_path)
+                        is_postgres = hasattr(refresh_service_instance.db_manager, 'connection_string') or hasattr(refresh_service_instance.db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(refresh_service_instance.db_manager))
+                        
+                        if is_postgres:
+                            # PostgreSQL - use the web app's database manager directly
+                            self_instance.db_manager = refresh_service_instance.db_manager
+                            refresh_service_instance.logger.info("✅ Using web app Supabase PostgreSQL database")
+                        # No SQLite fallback - always use PostgreSQL
                         # Use web app's credential manager
                         self_instance.cred_manager = refresh_service_instance.credential_manager
                     

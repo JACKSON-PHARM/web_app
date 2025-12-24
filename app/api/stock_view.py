@@ -53,13 +53,18 @@ async def get_stock_view_data(
             }
         
         logger.info(f"Stock view request: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
-        logger.info(f"Database path: {db_manager.db_path}")
         
-        app_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-        if not os.path.exists(app_root):
-            app_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        
-        stock_service = StockViewService(db_manager.db_path, app_root)
+        # ALL data is in Supabase PostgreSQL
+        logger.info("Using Supabase PostgreSQL database")
+        # StockViewService needs to be updated to work with PostgreSQL
+        # For now, return error directing to dashboard
+        return {
+            "success": False,
+            "error": "Stock View is being updated to work with Supabase PostgreSQL. Please use the Dashboard page for viewing stock data.",
+            "data": [],
+            "count": 0,
+            "suggestion": "Use Dashboard page - it fully supports PostgreSQL/Supabase"
+        }
         
         # Use defaults if not provided
         if not source_branch_name:
@@ -90,16 +95,21 @@ async def get_stock_view_data(
         if (stock_data is None or stock_data.empty):
             logger.warning("⚠️ Stock view returned empty data, checking database...")
             try:
-                import sqlite3
-                conn = sqlite3.connect(db_manager.db_path)
-                cursor = conn.cursor()
+                # Check if PostgreSQL
+                is_postgres = hasattr(db_manager, 'connection_string') or hasattr(db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(db_manager))
                 
-                # Check table counts
-                cursor.execute("SELECT COUNT(*) FROM current_stock")
-                stock_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM stock_data")
-                stock_data_count = cursor.fetchone()[0]
-                conn.close()
+                # Always PostgreSQL - use database manager's execute_query
+                from app.services.dashboard_service import DashboardService
+                dashboard_service = DashboardService(db_manager)
+                stock_count_result = dashboard_service._execute_query("SELECT COUNT(*) as count FROM current_stock")
+                stock_count = stock_count_result[0]['count'] if stock_count_result else 0
+                
+                # Try stock_data table (might not exist)
+                try:
+                    stock_data_result = dashboard_service._execute_query("SELECT COUNT(*) as count FROM stock_data")
+                    stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
+                except:
+                    stock_data_count = 0
                 
                 logger.info(f"📋 Database check: current_stock={stock_count} rows, stock_data={stock_data_count} rows")
                 
@@ -110,8 +120,8 @@ async def get_stock_view_data(
                         "data": [],
                         "count": 0,
                         "diagnostics": {
-                            "database_path": db_manager.db_path,
-                            "database_exists": os.path.exists(db_manager.db_path),
+                            "database_path": "Supabase PostgreSQL",
+                            "database_exists": True,
                             "current_stock_rows": stock_count,
                             "stock_data_rows": stock_data_count,
                             "message": "No stock data found. Please refresh data from APIs."

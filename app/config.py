@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     """Application settings"""
     
-    # Database Configuration - Supabase PostgreSQL
-    DATABASE_URL: Optional[str] = None  # Supabase connection string (set via environment variable)
-    # Fallback to SQLite if DATABASE_URL not set (for local development)
-    DB_FILENAME: str = "pharma_stock.db"
+    # Database Configuration - Supabase PostgreSQL ONLY
+    DATABASE_URL: Optional[str] = None  # Supabase connection string (REQUIRED - set via environment variable)
+    
+    # Local cache directory (for user files, NOT database)
     LOCAL_CACHE_DIR: str = os.path.join(os.path.dirname(__file__), "..", "cache")
     
     # Application
@@ -45,12 +45,12 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Ensure cache directory exists (for SQLite fallback)
+# Ensure cache directory exists (for user files, credentials, NOT database)
 os.makedirs(settings.LOCAL_CACHE_DIR, exist_ok=True)
 
 # Log database configuration
 if settings.DATABASE_URL:
     logger.info("✅ Using Supabase PostgreSQL database")
 else:
-    logger.info("ℹ️ Using SQLite database (set DATABASE_URL to use Supabase)")
+    logger.warning("⚠️ DATABASE_URL not set - application requires Supabase PostgreSQL connection")
 

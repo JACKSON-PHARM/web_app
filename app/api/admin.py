@@ -129,123 +129,36 @@ async def list_users(current_user: dict = Depends(get_current_admin)):
 async def get_drive_info(
     current_user: dict = Depends(get_current_admin)
 ):
-    """Get Google Drive database info (admin only)"""
-    import logging
-    from app.config import settings
-    import os
-    logger = logging.getLogger(__name__)
+    """Get database info (admin only) - All data is in Supabase PostgreSQL"""
+    # ALL data is in Supabase PostgreSQL - no Google Drive or local database
+    info = {
+        'exists': True,
+        'message': 'All data is stored in Supabase PostgreSQL',
+        'database_type': 'Supabase PostgreSQL'
+    }
     
-    # Check environment variables
-    has_creds_env = bool(os.getenv("GOOGLE_CREDENTIALS_JSON"))
-    has_token_env = bool(os.getenv("GOOGLE_TOKEN_JSON"))
-    is_render = bool(os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_URL"))
-    
-    # Force authentication check before getting info
-    logger.info(f"🔍 Checking authentication status...")
-    is_auth = drive_manager.is_authenticated()
-    logger.info(f"🔍 Authentication status: {is_auth}")
-    logger.info(f"🔍 Service is None: {drive_manager.service is None}")
-    
-    info = drive_manager.get_database_info() if is_auth else {'exists': False, 'error': 'Not authenticated'}
-    logger.info(f"🔍 Database info result: {info.get('error', 'No error')}")
-    
-    # Add local database info for comparison
-    local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
-    local_db_exists = os.path.exists(local_db_path)
+    # Add local database info
     info['local_database'] = {
-        'exists': local_db_exists,
-        'path': local_db_path,
-        'size_mb': round(os.path.getsize(local_db_path) / (1024 * 1024), 2) if local_db_exists else 0,
-        'modified': os.path.getmtime(local_db_path) if local_db_exists else None
+        "exists": False,
+        "path": None,
+        "message": "All data is stored in Supabase PostgreSQL"
     }
     
-    # Check sync status
-    if is_auth and info.get('exists') and local_db_exists:
-        drive_timestamp = drive_manager.get_drive_database_timestamp()
-        if drive_timestamp:
-            from datetime import datetime
-            local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path))
-            drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
-            info['sync_status'] = {
-                'is_synced': drive_mtime <= local_mtime,
-                'drive_newer': drive_mtime > local_mtime,
-                'drive_timestamp': drive_timestamp,
-                'local_timestamp': local_mtime.isoformat()
-            }
-    
-    # Determine setup status
-    credentials_configured = os.path.exists(settings.GOOGLE_CREDENTIALS_FILE) or has_creds_env
-    token_configured = os.path.exists(settings.GOOGLE_TOKEN_FILE) or has_token_env
-    database_found = info.get('exists', False)
-    
+    # Setup status - all complete since we use Supabase
     setup_status = {
-        "credentials_configured": credentials_configured,
-        "credentials_source": "environment" if has_creds_env else ("file" if os.path.exists(settings.GOOGLE_CREDENTIALS_FILE) else "none"),
-        "token_configured": token_configured,
-        "token_source": "environment" if has_token_env else ("file" if os.path.exists(settings.GOOGLE_TOKEN_FILE) else "none"),
-        "authenticated": is_auth,
-        "database_found": database_found,
-        "local_database_exists": local_db_exists,
-        "setup_complete": is_auth and database_found,
-        "is_render": is_render,
-        "needs_setup": not (is_auth and database_found)
+        "database_found": True,
+        "database_type": "Supabase PostgreSQL",
+        "setup_complete": True,
+        "needs_setup": False
     }
     
-    # Generate setup steps
-    setup_steps = []
-    if not credentials_configured:
-        setup_steps.append({
-            "step": 1,
-            "title": "Upload Google Credentials",
-            "description": "Upload your google_credentials.json file" + (" or set GOOGLE_CREDENTIALS_JSON environment variable" if is_render else ""),
-            "action": "upload_credentials",
-            "completed": False,
-            "critical": True
-        })
-    else:
-        setup_steps.append({
-            "step": 1,
-            "title": "Upload Google Credentials",
-            "description": f"✅ Credentials configured ({setup_status['credentials_source']})",
-            "completed": True
-        })
-    
-    if not is_auth:
-        setup_steps.append({
-            "step": 2,
-            "title": "Authorize Google Drive",
-            "description": "Click 'Get Authorization URL' and complete OAuth flow" + (" (token can be saved to GOOGLE_TOKEN_JSON env var)" if is_render else ""),
-            "action": "authorize",
-            "completed": False,
-            "critical": True
-        })
-    else:
-        setup_steps.append({
-            "step": 2,
-            "title": "Authorize Google Drive",
-            "description": f"✅ Google Drive authorized ({setup_status['token_source']})",
-            "completed": True
-        })
-    
-    if not database_found:
-        setup_steps.append({
-            "step": 3,
-            "title": "Sync Database",
-            "description": "Download database from Drive or run 'Refresh All Data' to create one",
-            "action": "sync_database",
-            "completed": False,
-            "critical": True
-        })
-    else:
-        setup_steps.append({
-            "step": 3,
-            "title": "Sync Database",
-            "description": f"✅ Database found ({info.get('size_mb', 0)} MB)",
-            "completed": True
-        })
-    
-    # Add callback URL to the response
-    info['callback_url'] = settings.GOOGLE_OAUTH_CALLBACK_URL
+    # Setup steps - all complete
+    setup_steps = [{
+        "step": 1,
+        "title": "Database Setup",
+        "description": "✅ Using Supabase PostgreSQL - All data stored in cloud",
+        "completed": True
+    }]
     
     return {
         "success": True,

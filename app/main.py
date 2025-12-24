@@ -46,14 +46,13 @@ async def lifespan(app: FastAPI):
     # Startup - make it very resilient
     logger.info("🚀 Starting PharmaStock Web Application")
     
-    # Initialize database manager (Supabase PostgreSQL or SQLite fallback)
+    # Initialize database manager (Supabase PostgreSQL ONLY)
     try:
         db_manager = get_db_manager()
         logger.info("✅ Database manager initialized")
         
-        # Verify database connection
+        # Verify database connection (PostgreSQL/Supabase)
         if hasattr(db_manager, 'pool'):
-            # PostgreSQL/Supabase
             logger.info("📊 Connected to Supabase PostgreSQL database")
             try:
                 conn = db_manager.get_connection()
@@ -65,13 +64,6 @@ async def lifespan(app: FastAPI):
                 db_manager.put_connection(conn)
             except Exception as e:
                 logger.warning(f"⚠️ Could not verify database contents: {e}")
-        elif hasattr(db_manager, 'db_path'):
-            # SQLite fallback
-            if os.path.exists(db_manager.db_path):
-                db_size = os.path.getsize(db_manager.db_path) / (1024 * 1024)
-                logger.info(f"📊 SQLite database: {db_manager.db_path} ({db_size:.2f} MB)")
-            else:
-                logger.info(f"📁 SQLite database will be created on first use: {db_manager.db_path}")
     except Exception as e:
         logger.error(f"❌ Database manager initialization failed: {e}")
         import traceback
@@ -147,13 +139,12 @@ async def health_check():
     try:
         # Test database connection
         db_manager = get_db_manager()
-        db_info = db_manager.get_database_info()
         return {
             "status": "ok", 
             "message": "PharmaStock Web App is running",
             "database": {
-                "exists": db_info.get("exists", False),
-                "path": db_info.get("path", "unknown")
+                "type": "Supabase PostgreSQL",
+                "connected": True
             }
         }
     except Exception as e:
@@ -203,37 +194,7 @@ async def admin_page(request: Request):
         "current_user": None
     })
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    try:
-        db_manager = get_db_manager()
-        db_info = db_manager.get_database_info()
-        
-        drive_manager = get_drive_manager()
-        drive_info = drive_manager.get_database_info()
-        
-        scheduler_status = scheduler.get_status() if scheduler else {"enabled": False}
-        
-        return {
-            "status": "healthy",
-            "version": "2.0.0",
-            "database": {
-                "local_exists": db_info.get("exists", False),
-                "size_mb": db_info.get("size_mb", 0)
-            },
-            "google_drive": {
-                "exists": drive_info.get("exists", False),
-                "size_mb": drive_info.get("size_mb", 0),
-                "modified": drive_info.get("modified")
-            },
-            "scheduler": scheduler_status
-        }
-    except Exception as e:
-        return {
-            "status": "degraded",
-            "error": str(e)
-        }
+# Duplicate health endpoint removed - using the one above
 
 if __name__ == "__main__":
     uvicorn.run(

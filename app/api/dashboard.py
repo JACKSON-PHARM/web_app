@@ -165,65 +165,51 @@ async def get_new_arrivals(
             
             # Get stock data from database to enrich the results - OPTIMIZED BATCH QUERY
             try:
-                # Use the wrapper db_manager directly - it always has db_path
-                # If original manager exists, use it; otherwise use wrapper
-                manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
+                # ALL data is in Supabase PostgreSQL - use database manager directly
+                dashboard_service = DashboardService(db_manager)
                 
-                # Ensure db_path is set
-                if not hasattr(manager_to_use, 'db_path') or not manager_to_use.db_path:
-                    manager_to_use.db_path = db_manager.db_path
-                
-                dashboard_service = DashboardService(manager_to_use)
-                
-                # Get stock information for items - SINGLE BATCH QUERY instead of per-item
-                db_path = dashboard_service._get_database_path(prefer_stock=True)
-                import sqlite3
-                conn = sqlite3.connect(db_path)
-                
-                logger.info("📊 Enriching with stock data from database...")
+                # Get stock information for items - SINGLE BATCH QUERY
+                logger.info("📊 Enriching with stock data from Supabase...")
                 
                 # Get unique item codes
                 item_codes = df['item_code'].unique().tolist()
-                placeholders = ','.join(['?'] * len(item_codes))
+                placeholders = ','.join(['%s'] * len(item_codes))
                 
                 # Batch query for HQ stock
-                cursor = conn.cursor()
-                cursor.execute(f"""
+                hq_stock_results = dashboard_service._execute_query(f"""
                     SELECT item_code, stock_pieces, pack_size 
                     FROM current_stock 
                     WHERE item_code IN ({placeholders}) 
-                    AND branch = ? AND company = ?
-                """, item_codes + ["BABA DOGO HQ", "NILA"])
-                hq_stock_dict = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+                    AND branch = %s AND company = %s
+                """, tuple(item_codes) + ("BABA DOGO HQ", "NILA"))
+                hq_stock_dict = {row['item_code']: (row['stock_pieces'], row['pack_size']) for row in hq_stock_results}
                 
                 # Batch query for target branch stock
-                cursor.execute(f"""
+                branch_stock_results = dashboard_service._execute_query(f"""
                     SELECT item_code, stock_pieces, pack_size 
                     FROM current_stock 
                     WHERE item_code IN ({placeholders}) 
-                    AND branch = ? AND company = ?
-                """, item_codes + [target_branch, target_company])
-                branch_stock_dict = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+                    AND branch = %s AND company = %s
+                """, tuple(item_codes) + (target_branch, target_company))
+                branch_stock_dict = {row['item_code']: (row['stock_pieces'], row['pack_size']) for row in branch_stock_results}
                 
-                # Batch query for last order dates (combining purchase_orders and branch_orders)
-                cursor.execute(f"""
+                # Batch query for last order dates
+                last_order_results = dashboard_service._execute_query(f"""
                     SELECT item_code, MAX(document_date) as last_order_date
                     FROM (
                         SELECT item_code, document_date
                         FROM purchase_orders
                         WHERE item_code IN ({placeholders})
-                        AND branch = ? AND company = ?
+                        AND branch = %s AND company = %s
                         UNION ALL
                         SELECT item_code, document_date
                         FROM branch_orders
                         WHERE item_code IN ({placeholders})
-                        AND source_branch = ? AND company = ?
+                        AND source_branch = %s AND company = %s
                     ) combined_orders
                     GROUP BY item_code
-                """, item_codes + [target_branch, target_company] + item_codes + [target_branch, target_company])
-                last_order_dict = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                conn.close()
+                """, tuple(item_codes) + (target_branch, target_company) + tuple(item_codes) + (target_branch, target_company))
+                last_order_dict = {row['item_code']: row['last_order_date'] for row in last_order_results}
                 
                 # Add stock information to dataframe
                 def enrich_row(row):
@@ -331,16 +317,8 @@ async def get_new_arrivals(
                 "source": "API"
             }
         else:
-            # Fallback to database approach (original)
-            # Use the wrapper db_manager directly - it always has db_path
-            # If original manager exists, use it; otherwise use wrapper
-            manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
-            
-            # Ensure db_path is set
-            if not hasattr(manager_to_use, 'db_path') or not manager_to_use.db_path:
-                manager_to_use.db_path = db_manager.db_path
-            
-            dashboard_service = DashboardService(manager_to_use)
+            # Use PostgreSQL database manager directly
+            dashboard_service = DashboardService(db_manager)
             new_arrivals = dashboard_service.get_new_arrivals_this_week(
                 "BABA DOGO HQ",  # Source branch (always HQ)
                 target_company,
@@ -398,30 +376,29 @@ async def get_priority_items(
     try:
         # Log database status
         logger.info(f"📊 Priority items request: target={target_branch} ({target_company}), source={source_branch} ({source_company})")
-        logger.info(f"📁 Database path: {db_manager.db_path}")
-        logger.info(f"📁 Database exists: {os.path.exists(db_manager.db_path) if db_manager.db_path else False}")
+        logger.info("📁 Using Supabase PostgreSQL database")
         
-        # Check if database has data
-        if db_manager.db_path and os.path.exists(db_manager.db_path):
-            try:
-                import sqlite3
-                conn = sqlite3.connect(db_manager.db_path)
-                cursor = conn.cursor()
-                
-                # Check table counts
-                tables_to_check = ['current_stock', 'stock_data', 'purchase_orders', 'branch_orders', 'sales']
-                table_counts = {}
-                for table in tables_to_check:
-                    try:
-                        cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                        count = cursor.fetchone()[0]
-                        table_counts[table] = count
-                        logger.info(f"📋 Table '{table}': {count} rows")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Table '{table}' not found or error: {e}")
-                        table_counts[table] = 0
-                
-                conn.close()
+        # Always PostgreSQL - check data via queries
+        try:
+            from app.services.dashboard_service import DashboardService
+            dashboard_service = DashboardService(db_manager)
+            tables_to_check = ['current_stock', 'supplier_invoices', 'purchase_orders', 'branch_orders', 'hq_invoices']
+            table_counts = {}
+            for table in tables_to_check:
+                try:
+                    result = dashboard_service._execute_query(f"SELECT COUNT(*) as count FROM {table}")
+                    count = result[0]['count'] if result else 0
+                    table_counts[table] = count
+                    logger.info(f"📋 Table '{table}': {count} rows")
+                except Exception as e:
+                    logger.warning(f"⚠️ Table '{table}' not found or error: {e}")
+                    table_counts[table] = 0
+            
+            # Check if we have data
+            total_records = sum(table_counts.values())
+            db_has_data = total_records > 0
+            
+            if db_has_data:
                 
                 # Check if refresh is in progress
                 from app.services.refresh_status import RefreshStatusService
@@ -438,7 +415,7 @@ async def get_priority_items(
                         "is_refreshing": is_refreshing,
                         "message": "No data available yet. Refresh in progress..." if is_refreshing else "Database is empty. Please refresh data.",
                         "diagnostics": {
-                            "database_path": db_manager.db_path,
+                            "database_path": db_manager.db_path if hasattr(db_manager, 'db_path') else "Supabase PostgreSQL",
                             "database_exists": True,
                             "table_counts": table_counts,
                             "refresh_in_progress": is_refreshing
@@ -449,15 +426,8 @@ async def get_priority_items(
                 import traceback
                 logger.error(traceback.format_exc())
         
-        # Use the wrapper db_manager directly - it always has db_path
-        # If original manager exists, use it; otherwise use wrapper
-        manager_to_use = db_manager._db_manager if hasattr(db_manager, '_db_manager') and db_manager._db_manager is not None else db_manager
-        
-        # Ensure db_path is set
-        if not hasattr(manager_to_use, 'db_path') or not manager_to_use.db_path:
-            manager_to_use.db_path = db_manager.db_path
-        
-        dashboard_service = DashboardService(manager_to_use)
+        # Use PostgreSQL database manager directly
+        dashboard_service = DashboardService(db_manager)
         logger.info(f"🔍 Calling get_priority_items_between_branches...")
         priority_items = dashboard_service.get_priority_items_between_branches(
             target_branch,
@@ -571,8 +541,11 @@ async def get_database_diagnostics(
 ):
     """Get database diagnostics to help troubleshoot empty data issues"""
     import sqlite3
+    # Check if PostgreSQL
+    is_postgres = hasattr(db_manager, 'connection_string') or hasattr(db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(db_manager))
+    
     diagnostics = {
-        "database_path": db_manager.db_path,
+        "database_path": db_manager.db_path if hasattr(db_manager, 'db_path') else "Supabase PostgreSQL",
         "database_exists": False,
         "database_size_mb": 0,
         "tables": {},
@@ -580,7 +553,15 @@ async def get_database_diagnostics(
     }
     
     try:
-        if db_manager.db_path and os.path.exists(db_manager.db_path):
+        # Check if PostgreSQL
+        is_postgres = hasattr(db_manager, 'connection_string') or hasattr(db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(db_manager))
+        
+        if is_postgres:
+            # PostgreSQL - use database manager queries
+            diagnostics["database_exists"] = True
+            diagnostics["database_size_mb"] = None  # PostgreSQL doesn't have file size
+        elif hasattr(db_manager, 'db_path') and db_manager.db_path and os.path.exists(db_manager.db_path):
+            # SQLite - check file
             diagnostics["database_exists"] = True
             diagnostics["database_size_mb"] = round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2)
             

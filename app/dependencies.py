@@ -7,7 +7,6 @@ from jose import JWTError, jwt
 from typing import Optional
 from app.config import settings
 from app.services.license_service import LicenseService
-from app.services.database_manager import DatabaseManager
 from app.services.postgres_database_manager import PostgresDatabaseManager
 import os
 import logging
@@ -18,7 +17,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 license_service = LicenseService()
 
 # Global instances
-_db_manager: Optional[DatabaseManager] = None
+_db_manager: Optional[PostgresDatabaseManager] = None
 
 def reset_db_manager():
     """Reset the database manager singleton"""
@@ -26,26 +25,20 @@ def reset_db_manager():
     _db_manager = None
 
 def get_db_manager():
-    """Get database manager instance (PostgreSQL for Supabase or SQLite fallback)"""
+    """Get database manager instance - ONLY Supabase PostgreSQL (no SQLite fallback)"""
     global _db_manager
     if _db_manager is None:
-        # Use Supabase PostgreSQL if DATABASE_URL is set
-        if settings.DATABASE_URL:
-            try:
-                _db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
-                logger.info("✅ Using Supabase PostgreSQL database")
-                return _db_manager
-            except Exception as e:
-                logger.error(f"❌ Failed to connect to Supabase: {e}")
-                logger.warning("⚠️ Falling back to SQLite")
+        # REQUIRE Supabase PostgreSQL - no fallback
+        if not settings.DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable is required. All data is stored in Supabase PostgreSQL.")
         
-        # Fallback to SQLite
-        web_app_dir = os.path.dirname(os.path.dirname(__file__))
-        cache_dir = os.path.join(web_app_dir, settings.LOCAL_CACHE_DIR.lstrip("./"))
-        local_db_path = os.path.join(cache_dir, settings.DB_FILENAME)
-        os.makedirs(cache_dir, exist_ok=True)
-        logger.info(f"📁 Using SQLite database: {local_db_path}")
-        _db_manager = DatabaseManager(local_db_path)
+        try:
+            _db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
+            logger.info("✅ Using Supabase PostgreSQL database")
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to Supabase: {e}")
+            raise ValueError(f"Failed to connect to Supabase PostgreSQL: {e}. Please check your DATABASE_URL environment variable.")
+    
     return _db_manager
 
 # Global user service instance (singleton)

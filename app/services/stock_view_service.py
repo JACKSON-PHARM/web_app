@@ -37,10 +37,13 @@ class StockViewService:
         
         # Log initialization for debugging
         logger.info(f"StockViewService initialized:")
-        logger.info(f"  - Database path: {self.db_path}")
-        logger.info(f"  - Database exists: {os.path.exists(self.db_path)}")
-        if os.path.exists(self.db_path):
-            logger.info(f"  - Database size: {os.path.getsize(self.db_path) / (1024*1024):.2f} MB")
+        logger.info(f"  - Database path: {self.db_path if self.db_path else 'None (PostgreSQL mode)'}")
+        if self.db_path:
+            logger.info(f"  - Database exists: {os.path.exists(self.db_path)}")
+            if os.path.exists(self.db_path):
+                logger.info(f"  - Database size: {os.path.getsize(self.db_path) / (1024*1024):.2f} MB")
+        else:
+            logger.info(f"  - Using PostgreSQL (no file path)")
         logger.info(f"  - App root: {self.app_root}")
         logger.info(f"  - CSV path: {self.inventory_analysis_path} (exists: {os.path.exists(self.inventory_analysis_path)})")
         logger.info(f"  - Excel path: {self.stock_view_excel_path} (exists: {os.path.exists(self.stock_view_excel_path)})")
@@ -148,6 +151,10 @@ class StockViewService:
             source_branch_company = source_branch_company.strip() if source_branch_company else ""
             
             logger.info(f"Querying stock view - Branch: '{branch_name}' ({branch_company}), Source: '{source_branch_name}' ({source_branch_company})")
+            
+            # Check if db_path is None (PostgreSQL mode)
+            if not self.db_path:
+                raise ValueError("StockViewService requires SQLite database path. PostgreSQL is not yet supported. Please use dashboard instead.")
             
             # Log database connection attempt
             logger.info(f"Connecting to database: {self.db_path}")
