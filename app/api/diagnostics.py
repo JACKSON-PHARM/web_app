@@ -79,10 +79,15 @@ async def check_database(
                 db_manager.put_connection(conn)
             else:
                 # SQLite - check file
-                if hasattr(db_manager, 'db_path'):
-                    results["db_path"] = db_manager.db_path
+                db_path = getattr(db_manager, 'db_path', None)
+                if db_path:
+                    results["db_path"] = db_path
                     import os
-                    results["db_file_exists"] = os.path.exists(db_manager.db_path) if db_manager.db_path else False
+                    results["db_file_exists"] = os.path.exists(db_path) if db_path else False
+                else:
+                    # PostgreSQL - no file path
+                    results["db_path"] = "Supabase PostgreSQL"
+                    results["db_file_exists"] = True
                 
         except Exception as e:
             results["errors"].append(f"Connection error: {str(e)}")

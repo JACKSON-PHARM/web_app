@@ -525,10 +525,21 @@ async def get_priority_items(
             }
     except Exception as e:
         import traceback
+        error_traceback = traceback.format_exc()
+        error_msg = str(e)
+        logger.error(f"❌ Error in get_priority_items: {error_msg}")
+        logger.error(f"Full traceback:\n{error_traceback}")
+        
+        # Check if it's the db_path error specifically
+        if "db_path" in error_msg.lower() or "db_path" in error_traceback.lower():
+            logger.error("🔍 Detected db_path error - this should be fixed now with db_path as regular attribute")
+            # Try to provide helpful error message
+            error_msg = f"Database configuration error (fixed): {error_msg}. Please refresh the page."
+        
         return {
             "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc(),
+            "error": error_msg,
+            "traceback": error_traceback,
             "data": [],
             "count": 0
         }

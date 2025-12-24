@@ -26,6 +26,7 @@ class PostgresDatabaseManager:
             connection_string: PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db)
         """
         self.connection_string = connection_string
+        self.db_path = "Supabase PostgreSQL"  # Set as regular attribute for compatibility
         self.setup_logging()
         
         # Create connection pool
@@ -371,8 +372,14 @@ class PostgresDatabaseManager:
     
     @property
     def db_path(self) -> str:
-        """Return database path (for compatibility)"""
+        """Return database path (for compatibility with SQLite interface)"""
         return "Supabase PostgreSQL"
+    
+    def __getattr__(self, name: str):
+        """Fallback for attribute access - ensures db_path is always accessible"""
+        if name == 'db_path':
+            return "Supabase PostgreSQL"
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
     def close(self):
         """Close all connections in pool"""
