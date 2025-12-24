@@ -244,12 +244,12 @@ class StockViewServicePostgres:
                     MAX(document_number) as last_grn_doc,
                     SUM(CASE WHEN document_date = (
                         SELECT MAX(document_date) 
-                        FROM goods_received_notes grn2 
-                        WHERE grn2.item_code = goods_received_notes.item_code 
-                        AND UPPER(TRIM(grn2.branch)) = UPPER(TRIM(goods_received_notes.branch))
-                        AND UPPER(TRIM(grn2.company)) = UPPER(TRIM(goods_received_notes.company))
-                    ) THEN quantity ELSE 0 END) as last_grn_quantity
-                FROM goods_received_notes
+                        FROM supplier_invoices si2 
+                        WHERE si2.item_code = supplier_invoices.item_code 
+                        AND UPPER(TRIM(si2.branch)) = UPPER(TRIM(supplier_invoices.branch))
+                        AND UPPER(TRIM(si2.company)) = UPPER(TRIM(supplier_invoices.company))
+                    ) THEN units ELSE 0 END) as last_grn_quantity
+                FROM supplier_invoices
                 WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
                 GROUP BY item_code
             ),
