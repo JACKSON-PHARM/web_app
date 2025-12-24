@@ -47,20 +47,20 @@ class PostgresDatabaseManager:
     def _force_ipv4_connection(self, connection_string: str) -> str:
         """
         Force IPv4 connection for Supabase (free tier doesn't support IPv6)
-        Modifies connection string to use IPv4 address if hostname resolves to IPv6
+        Converts Supabase direct connection to pooler connection which supports IPv4
         """
         try:
             # Parse connection string
             if connection_string.startswith('postgresql://'):
-                # Extract hostname from connection string
+                # Extract components from connection string
                 # Format: postgresql://user:pass@host:port/db
                 parts = connection_string.split('@')
                 if len(parts) == 2:
-                    auth_part = parts[0]
-                    host_db_part = parts[1]
+                    auth_part = parts[0]  # postgresql://user:pass
+                    host_db_part = parts[1]  # host:port/db
                     
-                    # Extract hostname and port
-                    if ':' in host_db_part:
+                    # Extract hostname, port, and database
+                    if '/' in host_db_part:
                         host_port, db_part = host_db_part.split('/', 1)
                         if ':' in host_port:
                             hostname, port = host_port.rsplit(':', 1)
@@ -68,20 +68,57 @@ class PostgresDatabaseManager:
                             hostname = host_port
                             port = '5432'
                     else:
-                        hostname = host_db_part.split('/')[0]
+                        hostname = host_db_part
                         port = '5432'
+                        db_part = 'postgres'
                     
-                    # Resolve hostname to IPv4 address
+                    # Check if this is a Supabase direct connection (db.xxx.supabase.co)
+                    if 'db.' in hostname and '.supabase.co' in hostname:
+                        # Convert to pooler connection for IPv4 support
+                        # Extract project ref from hostname: db.REF.supabase.co
+                        project_ref = hostname.replace('db.', '').replace('.supabase.co', '')
+                        
+                        # Use pooler hostname (supports IPv4)
+                        # Try different pooler hostnames based on region
+                        pooler_hostnames = [
+                            f'aws-0-us-east-1.pooler.supabase.com',  # US East
+                            f'aws-0-us-west-1.pooler.supabase.com',  # US West
+                            f'aws-0-eu-west-1.pooler.supabase.com',  # EU West
+                            f'{project_ref}.pooler.supabase.com',     # Project-specific
+                        ]
+                        
+                        # Use port 6543 for connection pooling
+                        pooler_port = '6543'
+                        
+                        # Try to construct pooler connection string
+                        # Format: postgresql://postgres.REF:PASSWORD@pooler.supabase.com:6543/postgres
+                        # Extract user and password from auth_part
+                        auth_clean = auth_part.replace('postgresql://', '')
+                        if ':' in auth_clean:
+                            user, password = auth_clean.split(':', 1)
+                            # For pooler, user format is: postgres.REF
+                            pooler_user = f'postgres.{project_ref}'
+                            
+                            # Build pooler connection string
+                            pooler_connection = f'postgresql://{pooler_user}:{password}@{pooler_hostnames[0]}:{pooler_port}/{db_part}'
+                            
+                            logger.info(f"Converting Supabase direct connection to pooler connection")
+                            logger.info(f"Original: {hostname}:{port}")
+                            logger.info(f"Pooler: {pooler_hostnames[0]}:{pooler_port}")
+                            
+                            return pooler_connection
+                    
+                    # If not Supabase or conversion failed, try IPv4 resolution
                     try:
                         # Force IPv4 by using socket.AF_INET
-                        ipv4_address = socket.getaddrinfo(hostname, int(port), socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
-                        logger.info(f"Resolved {hostname} to IPv4: {ipv4_address}")
-                        
-                        # Replace hostname with IPv4 address in connection string
-                        connection_string_ipv4 = connection_string.replace(hostname, ipv4_address)
-                        return connection_string_ipv4
+                        ipv4_addresses = socket.getaddrinfo(hostname, int(port), socket.AF_INET, socket.SOCK_STREAM)
+                        if ipv4_addresses:
+                            ipv4_address = ipv4_addresses[0][4][0]
+                            logger.info(f"Resolved {hostname} to IPv4: {ipv4_address}")
+                            connection_string_ipv4 = connection_string.replace(hostname, ipv4_address)
+                            return connection_string_ipv4
                     except (socket.gaierror, ValueError) as e:
-                        logger.warning(f"Could not resolve {hostname} to IPv4, using original: {e}")
+                        logger.warning(f"Could not resolve {hostname} to IPv4: {e}")
                         return connection_string
                 else:
                     logger.warning("Could not parse connection string for IPv4 conversion")
@@ -91,6 +128,8 @@ class PostgresDatabaseManager:
                 return connection_string
         except Exception as e:
             logger.warning(f"Error forcing IPv4 connection: {e}, using original connection string")
+            import traceback
+            logger.warning(traceback.format_exc())
             return connection_string
     
     def setup_logging(self):
