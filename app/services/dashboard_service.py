@@ -802,11 +802,10 @@ class DashboardService:
             # Verify source stock > 0 (should already be filtered in SQL, but double-check)
             df = df[df['source_stock_pieces'] > 0]
             
-            # Load ABC class and AMC from Inventory_Analysis.csv (same as stock view)
+            # Load ABC class and AMC from Inventory_Analysis (same as desktop version)
             inventory_df = self._load_inventory_analysis()
-            abc_data_available = False
             if not inventory_df.empty:
-                # Filter by target branch and company
+                # Filter by target branch and company (same as desktop)
                 branch_inventory = inventory_df[
                     (inventory_df['branch_name'] == target_branch) & 
                     (inventory_df['company_name'] == target_company)
@@ -819,13 +818,12 @@ class DashboardService:
                     ].copy()
                 
                 if not branch_inventory.empty:
-                    # Prepare columns to merge
+                    # Prepare columns to merge (same as desktop)
                     merge_cols = ['item_code']
                     
                     # Add ABC class
                     if 'abc_class' in branch_inventory.columns:
                         merge_cols.append('abc_class')
-                        abc_data_available = True
                     
                     # Add AMC (use adjusted_amc if available, else base_amc)
                     if 'adjusted_amc' in branch_inventory.columns:
@@ -839,16 +837,13 @@ class DashboardService:
                         branch_inventory_dedup = branch_inventory[available_cols].drop_duplicates('item_code')
                         df = df.merge(branch_inventory_dedup, on='item_code', how='left')
                         
-                        # Set ABC class
+                        # Set ABC class (same as desktop)
                         if 'abc_class' in df.columns:
                             df['abc_class'] = df['abc_class'].fillna('')
-                            # Count how many items have ABC class assigned
-                            abc_assigned = (df['abc_class'].isin(['A', 'B', 'C'])).sum()
-                            logger.info(f"📊 ABC class assigned to {abc_assigned}/{len(df)} items from Inventory_Analysis")
                         else:
                             df['abc_class'] = ''
                         
-                        # Set AMC (use adjusted_amc if available, else base_amc)
+                        # Set AMC (use adjusted_amc if available, else base_amc) - same as desktop
                         if 'adjusted_amc' in df.columns:
                             df['amc_pieces'] = df['adjusted_amc'].fillna(0)
                         elif 'base_amc' in df.columns:
@@ -862,58 +857,23 @@ class DashboardService:
                     df['abc_class'] = ''
                     df['amc_pieces'] = 0
             else:
-                # Fallback: Load ABC class from ABC map (Excel or CSV)
+                # Fallback: Load ABC class from ABC map (same as desktop)
                 abc_map = self._load_abc_map()
                 if not abc_map.empty:
                     # Ensure ABC map is deduplicated by item_code before merging
                     abc_map = abc_map.drop_duplicates(subset=['item_code'], keep='first')
-                    logger.info(f"📊 Loaded {len(abc_map)} ABC mappings from fallback source")
                     # Merge ABC class by item_code
                     df = df.merge(abc_map, on='item_code', how='left')
                     # Fill missing ABC class with empty string
                     df['abc_class'] = df['abc_class'].fillna('')
-                    # Count how many items have ABC class assigned
-                    abc_assigned = (df['abc_class'].isin(['A', 'B', 'C'])).sum()
-                    logger.info(f"📊 ABC class assigned to {abc_assigned}/{len(df)} items from fallback ABC map")
-                    if abc_assigned > 0:
-                        abc_data_available = True
                 else:
                     df['abc_class'] = ''
-                    logger.warning("⚠️ No ABC classification data found in Inventory_Analysis.csv or ABC map files")
                 df['amc_pieces'] = 0
             
-            # Filter to A/B/C only (fast moving items) - but only if ABC data is available
+            # Filter to A/B/C only (fast moving items) - same as desktop version (no conditional check)
             before_abc = len(df)
-            if abc_data_available:
-                # Check ABC distribution before filtering
-                if 'abc_class' in df.columns:
-                    abc_distribution = df['abc_class'].value_counts().to_dict()
-                    logger.info(f"📊 ABC class distribution before filter: {abc_distribution}")
-                    abc_assigned_count = (df['abc_class'].isin(['A', 'B', 'C'])).sum()
-                    logger.info(f"📊 Items with A/B/C classification: {abc_assigned_count}/{before_abc}")
-                
-                df_filtered = df[df['abc_class'].isin(['A', 'B', 'C'])]
-                logger.info(f"✅ After ABC filter (A/B/C): {len(df_filtered)} items (was {before_abc})")
-                
-                if len(df_filtered) == 0 and before_abc > 0:
-                    logger.warning(f"⚠️ All {before_abc} items were filtered out by ABC class. This suggests:")
-                    logger.warning(f"   1. ABC classification may not be assigned to items")
-                    logger.warning(f"   2. Items may be classified as D/E/F (slow moving)")
-                    logger.warning(f"   3. ABC data may not match the item codes in stock")
-                    # Show ABC distribution from original df (before filtering)
-                    if 'abc_class' in df.columns:
-                        sample_abc = df['abc_class'].value_counts().head(10).to_dict()
-                        logger.info(f"   ABC distribution: {sample_abc}")
-                    # Don't filter - show all items if ABC filter removes everything
-                    logger.warning(f"⚠️ Showing all {before_abc} items without ABC filter since no A/B/C items found")
-                else:
-                    df = df_filtered
-            else:
-                logger.warning(f"⚠️ ABC classification data not available - skipping ABC filter. Showing all {len(df)} items.")
-                logger.info(f"💡 To enable ABC filtering, ensure Inventory_Analysis.csv contains ABC class data")
-                # Still try to assign empty ABC class if missing
-                if 'abc_class' not in df.columns:
-                    df['abc_class'] = ''
+            df = df[df['abc_class'].isin(['A', 'B', 'C'])]
+            logger.info(f"After ABC filter (A/B/C): {len(df)} items (was {before_abc})")
             
             # Log detailed diagnostics before reorder filter
             logger.info(f"📊 Before reorder level filter: {len(df)} items")
