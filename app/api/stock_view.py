@@ -152,21 +152,50 @@ async def get_stock_view_data(
         
         # Convert DataFrame to dict - replace NaN with None for JSON serialization
         if stock_data is not None and not stock_data.empty:
-            # Replace NaN/NaT values with None for JSON serialization
-            import numpy as np
-            stock_data = stock_data.replace([np.nan, np.inf, -np.inf], None)
-            # Convert to dict
-            records = stock_data.to_dict('records')
-            # Ensure all NaN-like values are None
-            for record in records:
-                for key, value in record.items():
-                    if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
-                        record[key] = None
-            return {
-                "success": True,
-                "data": records,
-                "count": len(stock_data)
-            }
+            try:
+                # Replace NaN/NaT values with None for JSON serialization
+                import numpy as np
+                import pandas as pd
+                
+                # Convert all datetime columns to strings first
+                for col in stock_data.columns:
+                    if pd.api.types.is_datetime64_any_dtype(stock_data[col]):
+                        stock_data[col] = stock_data[col].dt.strftime('%Y-%m-%d').replace('NaT', None)
+                
+                # Replace NaN/NaT/Inf values
+                stock_data = stock_data.replace([np.nan, np.inf, -np.inf], None)
+                
+                # Convert to dict
+                records = stock_data.to_dict('records')
+                
+                # Final cleanup - ensure all problematic values are None
+                for record in records:
+                    for key, value in record.items():
+                        if value is None:
+                            continue
+                        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+                            record[key] = None
+                        elif isinstance(value, pd.Timestamp):
+                            record[key] = value.strftime('%Y-%m-%d') if pd.notna(value) else None
+                        elif str(value) in ['NaT', 'nan', 'NaN']:
+                            record[key] = None
+                
+                logger.info(f"✅ Successfully converted {len(records)} records to JSON format")
+                return {
+                    "success": True,
+                    "data": records,
+                    "count": len(stock_data)
+                }
+            except Exception as convert_error:
+                logger.error(f"Error converting DataFrame to JSON: {convert_error}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return {
+                    "success": False,
+                    "error": f"Error formatting data for display: {str(convert_error)}",
+                    "data": [],
+                    "count": 0
+                }
         else:
             return {
                 "success": True,

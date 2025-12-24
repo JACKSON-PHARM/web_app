@@ -22,9 +22,11 @@ class StockViewServicePostgres:
     def load_inventory_analysis(self) -> pd.DataFrame:
         """Load ABC class, AMC, and other analysis data from inventory_analysis_new table"""
         if self._inventory_analysis_cache is not None:
+            logger.debug("Using cached inventory analysis")
             return self._inventory_analysis_cache
         
         try:
+            logger.info("Loading inventory analysis from database...")
             # Try to load from inventory_analysis_new table
             conn = self.db_manager.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -52,10 +54,23 @@ class StockViewServicePostgres:
                 """, (table_name,))
                 columns = [row['column_name'] for row in cursor.fetchall()]
                 
-                # Build SELECT query with all available columns
-                select_cols = ', '.join(columns)
-                query = f"SELECT {select_cols} FROM {table_name} LIMIT 1000000"
+                # Build SELECT query - only get essential columns for performance
+                essential_cols = ['item_code', 'company_name', 'branch_name', 'abc_class', 
+                                 'adjusted_amc', 'base_amc', 'ideal_stock_pieces', 
+                                 'customer_appeal', 'stock_recommendation']
+                available_essential = [col for col in essential_cols if col in columns]
+                if not available_essential:
+                    # Fallback: get item_code and any other columns that exist
+                    select_cols = 'item_code'
+                    for col in ['company_name', 'branch_name', 'abc_class', 'adjusted_amc', 'base_amc']:
+                        if col in columns:
+                            select_cols += f', {col}'
+                else:
+                    select_cols = ', '.join(available_essential)
                 
+                # Limit rows to improve performance - filter by company if possible
+                query = f"SELECT {select_cols} FROM {table_name} LIMIT 100000"
+                logger.info(f"Executing inventory analysis query (limited to 100k rows, essential columns only)...")
                 cursor.execute(query)
                 results = cursor.fetchall()
                 
@@ -346,8 +361,18 @@ class StockViewServicePostgres:
             cursor.close()
             self.db_manager.put_connection(conn)
             
-            # Add ABC class and AMC from inventory_analysis_new
-            inventory_df = self.load_inventory_analysis()
+            # Add ABC class and AMC from inventory_analysis_new (with error protection)
+            inventory_df = pd.DataFrame()
+            try:
+                logger.info("Loading inventory analysis data...")
+                inventory_df = self.load_inventory_analysis()
+                logger.info(f"Inventory analysis loaded: {len(inventory_df)} rows")
+            except Exception as inv_error:
+                logger.warning(f"Could not load inventory analysis (non-critical, continuing without it): {inv_error}")
+                import traceback
+                logger.debug(traceback.format_exc())
+                inventory_df = pd.DataFrame()  # Continue without inventory analysis
+            
             if not inventory_df.empty and not df.empty:
                 # Filter inventory by branch if columns exist
                 branch_inventory = inventory_df.copy()
@@ -434,11 +459,13 @@ class StockViewServicePostgres:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
                     df[col] = df[col].dt.strftime('%Y-%m-%d').replace('NaT', '').replace('nan', '')
             
-            logger.info(f"Retrieved {len(df)} items for stock view")
+            logger.info(f"✅ Successfully retrieved {len(df)} items for stock view")
+            if len(df) > 0:
+                logger.info(f"Sample item codes: {df['item_code'].head(5).tolist()}")
             return df
             
         except Exception as e:
-            logger.error(f"Error getting stock view data: {e}")
+            logger.error(f"❌ Error getting stock view data: {e}")
             import traceback
             logger.error(traceback.format_exc())
             if cursor:
@@ -451,5 +478,6 @@ class StockViewServicePostgres:
                     self.db_manager.put_connection(conn)
                 except:
                     pass
+            # Return empty DataFrame - let API handle the error message
             return pd.DataFrame()
 
