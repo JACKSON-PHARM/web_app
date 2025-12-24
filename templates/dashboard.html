@@ -755,19 +755,12 @@
         // Load branches first
         loadBranches();
         
-        // Check database status and load data
-        checkDatabaseStatus().then(hasData => {
-            if (hasData) {
-        // Load data asynchronously
-        setTimeout(() => {
-            loadDashboardData();
-            checkRefreshStatus();
-                }, 100);
-            } else {
-                // Show helpful empty state message
-                showEmptyDatabaseMessage();
-            }
-        });
+        // Load data IMMEDIATELY from database - don't wait for refresh
+        // Data is already in Supabase, just query it
+        loadDashboardData();
+        
+        // Check refresh status in background (non-blocking)
+        checkRefreshStatus();
         
         // Add event listeners for branch changes
         const targetBranch = document.getElementById('targetBranch');
@@ -793,7 +786,11 @@
     });
     
     async function loadDashboardData() {
+        // Load data immediately from database - don't wait for refresh
         await loadPriorityItems();
+        
+        // Check if refresh is needed in background (don't block UI)
+        checkRefreshStatus();
     }
     
     async function loadBranches() {
@@ -1203,9 +1200,13 @@
             });
             
             if (result && result.status === 'started') {
-                refreshStatus.textContent = '✅ Refresh started. Data will update when complete.';
+                refreshStatus.textContent = '✅ Refresh started in background. Current data is still visible.';
+                // Show progress modal but don't block UI - data is already displayed
+                showProgressModal();
                 // Start polling for progress
                 startProgressPolling();
+                // Continue showing existing data while refresh happens
+                // Data will auto-update when refresh completes
             } else {
                 refreshStatus.textContent = '❌ Refresh failed';
                 hideProgressModal();
@@ -1365,13 +1366,20 @@
                     updateProgressBar(100, 'Refresh complete!');
                     updateProgressStep(5, 'completed');
                     
-                    // Update UI
+                    // Update UI - reload data silently (no blocking alert)
                     setTimeout(() => {
                         hideProgressModal();
-                        loadDashboardData();
+                        loadDashboardData(); // Reload to show updated data
                         checkRefreshStatus();
-                        alert('✅ Data refresh completed successfully!');
-                    }, 2000);
+                        // Show subtle notification instead of blocking alert
+                        const refreshStatus = document.getElementById('refreshStatus');
+                        if (refreshStatus) {
+                            refreshStatus.textContent = '✅ Data refreshed! Dashboard updated.';
+                            setTimeout(() => {
+                                refreshStatus.textContent = '';
+                            }, 5000);
+                        }
+                    }, 1000);
                 }
             } catch (error) {
                 console.error('Error polling refresh status:', error);
