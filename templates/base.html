@@ -304,7 +304,7 @@
                 } else if (syncStatus === 'missing' && !localExists) {
                     notification.classList.add('refreshing');
                     icon.textContent = '📥';
-                    message.textContent = 'Downloading database from Drive...';
+                    message.textContent = 'Connecting to Supabase database...';
                     notification.style.display = 'block';
                 } else if (syncStatus === 'no_drive_db') {
                     notification.style.display = 'none';

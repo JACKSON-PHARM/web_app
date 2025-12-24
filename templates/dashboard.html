@@ -618,10 +618,10 @@
         <div class="progress-message" id="progressMessage">Starting refresh...</div>
         <div class="progress-details" id="progressDetails"></div>
         <div class="progress-steps" id="progressSteps">
-            <div class="progress-step pending" id="step1">📥 Downloading database from Drive...</div>
-            <div class="progress-step pending" id="step2">🔄 Fetching stock data from APIs...</div>
-            <div class="progress-step pending" id="step3">📊 Processing and merging data...</div>
-            <div class="progress-step pending" id="step4">📤 Uploading to Google Drive...</div>
+            <div class="progress-step pending" id="step1">🔄 Connecting to Supabase database...</div>
+            <div class="progress-step pending" id="step2">📥 Fetching stock data from APIs...</div>
+            <div class="progress-step pending" id="step3">💾 Saving data to Supabase...</div>
+            <div class="progress-step pending" id="step4">🧹 Cleaning up old data...</div>
             <div class="progress-step pending" id="step5">✅ Complete!</div>
         </div>
         <div class="progress-time" id="progressTime"></div>
@@ -911,7 +911,7 @@
                                     🔄 Refresh Data Now
                                 </button>
                                 <div style="margin-top: 15px; font-size: 12px; color: #999;">
-                                    This will download data from Google Drive (if available) and fetch new data from APIs.
+                                    This will fetch new data from APIs and save directly to Supabase database.
                                     <br>Progress will be shown in a popup window.
                                 </div>
                             </td>
@@ -1344,13 +1344,13 @@
                 const progressDetails = document.getElementById('progressDetails');
                 if (progressDetails) {
                     if (progress < 0.1) {
-                        progressDetails.textContent = 'Downloading latest database from Google Drive...';
+                        progressDetails.textContent = 'Connecting to Supabase database...';
                     } else if (progress < 0.3) {
                         progressDetails.textContent = 'Fetching stock, orders, and sales data from APIs...';
                     } else if (progress < 0.7) {
-                        progressDetails.textContent = 'Processing and merging data into database...';
+                        progressDetails.textContent = 'Saving data to Supabase database...';
                     } else if (progress < 0.9) {
-                        progressDetails.textContent = 'Uploading updated database to Google Drive...';
+                        progressDetails.textContent = 'Cleaning up old data (30-day retention)...';
                     } else {
                         progressDetails.textContent = 'Finalizing...';
                     }
@@ -2168,7 +2168,7 @@
                             🔄 Start First Data Refresh
                         </button>
                         <div style="margin-top: 15px; font-size: 12px; color: #999;">
-                            <strong>Note:</strong> First refresh may take 2-5 minutes as it downloads the database from Google Drive and fetches data from APIs.
+                            <strong>Note:</strong> First refresh may take 2-5 minutes as it fetches data from APIs and saves to Supabase database.
                             <br>You'll see a progress window showing each step.
                         </div>
                     </td>
