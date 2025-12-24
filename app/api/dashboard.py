@@ -1,7 +1,7 @@
 """
 Dashboard API Routes
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from typing import Optional
 from app.dependencies import get_current_user, get_db_manager
 import sys
@@ -655,9 +655,17 @@ async def get_sync_status(
     except Exception as e:
         status["sync_status"] = "error"
         status["message"] = f"Error checking sync status: {str(e)}"
+        status["connected"] = False
         logger.error(f"Error getting sync status: {e}")
         import traceback
-        logger.error(traceback.format_exc())
+        error_traceback = traceback.format_exc()
+        logger.error(error_traceback)
+        # Don't raise - return error in response so frontend can handle
+        return {
+            "success": False,
+            "error": str(e),
+            "status": status
+        }
     
     return {
         "success": True,
@@ -689,10 +697,15 @@ async def get_branches(
     except Exception as e:
         logger.error(f"Error getting branches: {e}")
         import traceback
-        logger.error(traceback.format_exc())
+        error_traceback = traceback.format_exc()
+        logger.error(error_traceback)
+        
+        # Return proper error response (don't raise HTTPException to avoid 500)
+        # Return 200 with error details so frontend can handle gracefully
         return {
             "success": False,
             "error": str(e),
-            "data": []
+            "data": [],
+            "message": f"Failed to load branches: {str(e)}"
         }
 

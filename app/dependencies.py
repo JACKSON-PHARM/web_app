@@ -30,14 +30,34 @@ def get_db_manager():
     if _db_manager is None:
         # REQUIRE Supabase PostgreSQL - no fallback
         if not settings.DATABASE_URL:
-            raise ValueError("DATABASE_URL environment variable is required. All data is stored in Supabase PostgreSQL.")
+            error_msg = "DATABASE_URL environment variable is required. All data is stored in Supabase PostgreSQL."
+            logger.error(f"❌ {error_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
         
         try:
             _db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
             logger.info("✅ Using Supabase PostgreSQL database")
         except Exception as e:
-            logger.error(f"❌ Failed to connect to Supabase: {e}")
-            raise ValueError(f"Failed to connect to Supabase PostgreSQL: {e}. Please check your DATABASE_URL environment variable.")
+            error_msg = f"Failed to connect to Supabase PostgreSQL: {e}. Please check your DATABASE_URL environment variable."
+            logger.error(f"❌ {error_msg}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    
+    # Verify connection is still valid
+    try:
+        if not hasattr(_db_manager, 'pool') or _db_manager.pool is None:
+            logger.warning("⚠️ Database pool is None, reinitializing...")
+            _db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
+    except Exception as e:
+        logger.error(f"❌ Error verifying database connection: {e}")
+        # Don't raise here - let the endpoint handle it
     
     return _db_manager
 
