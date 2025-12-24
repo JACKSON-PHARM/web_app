@@ -436,31 +436,74 @@ class PostgresDatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
-            # Check if inventory_analysis table exists first
+            # Check if inventory_analysis_new table exists first (then try inventory_analysis)
             cursor.execute("""
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables 
                     WHERE table_schema = 'public' 
-                    AND table_name = 'inventory_analysis'
+                    AND table_name IN ('inventory_analysis_new', 'inventory_analysis')
                 )
             """)
             table_exists = cursor.fetchone()[0]
             
+            # Determine which table name to use
+            table_name = None
             if table_exists:
+                cursor.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name IN ('inventory_analysis_new', 'inventory_analysis')
+                    ORDER BY CASE WHEN table_name = 'inventory_analysis_new' THEN 1 ELSE 2 END
+                    LIMIT 1
+                """)
+                result = cursor.fetchone()
+                if result:
+                    table_name = result[0]
+            
+            if table_name:
                 try:
-                    if company:
-                        cursor.execute("""
-                            SELECT DISTINCT company_name as company, branch_name as branch_name
-                            FROM inventory_analysis
-                            WHERE company_name = %s
-                            ORDER BY company_name, branch_name
-                        """, (company,))
-                    else:
-                        cursor.execute("""
-                            SELECT DISTINCT company_name as company, branch_name as branch_name
-                            FROM inventory_analysis
-                            ORDER BY company_name, branch_name
-                        """)
+                    # Try to get column names to determine if it's new or old format
+                    cursor.execute(f"""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_schema = 'public' 
+                        AND table_name = %s
+                        AND column_name IN ('company_name', 'branch_name', 'company', 'branch')
+                    """, (table_name,))
+                    columns = [row[0] for row in cursor.fetchall()]
+                    
+                    # Use appropriate column names based on table structure
+                    if 'company_name' in columns and 'branch_name' in columns:
+                        # New format (inventory_analysis_new)
+                        if company:
+                            cursor.execute(f"""
+                                SELECT DISTINCT company_name as company, branch_name as branch_name
+                                FROM {table_name}
+                                WHERE company_name = %s
+                                ORDER BY company_name, branch_name
+                            """, (company,))
+                        else:
+                            cursor.execute(f"""
+                                SELECT DISTINCT company_name as company, branch_name as branch_name
+                                FROM {table_name}
+                                ORDER BY company_name, branch_name
+                            """)
+                    elif 'company' in columns and 'branch' in columns:
+                        # Old format (inventory_analysis)
+                        if company:
+                            cursor.execute(f"""
+                                SELECT DISTINCT company, branch as branch_name
+                                FROM {table_name}
+                                WHERE company = %s
+                                ORDER BY company, branch
+                            """, (company,))
+                        else:
+                            cursor.execute(f"""
+                                SELECT DISTINCT company, branch as branch_name
+                                FROM {table_name}
+                                ORDER BY company, branch
+                            """)
                     
                     results = cursor.fetchall()
                     for row in results:
@@ -472,20 +515,20 @@ class PostgresDatabaseManager:
                         }
                     
                     if branches:
-                        self.logger.info(f"Found {len(branches)} branches from inventory_analysis")
+                        self.logger.info(f"Found {len(branches)} branches from {table_name}")
                         cursor.close()
                         self.put_connection(conn)
                         return list(branches.values())
                 except Exception as e:
-                    self.logger.warning(f"Could not query inventory_analysis: {e}")
+                    self.logger.warning(f"Could not query {table_name}: {e}")
                     cursor.close()
                     self.put_connection(conn)
             else:
-                self.logger.info("inventory_analysis table does not exist, using current_stock")
+                self.logger.info("inventory_analysis_new/inventory_analysis table does not exist, using current_stock")
                 cursor.close()
                 self.put_connection(conn)
         except Exception as e:
-            self.logger.warning(f"Error checking inventory_analysis: {e}")
+            self.logger.warning(f"Error checking inventory_analysis tables: {e}")
             if conn:
                 try:
                     cursor.close()

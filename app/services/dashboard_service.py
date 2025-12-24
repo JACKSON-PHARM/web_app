@@ -50,29 +50,83 @@ class DashboardService:
         try:
             # For PostgreSQL, load from database table
             if self.is_postgres:
+                # Try inventory_analysis_new first (then inventory_analysis as fallback)
+                table_name = None
                 try:
-                    results = self._execute_query("""
-                        SELECT 
-                            company_name, branch_name, item_code, item_name,
-                            total_pieces_sold, total_sales_value, sale_days_nosun,
-                            base_amc, adjusted_amc, days_since_first_sale,
-                            days_since_last_sale, stock_days_nosun, snapshot_days_nosun,
-                            stock_availability_pct, abc_class, abc_priority,
-                            customer_appeal, modal_units_sold, last_stock_level,
-                            ideal_stock_pieces, stock_recommendation
-                        FROM inventory_analysis
-                        LIMIT 1000000
+                    # Check which table exists
+                    check_result = self._execute_query("""
+                        SELECT table_name 
+                        FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name IN ('inventory_analysis_new', 'inventory_analysis')
+                        ORDER BY CASE WHEN table_name = 'inventory_analysis_new' THEN 1 ELSE 2 END
+                        LIMIT 1
                     """)
-                    
-                    if results:
-                        df = pd.DataFrame(results)
-                        self._inventory_analysis_cache = df
-                        logger.info(f"✅ Loaded {len(df)} items from Supabase inventory_analysis table")
-                        return df
-                    else:
-                        logger.warning("⚠️ inventory_analysis table is empty in Supabase. Run load_inventory_analysis_to_supabase.py to load data.")
+                    if check_result:
+                        table_name = check_result[0]['table_name']
+                        logger.info(f"Using table: {table_name}")
                 except Exception as e:
-                    logger.warning(f"Could not load from Supabase inventory_analysis table: {e}")
+                    logger.warning(f"Could not check for inventory_analysis tables: {e}")
+                
+                if table_name:
+                    try:
+                        # Get column names to build appropriate query
+                        # Use parameterized query for table name check
+                        columns_result = self._execute_query("""
+                            SELECT column_name 
+                            FROM information_schema.columns 
+                            WHERE table_schema = 'public' 
+                            AND table_name = %s
+                        """, (table_name,))
+                        available_columns = [row['column_name'] for row in columns_result] if columns_result else []
+                        
+                        # Build SELECT list based on available columns
+                        select_cols = []
+                        if 'company_name' in available_columns:
+                            select_cols.append('company_name')
+                        elif 'company' in available_columns:
+                            select_cols.append('company as company_name')
+                        
+                        if 'branch_name' in available_columns:
+                            select_cols.append('branch_name')
+                        elif 'branch' in available_columns:
+                            select_cols.append('branch as branch_name')
+                        
+                        # Add other columns that might exist
+                        for col in ['item_code', 'item_name', 'total_pieces_sold', 'total_sales_value', 
+                                   'sale_days_nosun', 'base_amc', 'adjusted_amc', 'days_since_first_sale',
+                                   'days_since_last_sale', 'stock_days_nosun', 'snapshot_days_nosun',
+                                   'stock_availability_pct', 'abc_class', 'abc_priority',
+                                   'customer_appeal', 'modal_units_sold', 'last_stock_level',
+                                   'ideal_stock_pieces', 'stock_recommendation']:
+                            if col in available_columns:
+                                select_cols.append(col)
+                        
+                        if select_cols:
+                            # Table name is validated, safe to use in f-string
+                            # Escape table name to prevent SQL injection (though we've validated it)
+                            safe_table_name = table_name.replace('"', '""')  # Escape quotes
+                            query = f"""
+                                SELECT {', '.join(select_cols)}
+                                FROM "{safe_table_name}"
+                                LIMIT 1000000
+                            """
+                            results = self._execute_query(query)
+                            
+                            if results:
+                                df = pd.DataFrame(results)
+                                self._inventory_analysis_cache = df
+                                logger.info(f"✅ Loaded {len(df)} items from Supabase {table_name} table")
+                                return df
+                            else:
+                                logger.warning(f"⚠️ {table_name} table is empty in Supabase. Run load_inventory_analysis_to_supabase.py to load data.")
+                        else:
+                            logger.warning(f"⚠️ {table_name} table exists but has no recognized columns")
+                    except Exception as e:
+                        logger.warning(f"Could not load from Supabase {table_name} table: {e}")
+                        logger.info("Falling back to CSV file...")
+                else:
+                    logger.warning("⚠️ Neither inventory_analysis_new nor inventory_analysis table found in Supabase")
                     logger.info("Falling back to CSV file...")
             
             # Fallback to CSV file (for SQLite or if Supabase table doesn't exist)
