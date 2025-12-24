@@ -21,11 +21,17 @@ Your password contains special characters (`?`, `!`, `$`) that must be URL-encod
 
 ## ✅ Complete Connection String
 
-Use this EXACT string in Render (password is URL-encoded):
+**IMPORTANT**: Use port **6543** (connection pooling) instead of 5432 for Render!
+
+Use this EXACT string in Render (password is URL-encoded, port 6543):
 
 ```
-postgresql://postgres:b%3F%21HABE69%24TwwSV@db.oagcmmkmypmwmeuodkym.supabase.co:5432/postgres
+postgresql://postgres:b%3F%21HABE69%24TwwSV@db.oagcmmkmypmwmeuodkym.supabase.co:6543/postgres
 ```
+
+**Why port 6543?**
+- Port 5432 = Direct connection (often blocked from Render)
+- Port 6543 = Connection pooling (required for Render/external connections)
 
 ## 📋 Steps to Add to Render
 

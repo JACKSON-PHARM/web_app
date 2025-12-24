@@ -9,6 +9,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,67 @@ class PostgresDatabaseManager:
         self._db_path_value = "Supabase PostgreSQL"  # Set internal value first
         self.setup_logging()
         
+        # Force IPv4 for Supabase (free tier doesn't support IPv6)
+        # Parse connection string and ensure IPv4 resolution
+        connection_string_ipv4 = self._force_ipv4_connection(connection_string)
+        
         # Create connection pool
         try:
-            self.pool = ThreadedConnectionPool(1, 5, connection_string)
-            logger.info("✅ PostgreSQL connection pool created")
+            self.pool = ThreadedConnectionPool(1, 5, connection_string_ipv4)
+            logger.info("✅ PostgreSQL connection pool created (IPv4)")
             self._init_database()
         except Exception as e:
             logger.error(f"❌ Failed to create PostgreSQL connection pool: {e}")
             raise
+    
+    def _force_ipv4_connection(self, connection_string: str) -> str:
+        """
+        Force IPv4 connection for Supabase (free tier doesn't support IPv6)
+        Modifies connection string to use IPv4 address if hostname resolves to IPv6
+        """
+        try:
+            # Parse connection string
+            if connection_string.startswith('postgresql://'):
+                # Extract hostname from connection string
+                # Format: postgresql://user:pass@host:port/db
+                parts = connection_string.split('@')
+                if len(parts) == 2:
+                    auth_part = parts[0]
+                    host_db_part = parts[1]
+                    
+                    # Extract hostname and port
+                    if ':' in host_db_part:
+                        host_port, db_part = host_db_part.split('/', 1)
+                        if ':' in host_port:
+                            hostname, port = host_port.rsplit(':', 1)
+                        else:
+                            hostname = host_port
+                            port = '5432'
+                    else:
+                        hostname = host_db_part.split('/')[0]
+                        port = '5432'
+                    
+                    # Resolve hostname to IPv4 address
+                    try:
+                        # Force IPv4 by using socket.AF_INET
+                        ipv4_address = socket.getaddrinfo(hostname, int(port), socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+                        logger.info(f"Resolved {hostname} to IPv4: {ipv4_address}")
+                        
+                        # Replace hostname with IPv4 address in connection string
+                        connection_string_ipv4 = connection_string.replace(hostname, ipv4_address)
+                        return connection_string_ipv4
+                    except (socket.gaierror, ValueError) as e:
+                        logger.warning(f"Could not resolve {hostname} to IPv4, using original: {e}")
+                        return connection_string
+                else:
+                    logger.warning("Could not parse connection string for IPv4 conversion")
+                    return connection_string
+            else:
+                # Not a postgresql:// URL, return as-is
+                return connection_string
+        except Exception as e:
+            logger.warning(f"Error forcing IPv4 connection: {e}, using original connection string")
+            return connection_string
     
     def setup_logging(self):
         """Setup logging for database operations"""
