@@ -26,7 +26,8 @@ class PostgresDatabaseManager:
             connection_string: PostgreSQL connection string (e.g., postgresql://user:pass@host:port/db)
         """
         self.connection_string = connection_string
-        self.db_path = "Supabase PostgreSQL"  # Set as regular attribute for compatibility
+        # db_path is set via property setter (defined below)
+        self._db_path_value = "Supabase PostgreSQL"  # Set internal value first
         self.setup_logging()
         
         # Create connection pool
@@ -373,7 +374,13 @@ class PostgresDatabaseManager:
     @property
     def db_path(self) -> str:
         """Return database path (for compatibility with SQLite interface)"""
-        return "Supabase PostgreSQL"
+        # Return the internal value
+        return getattr(self, '_db_path_value', "Supabase PostgreSQL")
+    
+    @db_path.setter
+    def db_path(self, value: str):
+        """Setter for db_path property"""
+        self._db_path_value = value
     
     def __getattr__(self, name: str):
         """Fallback for attribute access - ensures db_path is always accessible"""
