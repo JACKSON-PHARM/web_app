@@ -58,7 +58,9 @@ class PostgresDatabaseManager:
         # Get it from: Supabase Dashboard → Settings → Database → Connection pooling → Copy connection string
         # Do NOT use the direct connection string (db.xxx.supabase.co) - it only has IPv6
         try:
-            self.pool = ThreadedConnectionPool(1, 5, connection_string)
+            # Increase pool size to handle concurrent requests
+            # Min 2, Max 20 connections (Supabase free tier allows up to 60 connections)
+            self.pool = ThreadedConnectionPool(2, 20, connection_string)
             logger.info("✅ PostgreSQL connection pool created")
             self._init_database()
         except Exception as e:
@@ -359,6 +361,7 @@ class PostgresDatabaseManager:
     def execute_query(self, query: str, params: tuple = None) -> List[Dict]:
         """Execute a SELECT query and return results as list of dicts"""
         conn = None
+        cursor = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -375,13 +378,15 @@ class PostgresDatabaseManager:
             self.logger.error(f"❌ Query failed: {e}")
             return []
         finally:
-            if conn:
+            if cursor:
                 cursor.close()
+            if conn:
                 self.put_connection(conn)
     
     def execute_update(self, query: str, params: tuple = None) -> int:
         """Execute an UPDATE/INSERT/DELETE query and return affected rows"""
         conn = None
+        cursor = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -400,8 +405,9 @@ class PostgresDatabaseManager:
                 conn.rollback()
             return 0
         finally:
-            if conn:
+            if cursor:
                 cursor.close()
+            if conn:
                 self.put_connection(conn)
     
     def get_database_info(self) -> Dict:
@@ -430,6 +436,8 @@ class PostgresDatabaseManager:
     def get_branches(self, company: Optional[str] = None) -> List[Dict]:
         """Get list of branches from inventory_analysis or current_stock table"""
         branches = {}
+        conn = None
+        cursor = None
         
         # First try inventory_analysis table (has branch info)
         try:
@@ -504,8 +512,10 @@ class PostgresDatabaseManager:
                         
                         if branches:
                             self.logger.info(f"Found {len(branches)} unique branches from {table_name}")
-                            cursor.close()
-                            self.put_connection(conn)
+                            if cursor:
+                                cursor.close()
+                            if conn:
+                                self.put_connection(conn)
                             return list(branches.values())
                     elif 'company' in columns and 'branch' in columns:
                         # Old format (inventory_analysis) - has company and branch
@@ -528,30 +538,45 @@ class PostgresDatabaseManager:
                     
                     if branches:
                         self.logger.info(f"Found {len(branches)} branches from {table_name}")
-                        cursor.close()
-                        self.put_connection(conn)
+                        if cursor:
+                            cursor.close()
+                        if conn:
+                            self.put_connection(conn)
                         return list(branches.values())
                 except Exception as e:
                     self.logger.warning(f"Could not query {table_name}: {e}")
-                    cursor.close()
-                    self.put_connection(conn)
+                    if cursor:
+                        cursor.close()
+                    if conn:
+                        self.put_connection(conn)
+                    conn = None
+                    cursor = None
             else:
                 self.logger.info("inventory_analysis_new/inventory_analysis table does not exist, using current_stock")
-                cursor.close()
-                self.put_connection(conn)
+                if cursor:
+                    cursor.close()
+                if conn:
+                    self.put_connection(conn)
+                conn = None
+                cursor = None
         except Exception as e:
             self.logger.warning(f"Error checking inventory_analysis tables: {e}")
             if conn:
                 try:
-                    cursor.close()
+                    if cursor:
+                        cursor.close()
                     self.put_connection(conn)
                 except:
                     pass
+            conn = None
+            cursor = None
         
         # Fallback to current_stock if inventory_analysis is empty or doesn't exist
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            if not conn:
+                conn = self.get_connection()
+            if not cursor:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             if company:
                 cursor.execute("""
@@ -577,8 +602,10 @@ class PostgresDatabaseManager:
                         'branch': row['branch_name']
                     }
             
-            cursor.close()
-            self.put_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                self.put_connection(conn)
             
             if branches:
                 self.logger.info(f"Found {len(branches)} branches from current_stock")
@@ -593,11 +620,21 @@ class PostgresDatabaseManager:
             self.logger.error(traceback.format_exc())
             if conn:
                 try:
-                    cursor.close()
+                    if cursor:
+                        cursor.close()
                     self.put_connection(conn)
                 except:
                     pass
             return []
+        finally:
+            # Ensure connection is always returned
+            if conn:
+                try:
+                    if cursor:
+                        cursor.close()
+                    self.put_connection(conn)
+                except:
+                    pass
     
     @property
     def db_path(self) -> str:
