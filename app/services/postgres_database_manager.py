@@ -480,10 +480,33 @@ class PostgresDatabaseManager:
                         self.logger.info(f"Using inventory_analysis_new format (company_name, branch_name)")
                         if company:
                             query = f'SELECT DISTINCT company_name as company, branch_name as branch_name FROM "{table_name}" WHERE company_name = %s ORDER BY company_name, branch_name'
+                            self.logger.info(f"Executing query: {query} with params: ({company},)")
                             cursor.execute(query, (company,))
                         else:
                             query = f'SELECT DISTINCT company_name as company, branch_name as branch_name FROM "{table_name}" ORDER BY company_name, branch_name'
+                            self.logger.info(f"Executing query: {query}")
                             cursor.execute(query)
+                        
+                        results = cursor.fetchall()
+                        self.logger.info(f"Query returned {len(results)} rows")
+                        if results:
+                            self.logger.info(f"Sample result: {results[0] if results else 'None'}")
+                        
+                        for row in results:
+                            key = f"{row['branch_name']}|{row['company']}"
+                            if key not in branches:
+                                branches[key] = {
+                                    'branch_name': row['branch_name'],
+                                    'company': row['company'],
+                                    'branch': row['branch_name']  # For backward compatibility
+                                }
+                                self.logger.debug(f"Added branch: {row['branch_name']} ({row['company']})")
+                        
+                        if branches:
+                            self.logger.info(f"Found {len(branches)} unique branches from {table_name}")
+                            cursor.close()
+                            self.put_connection(conn)
+                            return list(branches.values())
                     elif 'company' in columns and 'branch' in columns:
                         # Old format (inventory_analysis) - has company and branch
                         self.logger.info(f"Using inventory_analysis format (company, branch)")

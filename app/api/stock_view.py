@@ -66,25 +66,45 @@ async def get_stock_view_data(
         logger.info(f"Calling stock view service with: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
         
         # Use PostgreSQL-compatible stock view service
-        from app.services.stock_view_service_postgres import StockViewServicePostgres
-        stock_service = StockViewServicePostgres(db_manager)
-        
-        # Run query in executor to prevent blocking (with 4 minute timeout)
-        loop = asyncio.get_event_loop()
-        stock_data = await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                lambda: stock_service.get_stock_view_data(
-                    branch_name,
-                    branch_company,
-                    source_branch_name,
-                    source_branch_company
-                )
-            ),
-            timeout=240.0  # 4 minutes timeout
-        )
-        
-        logger.info(f"Stock view service returned: {len(stock_data) if stock_data is not None and not stock_data.empty else 0} rows")
+        try:
+            from app.services.stock_view_service_postgres import StockViewServicePostgres
+            stock_service = StockViewServicePostgres(db_manager)
+            
+            # Run query in executor to prevent blocking (with 4 minute timeout)
+            loop = asyncio.get_event_loop()
+            stock_data = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: stock_service.get_stock_view_data(
+                        branch_name,
+                        branch_company,
+                        source_branch_name,
+                        source_branch_company
+                    )
+                ),
+                timeout=240.0  # 4 minutes timeout
+            )
+            
+            logger.info(f"Stock view service returned: {len(stock_data) if stock_data is not None and not stock_data.empty else 0} rows")
+        except ImportError as e:
+            logger.error(f"Could not import StockViewServicePostgres: {e}")
+            return {
+                "success": False,
+                "error": f"Stock view service not available: {str(e)}",
+                "data": [],
+                "count": 0
+            }
+        except Exception as e:
+            logger.error(f"Error calling stock view service: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": f"Error loading stock data: {str(e)}",
+                "data": [],
+                "count": 0,
+                "traceback": traceback.format_exc()
+            }
         
         # Check if database has data if stock_data is empty
         if (stock_data is None or stock_data.empty):

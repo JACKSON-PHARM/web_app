@@ -796,20 +796,39 @@
     }
     
     async function loadBranches() {
+        const targetSelect = document.getElementById('targetBranch');
+        const sourceSelect = document.getElementById('sourceBranch');
+        
+        // Show loading state
+        if (targetSelect) targetSelect.innerHTML = '<option value="">Loading...</option>';
+        if (sourceSelect) sourceSelect.innerHTML = '<option value="">Loading...</option>';
+        
         try {
+            console.log('Loading branches from /api/dashboard/branches...');
             const data = await apiRequest('/api/dashboard/branches');
-            if (data.success && data.data) {
-                const targetSelect = document.getElementById('targetBranch');
-                const sourceSelect = document.getElementById('sourceBranch');
+            console.log('Branches API response:', data);
+            
+            if (!data) {
+                console.error('No data returned from branches API');
+                if (targetSelect) targetSelect.innerHTML = '<option value="">Error loading branches</option>';
+                if (sourceSelect) sourceSelect.innerHTML = '<option value="">Error loading branches</option>';
+                return;
+            }
+            
+            if (data.success && data.data && Array.isArray(data.data) && data.data.length > 0) {
+                console.log(`Found ${data.data.length} branches`);
                 
                 // Clear and populate both selects
                 [targetSelect, sourceSelect].forEach(select => {
+                    if (!select) return;
                     select.innerHTML = '<option value="">Select branch...</option>';
                     data.data.forEach(branch => {
                         const option = document.createElement('option');
-                        const value = `${branch.branch_name || branch.branch}|${branch.company}`;
+                        const branchName = branch.branch_name || branch.branch || 'Unknown';
+                        const branchCompany = branch.company || 'Unknown';
+                        const value = `${branchName}|${branchCompany}`;
                         option.value = value;
-                        option.textContent = `${branch.branch_name || branch.branch} (${branch.company})`;
+                        option.textContent = `${branchName} (${branchCompany})`;
                         select.appendChild(option);
                     });
                 });
@@ -818,15 +837,23 @@
                 const defaultTarget = 'BABA DOGO HQ|NILA';
                 const defaultSource = 'BABA DOGO HQ|NILA';
                 
-                if (targetSelect.querySelector(`option[value="${defaultTarget}"]`)) {
+                if (targetSelect && targetSelect.querySelector(`option[value="${defaultTarget}"]`)) {
                     targetSelect.value = defaultTarget;
                 }
-                if (sourceSelect.querySelector(`option[value="${defaultSource}"]`)) {
+                if (sourceSelect && sourceSelect.querySelector(`option[value="${defaultSource}"]`)) {
                     sourceSelect.value = defaultSource;
                 }
+                
+                console.log('Branches loaded successfully');
+            } else {
+                console.warn('Branches API returned no data:', data);
+                if (targetSelect) targetSelect.innerHTML = '<option value="">No branches found</option>';
+                if (sourceSelect) sourceSelect.innerHTML = '<option value="">No branches found</option>';
             }
         } catch (error) {
             console.error('Error loading branches:', error);
+            if (targetSelect) targetSelect.innerHTML = '<option value="">Error: ' + error.message + '</option>';
+            if (sourceSelect) sourceSelect.innerHTML = '<option value="">Error: ' + error.message + '</option>';
         }
     }
     
