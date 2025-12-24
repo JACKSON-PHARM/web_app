@@ -52,7 +52,7 @@ async def run_refresh_task():
         
         # Run refresh - fetch new data from APIs and save to Supabase/PostgreSQL
         logger.info("🔄 Fetching new data from APIs and saving to database...")
-        RefreshStatusService.update_progress(0.2, "Fetching stock data...")
+        RefreshStatusService.update_progress(0.1, "Connecting to Supabase database...")
         result = refresh_service.refresh_all_data()
         
         if result.get('success'):

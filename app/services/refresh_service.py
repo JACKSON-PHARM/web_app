@@ -101,12 +101,16 @@ class RefreshService:
             else:
                 self.logger.info("📁 Using SQLite database manager")
             
-            # Set up progress callback for logging
+            # Set up progress callback for logging and status updates
+            from app.services.refresh_status import RefreshStatusService
+            
             def progress_callback(message, progress=None):
                 if progress is not None:
                     self.logger.info(f"[{progress*100:.0f}%] {message}")
+                    RefreshStatusService.update_progress(progress, message)
                 else:
                     self.logger.info(message)
+                    RefreshStatusService.update_progress(None, message)
             
             orchestrator.set_progress_callback(progress_callback)
             
