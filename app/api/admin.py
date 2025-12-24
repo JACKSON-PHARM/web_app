@@ -9,7 +9,7 @@ from typing import List, Optional
 import os
 import json
 import logging
-from app.dependencies import get_current_admin, get_drive_manager
+from app.dependencies import get_current_admin
 from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
@@ -127,8 +127,7 @@ async def list_users(current_user: dict = Depends(get_current_admin)):
 
 @router.get("/drive/info")
 async def get_drive_info(
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
     """Get Google Drive database info (admin only)"""
     import logging
@@ -257,110 +256,46 @@ async def get_drive_info(
 
 @router.get("/drive/authorize")
 async def get_authorization_url(
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
-    """Get Google Drive authorization URL (admin only)"""
-    from app.config import settings
-    import os
-    try:
-        auth_url = drive_manager.get_authorization_url()
-        return {
-            "success": True,
-            "authorization_url": auth_url,
-            "callback_url": settings.GOOGLE_OAUTH_CALLBACK_URL,
-            "message": "Visit this URL to authorize Google Drive access. After authorization, you'll be redirected back.",
-            "instructions": "1. Copy the authorization_url\n2. Visit it in your browser\n3. Sign in with 2\n4. Authorize the app\n5. You'll be redirected back automatically"
-        }
-    except FileNotFoundError as e:
-        # Provide helpful error message for missing credentials
-        creds_path = settings.GOOGLE_CREDENTIALS_FILE
-        error_msg = str(e)
-        if "google_credentials.json" in error_msg.lower():
-            error_msg = (
-                f"Google credentials file not found.\n\n"
-                f"To fix this:\n"
-                f"1. Download your OAuth 2.0 credentials from Google Cloud Console\n"
-                f"2. Name the file 'google_credentials.json'\n"
-                f"3. Upload it via the admin panel (upload feature) OR\n"
-                f"4. Set GOOGLE_CREDENTIALS_JSON environment variable in Render with the file contents\n\n"
-                f"Expected location: {creds_path}"
-            )
-        raise HTTPException(status_code=404, detail=error_msg)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Google Drive is no longer used - app now uses Supabase PostgreSQL"""
+    return {
+        "success": False,
+        "message": "Google Drive integration has been removed. App now uses Supabase PostgreSQL for data storage."
+    }
 
 @router.get("/drive/files")
 async def list_database_files(
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
-    """List all database files in Google Drive (admin only)"""
-    if not drive_manager.is_authenticated():
-        return {
-            "success": False,
-            "message": "Google Drive not authenticated",
-            "files": []
-        }
-    
-    files = drive_manager.list_all_database_files()
+    """Google Drive is no longer used - app now uses Supabase PostgreSQL"""
     return {
-        "success": True,
-        "files": files,
-        "count": len(files)
+        "success": False,
+        "message": "Google Drive integration has been removed. App now uses Supabase PostgreSQL.",
+        "files": []
     }
 
 @router.delete("/drive/files/{file_id}")
 async def delete_database_file(
     file_id: str,
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
-    """Delete a specific database file from Google Drive (admin only)"""
-    if not drive_manager.is_authenticated():
-        return {
-            "success": False,
-            "message": "Google Drive not authenticated"
-        }
-    
-    success = drive_manager.delete_database_file(file_id)
-    if success:
-        return {
-            "success": True,
-            "message": f"Database file deleted successfully"
-        }
-    else:
-        return {
-            "success": False,
-            "message": "Failed to delete database file"
-        }
+    """Google Drive is no longer used - app now uses Supabase PostgreSQL"""
+    return {
+        "success": False,
+        "message": "Google Drive integration has been removed. App now uses Supabase PostgreSQL."
+    }
 
 @router.post("/drive/cleanup")
 async def cleanup_old_database_files(
     request: Request,
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
-    """Clean up old database files, keeping only the most recent N files (admin only)"""
-    if not drive_manager.is_authenticated():
-        return {
-            "success": False,
-            "message": "Google Drive not authenticated"
-        }
-    
-    try:
-        body = await request.json()
-        keep_count = body.get('keep_count', 2)
-    except:
-        keep_count = 2
-    
-    if keep_count < 1:
-        keep_count = 1
-    if keep_count > 5:
-        keep_count = 5  # Safety limit
-    
-    result = drive_manager.cleanup_old_database_files(keep_count=keep_count)
-    return result
+    """Google Drive is no longer used - app now uses Supabase PostgreSQL"""
+    return {
+        "success": False,
+        "message": "Google Drive integration has been removed. App now uses Supabase PostgreSQL."
+    }
 
 @router.post("/drive/upload-credentials")
 async def upload_credentials(
@@ -424,145 +359,34 @@ async def upload_credentials(
 async def oauth_callback(
     request: Request,
     code: Optional[str] = None,
-    error: Optional[str] = None,
-    drive_manager = Depends(get_drive_manager)
+    error: Optional[str] = None
 ):
-    """Handle OAuth callback from Google"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    # Check for errors from Google
-    if error:
-        logger.error(f"OAuth error from Google: {error}")
-        return templates.TemplateResponse("oauth_error.html", {
-            "request": request,
-            "message": f"Authorization was denied or cancelled. Error: {error}"
-        })
-    
-    if not code:
-        logger.error("No authorization code received from Google")
-        return templates.TemplateResponse("oauth_error.html", {
-            "request": request,
-            "message": "No authorization code received. Please try again."
-        })
-    
-    try:
-        logger.info(f"🔵 Callback received - Code: {code[:20] if code else 'None'}...")
-        logger.info(f"🔵 Callback URL: {request.url}")
-        logger.info(f"🔵 Query params: {dict(request.query_params)}")
-        
-        success = drive_manager.complete_authorization(code)
-        if success:
-            logger.info("✅ Authorization completed successfully")
-            # Redirect back to admin page with success message
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(
-                url="/admin?authorized=true",
-                status_code=303
-            )
-        else:
-            logger.error("❌ Authorization failed - complete_authorization returned False")
-            return templates.TemplateResponse("oauth_error.html", {
-                "request": request,
-                "message": "Authorization failed. Please try again. Check server logs for details."
-            })
-    except Exception as e:
-        logger.error(f"❌ Exception during authorization: {e}")
-        import traceback
-        error_trace = traceback.format_exc()
-        logger.error(error_trace)
-        return templates.TemplateResponse("oauth_error.html", {
-            "request": request,
-            "message": f"Error: {str(e)}\n\nCheck server terminal/console for detailed error logs."
-        })
+    """Google Drive OAuth callback - no longer used"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(
+        url="/admin?message=Google+Drive+integration+removed+-+using+Supabase+now",
+        status_code=303
+    )
 
 @router.post("/drive/sync")
 async def sync_database(
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
-    """Sync database from Google Drive (download) - admin only"""
-    if not drive_manager.is_authenticated():
-        return {
-            "success": False,
-            "message": "Google Drive not authenticated. Please authorize first using /api/admin/drive/authorize"
-        }
-    
-    from app.config import settings
-    import os
-    
-    local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
-    success = drive_manager.download_database(local_db_path)
-    
-    if success:
-        return {"success": True, "message": "Database synced from Google Drive"}
-    else:
-        return {
-            "success": False, 
-            "message": (
-                "Database not found in Google Drive.\n\n"
-                "To fix this:\n"
-                "1. Go to Settings and configure API credentials (NILA/DAIMA)\n"
-                "2. Click 'Refresh Now' to fetch data from APIs (this creates a database)\n"
-                "3. Then click 'Upload to Drive' to upload the database\n"
-                "4. After that, you can download it anytime"
-            )
-        }
+    """Google Drive sync - no longer used - app now uses Supabase PostgreSQL"""
+    return {
+        "success": False,
+        "message": "Google Drive integration has been removed. App now uses Supabase PostgreSQL - data is automatically synced."
+    }
 
 @router.post("/drive/upload")
 async def upload_database(
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_admin),
-    drive_manager = Depends(get_drive_manager)
+    current_user: dict = Depends(get_current_admin)
 ):
-    """Upload database to Google Drive (admin only) - ALWAYS runs in background to prevent app freezing"""
-    if not drive_manager.is_authenticated():
-        return {
-            "success": False,
-            "message": "Google Drive not authenticated. Please authorize first using /api/admin/drive/authorize"
-        }
-    
-    from app.config import settings
-    import os
-    from app.services.refresh_status import RefreshStatusService
-    
-    local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
-    
-    if not os.path.exists(local_db_path):
-        return {
-            "success": False,
-            "message": f"Local database not found at {local_db_path}. Please refresh data first or copy database to cache folder."
-        }
-    
-    db_size_mb = round(os.path.getsize(local_db_path) / (1024 * 1024), 2)
-    
-    # ALWAYS run upload in background to prevent app freezing
-    # Set upload status
-    RefreshStatusService.set_uploading(db_size_mb)
-    
-    # Run upload in background
-    def upload_task():
-        try:
-            logger.info(f"📤 Starting background upload: {db_size_mb:.2f} MB")
-            RefreshStatusService.update_upload_progress(0, "Starting upload...")
-            success = drive_manager.upload_database(local_db_path)
-            if success:
-                RefreshStatusService.set_upload_complete()
-                logger.info(f"✅ Background upload completed successfully")
-            else:
-                RefreshStatusService.set_upload_failed("Upload failed - check server logs")
-                logger.error("❌ Background upload failed")
-        except Exception as e:
-            logger.error(f"❌ Error in background upload: {e}")
-            RefreshStatusService.set_upload_failed(str(e))
-    
-    background_tasks.add_task(upload_task)
-    
+    """Google Drive upload - no longer used - app now uses Supabase PostgreSQL"""
     return {
-        "success": True,
-        "message": f"Upload started in background ({db_size_mb} MB). Use /api/admin/drive/upload-status to check progress.",
-        "in_background": True,
-        "size_mb": db_size_mb
+        "success": False,
+        "message": "Google Drive integration has been removed. App now uses Supabase PostgreSQL - data is automatically saved."
     }
 
 @router.get("/drive/upload-status")

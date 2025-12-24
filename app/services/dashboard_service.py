@@ -18,6 +18,8 @@ class DashboardService:
         self.db_manager = db_manager
         # Get database path from db_manager
         self.db_path = db_manager.db_path if hasattr(db_manager, 'db_path') else None
+        # Check if this is PostgreSQL (Supabase) or SQLite
+        self.is_postgres = hasattr(db_manager, 'connection_string') or 'PostgreSQL' in str(type(db_manager))
         # Inventory analysis CSV for ABC mapping (same as stock view)
         self.inventory_analysis_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
@@ -26,14 +28,48 @@ class DashboardService:
         self._abc_cache = None
         self._inventory_analysis_cache = None
         self._cached_db_path = None  # Cache the working database path
+    
+    def _normalize_query(self, query: str) -> str:
+        """Convert SQLite-style ? placeholders to PostgreSQL-style %s if using PostgreSQL"""
+        if self.is_postgres:
+            # Replace ? with %s for PostgreSQL
+            return query.replace('?', '%s')
+        return query
+    
+    def _execute_query(self, query: str, params: tuple = None) -> list:
+        """Execute query using database manager (works with both SQLite and PostgreSQL)"""
+        normalized_query = self._normalize_query(query)
+        if hasattr(self.db_manager, 'execute_query'):
+            return self.db_manager.execute_query(normalized_query, params)
+        else:
+            # Fallback: try direct connection (SQLite only)
+            if not self.is_postgres and self.db_path and os.path.exists(self.db_path):
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                try:
+                    if params:
+                        cursor.execute(query, params)
+                    else:
+                        cursor.execute(query)
+                    results = cursor.fetchall()
+                    return [dict(row) for row in results]
+                finally:
+                    conn.close()
+            return []
 
     def _get_database_path(self, prefer_stock: bool = False) -> str:
         """
-        Get the correct database path that has data
+        Get the correct database path that has data (for SQLite only)
+        For PostgreSQL, returns None as we use the database manager directly
         
         Args:
             prefer_stock: If True, prioritize databases with stock data. If False, prefer databases with invoices.
         """
+        # For PostgreSQL, we don't need file paths - use database manager directly
+        if self.is_postgres:
+            return None
+        
         # Initialize cache dictionary if needed
         if not hasattr(self, '_cached_db_paths'):
             self._cached_db_paths = {}
@@ -107,22 +143,52 @@ class DashboardService:
         return self.db_path or os.path.join(app_root, "database", "pharma_stock.db")
 
     def _load_inventory_analysis(self) -> pd.DataFrame:
-        """Load Inventory_Analysis.csv (same as stock view service)"""
+        """Load Inventory_Analysis from Supabase (or CSV fallback)"""
         if self._inventory_analysis_cache is not None:
             return self._inventory_analysis_cache
         
         try:
+            # For PostgreSQL, load from database table
+            if self.is_postgres:
+                try:
+                    results = self._execute_query("""
+                        SELECT 
+                            company_name, branch_name, item_code, item_name,
+                            total_pieces_sold, total_sales_value, sale_days_nosun,
+                            base_amc, adjusted_amc, days_since_first_sale,
+                            days_since_last_sale, stock_days_nosun, snapshot_days_nosun,
+                            stock_availability_pct, abc_class, abc_priority,
+                            customer_appeal, modal_units_sold, last_stock_level,
+                            ideal_stock_pieces, stock_recommendation
+                        FROM inventory_analysis
+                        LIMIT 1000000
+                    """)
+                    
+                    if results:
+                        df = pd.DataFrame(results)
+                        self._inventory_analysis_cache = df
+                        logger.info(f"✅ Loaded {len(df)} items from Supabase inventory_analysis table")
+                        return df
+                    else:
+                        logger.warning("⚠️ inventory_analysis table is empty in Supabase. Run load_inventory_analysis_to_supabase.py to load data.")
+                except Exception as e:
+                    logger.warning(f"Could not load from Supabase inventory_analysis table: {e}")
+                    logger.info("Falling back to CSV file...")
+            
+            # Fallback to CSV file (for SQLite or if Supabase table doesn't exist)
             if os.path.exists(self.inventory_analysis_path):
                 df = pd.read_csv(self.inventory_analysis_path)
                 # Cache it
                 self._inventory_analysis_cache = df
-                logger.info(f"Loaded {len(df)} items from Inventory_Analysis.csv")
+                logger.info(f"✅ Loaded {len(df)} items from Inventory_Analysis.csv")
                 return df
             else:
-                logger.warning(f"Inventory_Analysis.csv not found at {self.inventory_analysis_path}")
+                logger.warning(f"⚠️ Inventory_Analysis.csv not found at {self.inventory_analysis_path}")
                 return pd.DataFrame()
         except Exception as e:
-            logger.error(f"Error loading Inventory_Analysis.csv: {e}")
+            logger.error(f"❌ Error loading Inventory_Analysis: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return pd.DataFrame()
 
     def _load_abc_map(self) -> pd.DataFrame:
@@ -239,27 +305,22 @@ class DashboardService:
             # Always use BABA DOGO HQ as source branch
             hq_branch = "BABA DOGO HQ"
             
-            # Get the correct database path (prefer one with supplier invoices for new arrivals)
-            db_path_to_use = self._get_database_path(prefer_stock=False)
-            conn = sqlite3.connect(db_path_to_use)
-            cursor = conn.cursor()
-            
+            # Use database manager instead of direct SQLite connection
             # First, find what companies actually have invoices for BABA DOGO HQ
             # (invoices might be for a different company than the selected one)
-            cursor.execute("""
+            available_companies_result = self._execute_query("""
                 SELECT DISTINCT company 
                 FROM supplier_invoices 
                 WHERE branch = ?
             """, (hq_branch,))
-            available_companies = [row[0] for row in cursor.fetchall()]
+            available_companies = [row['company'] for row in available_companies_result] if available_companies_result else []
             
             if not available_companies:
                 # Check if table exists and has any data
-                cursor.execute("SELECT COUNT(*) FROM supplier_invoices")
-                total_invoices = cursor.fetchone()[0]
+                total_invoices_result = self._execute_query("SELECT COUNT(*) as count FROM supplier_invoices")
+                total_invoices = total_invoices_result[0]['count'] if total_invoices_result else 0
                 logger.warning(f"No supplier invoices found for {hq_branch} (total invoices in table: {total_invoices})")
-                logger.warning(f"Database path: {self.db_path}")
-                conn.close()
+                logger.warning(f"Database: {self.db_path if not self.is_postgres else 'Supabase PostgreSQL'}")
                 return pd.DataFrame(columns=['item_code', 'item_name', 'quantity', 'document_date', 
                                             'document_number', 'source_type', 'branch_stock_pieces', 
                                             'branch_stock_packs', 'hq_stock_pieces', 'hq_stock_packs'])
@@ -273,23 +334,22 @@ class DashboardService:
             start_date = end_date - timedelta(days=7)
             
             # Check if there are any invoices in the last 7 days
-            cursor.execute("""
-                SELECT COUNT(*) 
+            recent_count_result = self._execute_query("""
+                SELECT COUNT(*) as count
                 FROM supplier_invoices 
                 WHERE branch = ? AND document_date >= ? AND document_date <= ?
             """, (hq_branch, start_date, end_date))
-            recent_count = cursor.fetchone()[0]
+            recent_count = recent_count_result[0]['count'] if recent_count_result else 0
             
             # Always use today's date range - don't fall back to old dates
             # This ensures we show current data when available, and empty when it's not
             # Check what the most recent invoice date actually is (for logging/debugging)
-            cursor.execute("""
-                SELECT MAX(document_date) 
+            max_date_result = self._execute_query("""
+                SELECT MAX(document_date) as max_date
                 FROM supplier_invoices 
                 WHERE branch = ?
             """, (hq_branch,))
-            result = cursor.fetchone()
-            max_date = result[0] if result and result[0] else None
+            max_date = max_date_result[0]['max_date'] if max_date_result and max_date_result[0].get('max_date') else None
             
             if max_date:
                 if isinstance(max_date, str):
@@ -310,7 +370,6 @@ class DashboardService:
             # If no invoices in last 7 days, return empty DataFrame (don't show old data)
             if recent_count == 0:
                 logger.info(f"No invoices in last 7 days from today ({start_date} to {end_date}). Returning empty results. Refresh data to see new arrivals.")
-                conn.close()
                 return pd.DataFrame(columns=['item_code', 'item_name', 'quantity', 'document_date', 
                                             'document_number', 'source_type', 'branch_stock_pieces', 
                                             'branch_stock_packs', 'hq_stock_pieces', 'hq_stock_packs'])
@@ -321,8 +380,8 @@ class DashboardService:
             # Show all items received at HQ, regardless of target branch stock
             # Include branch stock from selected branch for reference
             # Check if current_stock has data, if not try stock_data as fallback
-            cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ?", (hq_branch,))
-            hq_stock_count = cursor.fetchone()[0]
+            hq_stock_result = self._execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = ?", (hq_branch,))
+            hq_stock_count = hq_stock_result[0]['count'] if hq_stock_result else 0
             use_stock_data_fallback = False
             hq_latest_date = None
             branch_latest_date = None
@@ -419,17 +478,17 @@ class DashboardService:
                 hq_snapshot_date = hq_latest_date if hq_latest_date else None
                 branch_snapshot_date = branch_latest_date if branch_latest_date else None
                 
-                combined = pd.read_sql_query(
+                results = self._execute_query(
                     invoice_query,
-                    conn,
-                    params=(hq_branch, hq_snapshot_date, hq_snapshot_date, target_company, target_branch, branch_snapshot_date, branch_snapshot_date, hq_branch, start_date, end_date, limit * 2)
+                    (hq_branch, hq_snapshot_date, hq_snapshot_date, target_company, target_branch, branch_snapshot_date, branch_snapshot_date, hq_branch, start_date, end_date, limit * 2)
                 )
             else:
-                combined = pd.read_sql_query(
+                results = self._execute_query(
                     invoice_query,
-                    conn,
-                    params=(hq_branch, target_company, target_branch, hq_branch, start_date, end_date, limit * 2)
+                    (hq_branch, target_company, target_branch, hq_branch, start_date, end_date, limit * 2)
                 )
+            
+            combined = pd.DataFrame(results) if results else pd.DataFrame()
             logger.info(f"New arrivals query returned {len(combined)} items from {hq_branch} (this week: {start_date} to {end_date})")
             
             # If no results in last 7 days, try last 30 days as fallback
@@ -439,20 +498,17 @@ class DashboardService:
                 if use_stock_data_fallback:
                     hq_snapshot_date = hq_latest_date if hq_latest_date else None
                     branch_snapshot_date = branch_latest_date if branch_latest_date else None
-                    combined = pd.read_sql_query(
+                    results = self._execute_query(
                         invoice_query,
-                        conn,
-                        params=(hq_branch, hq_snapshot_date, hq_snapshot_date, target_company, target_branch, branch_snapshot_date, branch_snapshot_date, hq_branch, start_date_fallback, end_date, limit * 2)
+                        (hq_branch, hq_snapshot_date, hq_snapshot_date, target_company, target_branch, branch_snapshot_date, branch_snapshot_date, hq_branch, start_date_fallback, end_date, limit * 2)
                     )
                 else:
-                    combined = pd.read_sql_query(
+                    results = self._execute_query(
                         invoice_query,
-                        conn,
-                        params=(hq_branch, target_company, target_branch, hq_branch, start_date_fallback, end_date, limit * 2)
+                        (hq_branch, target_company, target_branch, hq_branch, start_date_fallback, end_date, limit * 2)
                     )
+                combined = pd.DataFrame(results) if results else pd.DataFrame()
                 logger.info(f"Fallback query returned {len(combined)} items from {hq_branch} (last 30 days)")
-            
-            conn.close()
             
             if combined.empty:
                 logger.warning(f"No new arrivals found at {hq_branch} (checked last 30 days from today: {start_date} to {end_date})")
@@ -561,27 +617,37 @@ class DashboardService:
                                   target_stock_packs, abc_class, stock_level_pct, amc_pieces, pack_size
         """
         try:
-            db_path_to_use = self._get_database_path(prefer_stock=True)
-            conn = sqlite3.connect(db_path_to_use)
-            cursor = conn.cursor()
-            
+            # Use database manager instead of direct SQLite connection
             # Check if current_stock has data, if not use stock_data as fallback
             # Check both current_stock and stock_data for source branch
-            cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", (source_branch, source_company))
-            source_stock_count = cursor.fetchone()[0]
+            source_stock_result = self._execute_query(
+                "SELECT COUNT(*) as count FROM current_stock WHERE branch = ? AND company = ?",
+                (source_branch, source_company)
+            )
+            source_stock_count = source_stock_result[0]['count'] if source_stock_result else 0
             
-            # Also check stock_data for source branch
-            cursor.execute("SELECT COUNT(*), MAX(snapshot_date) FROM stock_data WHERE branch_name = ? AND company_name = ?", 
-                          (source_branch, source_company))
-            stock_data_result = cursor.fetchone()
-            stock_data_count = stock_data_result[0] if stock_data_result else 0
-            source_latest_date = stock_data_result[1] if stock_data_result else None
+            # Also check stock_data for source branch (if table exists - PostgreSQL might not have this)
+            try:
+                stock_data_result = self._execute_query(
+                    "SELECT COUNT(*) as count, MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = ? AND company_name = ?",
+                    (source_branch, source_company)
+                )
+                stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
+                source_latest_date = stock_data_result[0]['max_date'] if stock_data_result and stock_data_result[0].get('max_date') else None
+            except Exception:
+                # stock_data table might not exist in PostgreSQL (we removed it)
+                stock_data_count = 0
+                source_latest_date = None
             
             # Check target branch stock_data
-            cursor.execute("SELECT MAX(snapshot_date) FROM stock_data WHERE branch_name = ? AND company_name = ?", 
-                          (target_branch, target_company))
-            target_latest_date_result = cursor.fetchone()
-            target_latest_date = target_latest_date_result[0] if target_latest_date_result else None
+            try:
+                target_latest_date_result = self._execute_query(
+                    "SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = ? AND company_name = ?",
+                    (target_branch, target_company)
+                )
+                target_latest_date = target_latest_date_result[0]['max_date'] if target_latest_date_result and target_latest_date_result[0].get('max_date') else None
+            except Exception:
+                target_latest_date = None
             
             use_stock_data_fallback = False
             
@@ -605,19 +671,23 @@ class DashboardService:
                         ON cs_target.item_code = cs_source.item_code
                         AND cs_target.company = ?
                         AND cs_target.branch = ?
-                    -- AMC will be loaded from Inventory_Analysis.csv after query (same as stock view)
+                    -- Last order/invoice date: combine purchase_orders, branch_orders, and hq_invoices
                     LEFT JOIN (
                         SELECT 
                             item_code,
-                            MAX(document_date) AS last_order_date
+                            MAX(date) AS last_order_date
                         FROM (
-                            SELECT item_code, document_date
+                            SELECT item_code, document_date as date
                             FROM purchase_orders
                             WHERE company = ? AND branch = ?
                             UNION ALL
-                            SELECT item_code, document_date
+                            SELECT item_code, document_date as date
                             FROM branch_orders
                             WHERE company = ? AND source_branch = ?
+                            UNION ALL
+                            SELECT item_code, date
+                            FROM hq_invoices
+                            WHERE branch = ?
                         ) combined_orders
                         GROUP BY item_code
                     ) po ON po.item_code = cs_source.item_code
@@ -662,15 +732,19 @@ class DashboardService:
                     LEFT JOIN (
                         SELECT 
                             item_code,
-                            MAX(document_date) AS last_order_date
+                            MAX(date) AS last_order_date
                         FROM (
-                            SELECT item_code, document_date
+                            SELECT item_code, document_date as date
                             FROM purchase_orders
                             WHERE company = ? AND branch = ?
                             UNION ALL
-                            SELECT item_code, document_date
+                            SELECT item_code, document_date as date
                             FROM branch_orders
                             WHERE company = ? AND source_branch = ?
+                            UNION ALL
+                            SELECT item_code, date
+                            FROM hq_invoices
+                            WHERE branch = ?
                         ) combined_orders
                         GROUP BY item_code
                     ) po ON po.item_code = sd_source.item_code
@@ -690,7 +764,6 @@ class DashboardService:
             else:
                 logger.warning(f"No stock data found for {source_branch} ({source_company}) in either current_stock or stock_data tables.")
                 logger.info(f"Please sync stock data using 'Refresh All Data' -> 'Stock' to populate priority items.")
-                conn.close()
                 return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
                                             'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
                                             'pack_size', 'last_order_date'])
@@ -698,32 +771,31 @@ class DashboardService:
             if source_branch == target_branch and source_company == target_company:
                 logger.warning(f"⚠️ Source and target branches are the same ({source_branch}), cannot find priority items. Priority items require different branches.")
                 logger.info(f"💡 Tip: Select a different target branch (e.g., a retail branch) to see items that need to be transferred from {source_branch}.")
-                conn.close()
                 return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
                                             'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
                                             'pack_size', 'last_order_date'])
             
-            # Execute query with appropriate parameters
+            # Execute query with appropriate parameters using database manager
             logger.info(f"🔍 Executing priority items query: source={source_branch} ({source_company}), target={target_branch} ({target_company})")
             if use_stock_data_fallback:
                 source_snapshot_date = source_latest_date if source_latest_date else None
                 target_snapshot_date = target_latest_date if target_latest_date else None
-                df = pd.read_sql_query(
+                results = self._execute_query(
                     query,
-                    conn,
-                    params=(target_company, target_branch, target_snapshot_date, target_snapshot_date, 
-                            target_company, target_branch, target_company, target_branch, 
-                            source_branch, source_company, 
-                            source_snapshot_date, source_snapshot_date, limit * 20)
+                    (target_company, target_branch, target_snapshot_date, target_snapshot_date, 
+                     target_company, target_branch, target_company, target_branch, 
+                     source_branch, source_company, 
+                     source_snapshot_date, source_snapshot_date, limit * 20)
                 )
             else:
-                df = pd.read_sql_query(
+                results = self._execute_query(
                     query,
-                    conn,
-                    params=(target_company, target_branch, target_company, target_branch, target_company, target_branch,
-                            source_branch, source_company, limit * 20)  # Get more to filter by ABC later
+                    (target_company, target_branch, target_company, target_branch, target_company, target_branch,
+                     target_branch, source_branch, source_company, limit * 20)  # Get more to filter by ABC later
                 )
-            conn.close()
+            
+            # Convert results to DataFrame
+            df = pd.DataFrame(results) if results else pd.DataFrame()
             
             logger.info(f"📊 Query returned {len(df)} rows before filtering")
             

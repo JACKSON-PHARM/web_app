@@ -221,15 +221,14 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
         self.logger.info(f"🏢 Processing {branch_name} [{order_type.upper()}]")
         
         try:
-            # Get date range
-            today = datetime.now().date()
-            year_start = datetime(START_YEAR, 1, 1).date()
+            # Get date range (last 30 days for Supabase free tier)
+            start_date, end_date = self.get_retention_date_range(30)
             
-            self.logger.info(f"📅 {branch_name}: Checking {year_start} to {today}")
+            self.logger.info(f"📅 {branch_name}: Fetching {order_type} orders from {start_date} to {end_date} (last 30 days)")
             
             # Get all orders from API
             all_orders = self.get_orders(session, token, order_type, 
-                                        branch_info["branch_num"], year_start, today)
+                                        branch_info["branch_num"], start_date, end_date)
             
             if not all_orders:
                 self.logger.info(f"ℹ️ No {order_type} orders found for {branch_name}")

@@ -77,7 +77,7 @@ Fill in the following settings:
 #### Basic Settings:
 - **Name**: `pharmastock-web` (or your preferred name)
 - **Region**: Choose closest to your users (e.g., `Oregon (US West)`)
-- **Branch**: `main` (or `master` if that's your default branch)
+- **Branch**: `main` ⚠️ **IMPORTANT: Use `main` if your GitHub repo uses `main`, or `master` if it uses `master`**
 
 #### Build & Deploy:
 - **Root Directory**: `web_app` ⚠️ **IMPORTANT: Set this!**

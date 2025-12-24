@@ -20,6 +20,14 @@ from scripts.data_fetchers.database_grn_fetcher import DatabaseGRNFetcher
 from scripts.data_fetchers.database_orders_fetcher import DatabaseOrdersFetcher
 from scripts.data_fetchers.database_supplier_invoices_fetcher import DatabaseSupplierInvoicesFetcher
 
+# Try to import HQ invoices fetcher (may not exist in all environments)
+try:
+    from scripts.data_fetchers.database_hq_invoices_fetcher import DatabaseHQInvoicesFetcher
+    HQ_INVOICES_AVAILABLE = True
+except ImportError:
+    HQ_INVOICES_AVAILABLE = False
+    DatabaseHQInvoicesFetcher = None
+
 
 class DatabaseFetcherOrchestrator:
     """
@@ -49,7 +57,12 @@ class DatabaseFetcherOrchestrator:
         """Run stock position fetcher"""
         self._update_progress("Starting Stock Position Sync...", 0.0)
         try:
-            fetcher = DatabaseStockFetcher(self.app_root)
+            # Use the base fetcher's database manager and credential manager
+            fetcher = DatabaseStockFetcher(
+                self.app_root,
+                db_manager=self.base_fetcher.db_manager,
+                credential_manager=self.base_fetcher.cred_manager
+            )
             result = fetcher.run()
             self.results['stock'] = result
             return result
@@ -62,7 +75,11 @@ class DatabaseFetcherOrchestrator:
         """Run GRN fetcher"""
         self._update_progress("Starting GRN Download...", 0.2)
         try:
-            fetcher = DatabaseGRNFetcher(self.app_root)
+            fetcher = DatabaseGRNFetcher(
+                self.app_root,
+                db_manager=self.base_fetcher.db_manager,
+                credential_manager=self.base_fetcher.cred_manager
+            )
             result = fetcher.run()
             self.results['grn'] = result
             return result
@@ -75,7 +92,11 @@ class DatabaseFetcherOrchestrator:
         """Run orders fetcher"""
         self._update_progress("Starting Orders Download...", 0.4)
         try:
-            fetcher = DatabaseOrdersFetcher(self.app_root)
+            fetcher = DatabaseOrdersFetcher(
+                self.app_root,
+                db_manager=self.base_fetcher.db_manager,
+                credential_manager=self.base_fetcher.cred_manager
+            )
             result = fetcher.run()
             self.results['orders'] = result
             return result
@@ -88,13 +109,88 @@ class DatabaseFetcherOrchestrator:
         """Run supplier invoices fetcher"""
         self._update_progress("Starting Supplier Invoices Download...", 0.6)
         try:
-            fetcher = DatabaseSupplierInvoicesFetcher(self.app_root)
+            fetcher = DatabaseSupplierInvoicesFetcher(
+                self.app_root,
+                db_manager=self.base_fetcher.db_manager,
+                credential_manager=self.base_fetcher.cred_manager
+            )
             result = fetcher.run()
             self.results['supplier_invoices'] = result
             return result
         except Exception as e:
             error_result = {"success": False, "message": str(e)}
             self.results['supplier_invoices'] = error_result
+            return error_result
+    
+    def run_cleanup(self) -> Dict:
+        """Run cleanup of old data (older than 30 days)"""
+        try:
+            # Import cleanup function
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cleanup_script = os.path.join(script_dir, "cleanup_old_data.py")
+            
+            if not os.path.exists(cleanup_script):
+                self._update_progress("⚠️ Cleanup script not found, skipping...")
+                return {"success": False, "message": "Cleanup script not found"}
+            
+            # Get connection string from base fetcher's db_manager
+            try:
+                if hasattr(self.base_fetcher.db_manager, 'connection_string'):
+                    connection_string = self.base_fetcher.db_manager.connection_string
+                else:
+                    # Try to get from config
+                    from app.config import settings
+                    connection_string = settings.DATABASE_URL
+                
+                if not connection_string:
+                    return {"success": False, "message": "No database connection string"}
+                
+                # Import and run cleanup
+                import sys
+                sys.path.insert(0, script_dir)
+                from cleanup_old_data import cleanup_old_data
+                
+                result = cleanup_old_data(connection_string, retention_days=30)
+                
+                if isinstance(result, dict):
+                    return result
+                elif result:
+                    return {"success": True, "total_deleted": 0, "message": "Cleanup completed"}
+                else:
+                    return {"success": False, "total_deleted": 0, "message": "Cleanup failed"}
+            except Exception as e:
+                self._update_progress(f"⚠️ Cleanup error: {e}")
+                return {"success": False, "message": str(e)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+    
+    def run_hq_invoices_fetcher(self) -> Dict:
+        """Run HQ invoices fetcher (invoices and branch transfers from BABA DOGO HQ)"""
+        if not HQ_INVOICES_AVAILABLE:
+            self._update_progress("HQ Invoices fetcher not available, skipping...", 0.7)
+            return {"success": False, "message": "HQ Invoices fetcher not available"}
+        
+        self._update_progress("Starting HQ Invoices Download...", 0.7)
+        try:
+            # Get database manager and credential manager from base fetcher
+            db_manager = self.base_fetcher.db_manager
+            cred_manager = self.base_fetcher.cred_manager
+            
+            fetcher = DatabaseHQInvoicesFetcher(db_manager, cred_manager)
+            count = fetcher.fetch_data()  # Fetches last 90 days by default
+            
+            result = {
+                "success": True,
+                "message": f"Fetched {count} HQ invoice/transfer records",
+                "records_processed": count
+            }
+            self.results['hq_invoices'] = result
+            return result
+        except Exception as e:
+            error_result = {"success": False, "message": str(e)}
+            self.results['hq_invoices'] = error_result
+            import traceback
+            self.base_fetcher.logger.error(traceback.format_exc())
             return error_result
     
     def run_all_sequential(self) -> Dict:
@@ -129,7 +225,17 @@ class DatabaseFetcherOrchestrator:
             self._update_progress(f"✅ Orders: {orders_result.get('total_orders', 0)} orders", 0.75)
             
             supplier_result = self.run_supplier_invoices_fetcher()
-            self._update_progress(f"✅ Supplier Invoices: {supplier_result.get('total_invoices', 0)} invoices", 0.9)
+            self._update_progress(f"✅ Supplier Invoices: {supplier_result.get('total_invoices', 0)} invoices", 0.85)
+            
+            # Run HQ invoices fetcher (invoices and transfers from BABA DOGO HQ)
+            hq_invoices_result = self.run_hq_invoices_fetcher()
+            self._update_progress(f"✅ HQ Invoices: {hq_invoices_result.get('records_processed', 0)} records", 0.95)
+            
+            # Run cleanup of old data (older than 30 days)
+            self._update_progress("🧹 Cleaning up old data (older than 30 days)...", 0.98)
+            cleanup_result = self.run_cleanup()
+            if cleanup_result.get('success'):
+                self._update_progress(f"✅ Cleanup: {cleanup_result.get('total_deleted', 0):,} records deleted", 0.99)
             
             end_time = datetime.now()
             duration = end_time - start_time
@@ -144,7 +250,9 @@ class DatabaseFetcherOrchestrator:
                     "stock": stock_result,
                     "grn": grn_result,
                     "orders": orders_result,
-                    "supplier_invoices": supplier_result
+                    "supplier_invoices": supplier_result,
+                    "hq_invoices": hq_invoices_result,
+                    "cleanup": cleanup_result if 'cleanup_result' in locals() else {"success": False, "message": "Not run"}
                 },
                 "summary": {
                     "stock_records": stock_result.get('total_updated', 0),

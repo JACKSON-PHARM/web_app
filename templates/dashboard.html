@@ -632,8 +632,8 @@
     <div class="dashboard-header">
         <h1>📊 Dashboard</h1>
         <div>
-            <div class="refresh-status" id="lastRefresh">
-                Last refresh: Never
+        <div class="refresh-status" id="lastRefresh">
+            Last refresh: Never
             </div>
             <div id="syncStatusInfo" style="font-size: 12px; color: #666; margin-top: 5px;">
                 <span id="syncStatusText">Checking sync status...</span>
@@ -758,10 +758,10 @@
         // Check database status and load data
         checkDatabaseStatus().then(hasData => {
             if (hasData) {
-                // Load data asynchronously
-                setTimeout(() => {
-                    loadDashboardData();
-                    checkRefreshStatus();
+        // Load data asynchronously
+        setTimeout(() => {
+            loadDashboardData();
+            checkRefreshStatus();
                 }, 100);
             } else {
                 // Show helpful empty state message
@@ -896,7 +896,7 @@
                     setTimeout(() => {
                         if (document.getElementById('progressModal') && document.getElementById('progressModal').classList.contains('show')) {
                             loadPriorityItems();
-                        }
+                }
                     }, 30000);
                 } else {
                     // No refresh in progress - show refresh button
@@ -1384,8 +1384,8 @@
             const status = await apiRequest('/api/refresh/status');
             if (status) {
                 if (status.last_refresh) {
-                    document.getElementById('lastRefresh').textContent = 
-                        `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
+                document.getElementById('lastRefresh').textContent = 
+                    `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
                 }
                 
                 // If refresh is in progress, show modal and start polling

@@ -164,14 +164,13 @@ class DatabaseGRNFetcher(DatabaseBaseFetcher):
         self.logger.info(f"🏢 Processing {branch_name} [GRN]")
         
         try:
-            # Get date range
-            today = datetime.now().date()
-            year_start = datetime(START_YEAR, 1, 1).date()
+            # Get date range (last 30 days for Supabase free tier)
+            start_date, end_date = self.get_retention_date_range(30)
             
-            self.logger.info(f"📅 {branch_name}: Checking {year_start} to {today}")
+            self.logger.info(f"📅 {branch_name}: Fetching GRNs from {start_date} to {end_date} (last 30 days)")
             
             # Get all GRNs from API
-            all_grns = self.get_grns(session, token, branch_info["branch_num"], year_start, today)
+            all_grns = self.get_grns(session, token, branch_info["branch_num"], start_date, end_date)
             
             if not all_grns:
                 self.logger.info(f"ℹ️ No GRNs found for {branch_name}")

@@ -8,7 +8,7 @@ from typing import Optional
 from app.config import settings
 from app.services.license_service import LicenseService
 from app.services.database_manager import DatabaseManager
-from app.services.google_drive import GoogleDriveManager
+from app.services.postgres_database_manager import PostgresDatabaseManager
 import os
 import logging
 
@@ -18,47 +18,33 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 license_service = LicenseService()
 
 # Global instances
-_drive_manager: Optional[GoogleDriveManager] = None
 _db_manager: Optional[DatabaseManager] = None
 
 def reset_db_manager():
-    """Reset the database manager singleton (useful after downloading database)"""
+    """Reset the database manager singleton"""
     global _db_manager
     _db_manager = None
 
-def get_drive_manager() -> GoogleDriveManager:
-    """Get Google Drive manager instance"""
-    global _drive_manager
-    if _drive_manager is None:
-        _drive_manager = GoogleDriveManager()
-    return _drive_manager
-
-def get_db_manager() -> DatabaseManager:
-    """Get database manager instance"""
+def get_db_manager():
+    """Get database manager instance (PostgreSQL for Supabase or SQLite fallback)"""
     global _db_manager
     if _db_manager is None:
-        # Get local database path - ensure it's absolute
-        # On Render free tier (no persistent disk), use temp directory
-        if os.getenv("RENDER"):
-            # On Render, use /tmp if no persistent disk is mounted
-            cache_dir = os.getenv("RENDER_DISK_PATH", "/tmp/pharmastock_cache")
-            logger.info(f"🌐 Render environment detected - using cache dir: {cache_dir}")
-        elif os.path.isabs(settings.LOCAL_CACHE_DIR):
-            cache_dir = settings.LOCAL_CACHE_DIR
-        else:
-            # Relative to web_app/app directory
-            web_app_dir = os.path.dirname(os.path.dirname(__file__))
-            cache_dir = os.path.join(web_app_dir, settings.LOCAL_CACHE_DIR.lstrip("./"))
+        # Use Supabase PostgreSQL if DATABASE_URL is set
+        if settings.DATABASE_URL:
+            try:
+                _db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
+                logger.info("✅ Using Supabase PostgreSQL database")
+                return _db_manager
+            except Exception as e:
+                logger.error(f"❌ Failed to connect to Supabase: {e}")
+                logger.warning("⚠️ Falling back to SQLite")
         
+        # Fallback to SQLite
+        web_app_dir = os.path.dirname(os.path.dirname(__file__))
+        cache_dir = os.path.join(web_app_dir, settings.LOCAL_CACHE_DIR.lstrip("./"))
         local_db_path = os.path.join(cache_dir, settings.DB_FILENAME)
-        # Ensure directory exists
         os.makedirs(cache_dir, exist_ok=True)
-        logger.info(f"Database path: {local_db_path}")
-        logger.info(f"Database exists: {os.path.exists(local_db_path)}")
-        if os.path.exists(local_db_path):
-            logger.info(f"Database size: {os.path.getsize(local_db_path) / (1024*1024):.2f} MB")
-        else:
-            logger.info("ℹ️ Database will be created on first use or downloaded from Google Drive")
+        logger.info(f"📁 Using SQLite database: {local_db_path}")
         _db_manager = DatabaseManager(local_db_path)
     return _db_manager
 

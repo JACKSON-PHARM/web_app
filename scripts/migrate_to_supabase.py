@@ -105,7 +105,7 @@ def create_postgres_table(pg_cursor, table_name: str, columns: List[Dict]):
     elif table_name == 'branch_orders':
         pg_cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_date ON "{table_name}"(document_date DESC);')
     elif table_name == 'supplier_invoices':
-        pg_cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_date ON "{table_name}"(invoice_date DESC);')
+        pg_cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_date ON "{table_name}"(document_date DESC);')
     elif table_name == 'current_stock':
         pg_cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_branch ON "{table_name}"(branch, company, item_code);')
 

@@ -238,7 +238,7 @@ class StockViewService:
                 FROM current_stock
                 WHERE UPPER(TRIM(branch)) = UPPER(TRIM(?)) AND UPPER(TRIM(company)) = UPPER(TRIM(?))
             ),
-            -- Combined orders: Purchase orders + Branch orders
+            -- Combined orders: Purchase orders + Branch orders + HQ Invoices
             combined_orders AS (
                 -- Purchase orders
                 SELECT 
@@ -263,6 +263,19 @@ class StockViewService:
                     'BRANCH' as order_type
                 FROM branch_orders
                 WHERE UPPER(TRIM(source_branch)) = UPPER(TRIM(?)) AND UPPER(TRIM(company)) = UPPER(TRIM(?))
+                
+                UNION ALL
+                
+                -- HQ Invoices (from BABA DOGO HQ to this branch)
+                SELECT 
+                    item_code,
+                    date as document_date,
+                    invoice_number as document_number,
+                    quantity,
+                    'NILA' as company,  -- Default company for hq_invoices
+                    'HQ_INVOICE' as order_type
+                FROM hq_invoices
+                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(?))
             ),
             last_order AS (
                 SELECT 
@@ -299,19 +312,16 @@ class StockViewService:
             last_hq_invoice AS (
                 SELECT 
                     item_code,
-                    MAX(document_date) as last_invoice_date,
-                    MAX(document_number) as last_invoice_doc,
-                    SUM(CASE 
-                        WHEN document_date = (
-                            SELECT MAX(hi2.document_date)
-                            FROM hq_invoices hi2
-                            WHERE hi2.item_code = hq_invoices.item_code
-                            AND UPPER(TRIM(hi2.branch)) = UPPER(TRIM(hq_invoices.branch))
-                            AND UPPER(TRIM(hi2.company)) = UPPER(TRIM(hq_invoices.company))
-                        ) THEN quantity ELSE 0 
-                    END) as last_invoice_quantity
+                    MAX(date) as last_invoice_date,
+                    MAX(invoice_number) as last_invoice_doc,
+                    SUM(CASE WHEN date = (SELECT MAX(date) 
+                                         FROM hq_invoices hi2 
+                                         WHERE hi2.item_code = hq_invoices.item_code 
+                                         AND UPPER(TRIM(hi2.branch)) = UPPER(TRIM(hq_invoices.branch))
+                                         )
+                                 THEN quantity ELSE 0 END) as last_invoice_quantity
                 FROM hq_invoices
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(?)) AND UPPER(TRIM(company)) = UPPER(TRIM(?))
+                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(?))
                 GROUP BY item_code
             ),
             last_grn AS (
@@ -379,8 +389,9 @@ class StockViewService:
                 source_branch_name, source_branch_company,  # source_stock
                 branch_name, branch_company,  # combined_orders - purchase_orders WHERE
                 branch_name, branch_company,  # combined_orders - branch_orders WHERE
+                branch_name,  # combined_orders - hq_invoices WHERE (no company column)
                 branch_name, branch_company,  # last_supply (main WHERE)
-                branch_name, branch_company,  # last_hq_invoice (main WHERE)
+                branch_name,  # last_hq_invoice (main WHERE - no company column)
                 branch_name, branch_company,  # last_grn (main WHERE)
                 branch_company  # hq_stock_data
             )
@@ -405,8 +416,8 @@ class StockViewService:
                 si_count = cursor.fetchone()[0]
                 logger.info(f"📦 Supplier invoices for '{branch_name}' ({branch_company}): {si_count} records")
                 
-                cursor.execute("SELECT COUNT(*) FROM hq_invoices WHERE UPPER(TRIM(branch)) = UPPER(TRIM(?)) AND UPPER(TRIM(company)) = UPPER(TRIM(?))", 
-                             (branch_name, branch_company))
+                cursor.execute("SELECT COUNT(*) FROM hq_invoices WHERE UPPER(TRIM(branch)) = UPPER(TRIM(?))", 
+                             (branch_name,))
                 hi_count = cursor.fetchone()[0]
                 logger.info(f"📦 HQ invoices for '{branch_name}' ({branch_company}): {hi_count} records")
                 
@@ -427,7 +438,7 @@ class StockViewService:
                     logger.warning(f"⚠️ No supplier invoices found. Existing branches: {existing_si}")
                     
                 if hi_count == 0:
-                    cursor.execute("SELECT DISTINCT branch, company, COUNT(*) as cnt FROM hq_invoices GROUP BY branch, company ORDER BY cnt DESC LIMIT 5")
+                    cursor.execute("SELECT DISTINCT branch, COUNT(*) as cnt FROM hq_invoices GROUP BY branch ORDER BY cnt DESC LIMIT 5")
                     existing_hi = cursor.fetchall()
                     logger.warning(f"⚠️ No HQ invoices found. Existing branches: {existing_hi}")
             except Exception as e:

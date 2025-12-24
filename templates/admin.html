@@ -11,56 +11,21 @@
         
         <div class="form-group">
             <label>Create New User</label>
+            <div style="margin-bottom: 15px; padding: 15px; background: #e7f3ff; border-radius: 5px; border: 1px solid #b3d9ff;">
+                <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                    <strong>Username Format:</strong> Use format like <code>DR-JACKSON</code> (uppercase, hyphen-separated)<br>
+                    <strong>Password:</strong> Use a PIN like <code>1996</code> (numbers only, 4-6 digits recommended)
+                </p>
+            </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; margin-bottom: 10px;">
-                <input type="text" id="newUsername" placeholder="Username" required>
-                <input type="password" id="newPassword" placeholder="Password" required>
+                <input type="text" id="newUsername" placeholder="DR-JACKSON" required style="text-transform: uppercase;">
+                <input type="password" id="newPassword" placeholder="1996" required pattern="[0-9]{4,6}" title="Enter a 4-6 digit PIN">
                 <input type="number" id="newSubscriptionDays" placeholder="Days" min="1" value="30" required>
                 <button onclick="createUser()" class="btn btn-success">Create User</button>
             </div>
         </div>
         
         <div id="usersList" class="loading">Loading...</div>
-    </div>
-    
-    <div class="card">
-        <div class="card-header">Google Drive Info</div>
-        <div id="driveInfo" class="loading">Loading...</div>
-        <div style="margin-top: 15px;">
-            <div style="margin-bottom: 15px; padding: 15px; background: #e7f3ff; border-radius: 5px; border: 1px solid #b3d9ff;">
-                <h4 style="margin-top: 0;">📤 Upload Google Credentials</h4>
-                <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
-                    <strong>How to get your credentials file:</strong>
-                </p>
-                <ol style="font-size: 14px; color: #666; margin-left: 20px; margin-bottom: 15px;">
-                    <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → APIs & Services → Credentials</a></li>
-                    <li>Click on your OAuth 2.0 Client ID (or create one if you don't have it)</li>
-                    <li>Click "Download JSON" button</li>
-                    <li>Rename the downloaded file to <code>google_credentials.json</code></li>
-                    <li>Upload it below</li>
-                </ol>
-                <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
-                    <strong>Upload your credentials file:</strong>
-                </p>
-                <input type="file" id="credentialsFile" accept=".json" style="margin-bottom: 10px; display: block;">
-                <button onclick="uploadCredentials()" class="btn btn-primary">Upload Credentials</button>
-            </div>
-        </div>
-        <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-            <button onclick="getAuthorizationUrl()" class="btn btn-success">Get Authorization URL</button>
-            <button onclick="syncDatabase()" class="btn btn-primary">📥 Download from Drive</button>
-            <button onclick="uploadDatabase()" class="btn btn-success">📤 Upload to Drive</button>
-            <button onclick="loadDatabaseFiles()" class="btn btn-info">🗂️ Manage Files</button>
-        </div>
-    </div>
-    
-    <!-- Database Files Management Section -->
-    <div class="card" id="filesManagementCard" style="margin-top: 20px; display: none;">
-        <div class="card-header">🗂️ Database Files Management</div>
-        <div id="filesList" class="loading">Loading...</div>
-        <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-            <button onclick="cleanupOldFiles()" class="btn btn-warning">🧹 Cleanup Old Files (Keep 2 Most Recent)</button>
-            <button onclick="loadDatabaseFiles()" class="btn btn-secondary">🔄 Refresh List</button>
-        </div>
     </div>
 </div>
 
@@ -82,72 +47,95 @@
             return;
         }
         
-        // Load data after authentication check
+        // Load users
         loadUsers();
-        // Check if we just completed authorization
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('authorized') === 'true') {
-            // Show success message and reload drive info
-            setTimeout(() => {
-                alert('✅ Google Drive authorization successful! Refreshing status...');
-                loadDriveInfo();
-            }, 100);
-        } else {
-            // Delay drive info load slightly to avoid race conditions
-            setTimeout(() => {
-                loadDriveInfo();
-            }, 500);
-        }
     });
+    
+    async function apiRequest(url, options = {}) {
+        const token = localStorage.getItem('access_token');
+        const defaultOptions = {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            }
+        };
+        
+        const response = await fetch(url, { ...defaultOptions, ...options });
+        
+        if (response.status === 401) {
+            localStorage.removeItem('access_token');
+            window.location.href = '/';
+            return null;
+        }
+        
+        return await response.json();
+    }
     
     async function loadUsers() {
         try {
             const data = await apiRequest('/api/admin/users/list');
-            if (data.success && data.users) {
+            
+            if (data && data.success && data.users) {
                 let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 15px;"><thead><tr style="background: #f5f5f5;"><th style="padding: 10px; text-align: left;">Username</th><th style="padding: 10px; text-align: left;">Status</th><th style="padding: 10px; text-align: left;">Days Remaining</th><th style="padding: 10px; text-align: left;">Actions</th></tr></thead><tbody>';
                 
                 data.users.forEach(user => {
                     const statusBadge = user.subscription_valid ? 
                         '<span style="color: green;">✅ Active</span>' : 
                         '<span style="color: red;">❌ Expired</span>';
-                    const adminBadge = user.is_admin ? ' <span style="color: blue;">(Admin)</span>' : '';
+                    const adminBadge = user.is_admin ? ' <span style="color: #ff9800;">(Admin)</span>' : '';
                     
-                    html += `<tr>
-                        <td style="padding: 10px;">${user.username}${adminBadge}</td>
-                        <td style="padding: 10px;">${statusBadge}</td>
-                        <td style="padding: 10px;">${user.days_remaining} days</td>
-                        <td style="padding: 10px;">
-                            <input type="number" id="days_${user.username}" placeholder="Days" style="width: 80px; padding: 5px; margin-right: 5px;" min="1">
-                            <button onclick="updateSubscription('${user.username}')" class="btn btn-primary" style="padding: 5px 10px; margin-right: 5px;">Update</button>
-                            ${!user.is_admin ? `<button onclick="toggleUser('${user.username}', ${user.active})" class="btn ${user.active ? 'btn-warning' : 'btn-success'}" style="padding: 5px 10px; margin-right: 5px;">${user.active ? 'Deactivate' : 'Activate'}</button>` : '<span style="color: #999;">N/A</span>'}
-                            ${!user.is_admin ? `<button onclick="deleteUser('${user.username}')" class="btn btn-danger" style="padding: 5px 10px;">Delete</button>` : '<span style="color: #999;">N/A</span>'}
-                        </td>
-                    </tr>`;
+                    html += `
+                        <tr>
+                            <td style="padding: 10px;">${user.username}${adminBadge}</td>
+                            <td style="padding: 10px;">${statusBadge}</td>
+                            <td style="padding: 10px;">${user.days_remaining} days</td>
+                            <td style="padding: 10px;">
+                                <input type="number" id="days_${user.username}" placeholder="Days" style="width: 80px; padding: 5px; margin-right: 5px;" min="1">
+                                <button onclick="updateSubscription('${user.username}')" class="btn btn-primary" style="padding: 5px 10px; margin-right: 5px;">Update</button>
+                                ${!user.is_admin ? `<button onclick="toggleUser('${user.username}', ${user.active})" class="btn ${user.active ? 'btn-warning' : 'btn-success'}" style="padding: 5px 10px; margin-right: 5px;">${user.active ? 'Deactivate' : 'Activate'}</button>` : '<span style="color: #999;">N/A</span>'}
+                                ${!user.is_admin ? `<button onclick="deleteUser('${user.username}')" class="btn btn-danger" style="padding: 5px 10px;">Delete</button>` : '<span style="color: #999;">N/A</span>'}
+                            </td>
+                        </tr>
+                    `;
                 });
                 
                 html += '</tbody></table>';
                 document.getElementById('usersList').innerHTML = html;
+            } else {
+                document.getElementById('usersList').innerHTML = '<p style="color: #666;">No users found or error loading users.</p>';
             }
         } catch (error) {
             console.error('Error loading users:', error);
-            document.getElementById('usersList').innerHTML = '<p style="color: red;">Error loading users</p>';
+            document.getElementById('usersList').innerHTML = `<p style="color: #dc3545;">Error loading users: ${error.message}</p>`;
         }
     }
     
     async function createUser() {
-        const username = document.getElementById('newUsername').value.trim();
+        const username = document.getElementById('newUsername').value.trim().toUpperCase();
         const password = document.getElementById('newPassword').value;
         const subscriptionDays = parseInt(document.getElementById('newSubscriptionDays').value);
         
-        if (!username || !password || !subscriptionDays || subscriptionDays < 1) {
-            alert('Please fill in all fields correctly');
+        // Validate username format (DR-NAME format)
+        if (!username || !/^[A-Z0-9]+(-[A-Z0-9]+)*$/.test(username)) {
+            alert('❌ Username must be in format like DR-JACKSON (uppercase letters/numbers, hyphen-separated)');
+            return;
+        }
+        
+        // Validate password (PIN format - numbers only)
+        if (!password || !/^\d{4,6}$/.test(password)) {
+            alert('❌ Password must be a 4-6 digit PIN (numbers only, e.g., 1996)');
+            return;
+        }
+        
+        if (!subscriptionDays || subscriptionDays < 1) {
+            alert('Please enter a valid number of subscription days');
             return;
         }
         
         try {
             const result = await apiRequest('/api/admin/users/create', {
                 method: 'POST',
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     username, 
                     password, 
                     subscription_days: subscriptionDays,
@@ -156,7 +144,7 @@
             });
             
             if (result.success) {
-                alert('✅ User created successfully');
+                alert(`✅ User "${username}" created successfully!`);
                 document.getElementById('newUsername').value = '';
                 document.getElementById('newPassword').value = '';
                 document.getElementById('newSubscriptionDays').value = '30';
@@ -241,425 +229,5 @@
             alert(`Error: ${error.message}`);
         }
     }
-    
-    async function loadDriveInfo() {
-        try {
-            console.log('🔄 Loading drive info...');
-            const data = await apiRequest('/api/admin/drive/info');
-            console.log('📥 Drive info response:', data);
-            if (data && data.success && data.database_info) {
-                const info = data.database_info;
-                const setupStatus = data.setup_status || {};
-                const setupSteps = data.setup_steps || [];
-                const isRender = setupStatus.is_render || false;
-                const needsSetup = setupStatus.needs_setup !== false;
-                
-                console.log('📊 Database info:', info);
-                console.log('⚙️ Setup status:', setupStatus);
-                
-                let html = '<div style="padding: 15px; background: #f8f9fa; border-radius: 5px;">';
-                html += '<h3 style="margin-top: 0;">📁 Google Drive Status</h3>';
-                
-                // Show setup status banner if needed
-                if (needsSetup) {
-                    html += '<div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 5px; padding: 15px; margin-bottom: 20px;">';
-                    html += '<h4 style="margin-top: 0; color: #856404;">⚠️ Setup Required</h4>';
-                    html += '<p style="color: #856404; margin-bottom: 15px;">';
-                    if (isRender) {
-                        html += '<strong>After each deployment on Render, you need to configure Google Drive.</strong><br>';
-                        html += 'To avoid this, set environment variables in Render dashboard:<br>';
-                        html += '<code>GOOGLE_CREDENTIALS_JSON</code> and <code>GOOGLE_TOKEN_JSON</code>';
-                    } else {
-                        html += 'Google Drive is not fully configured. Follow the steps below to complete setup.';
-                    }
-                    html += '</p>';
-                    html += '<div style="background: white; padding: 10px; border-radius: 3px; margin-top: 10px;">';
-                    html += '<strong style="color: #856404;">Setup Steps:</strong><ol style="margin: 10px 0 0 20px; color: #856404;">';
-                    setupSteps.forEach(step => {
-                        const icon = step.completed ? '✅' : (step.critical ? '❌' : '⏳');
-                        html += `<li style="margin-bottom: 5px;">${icon} <strong>${step.title}:</strong> ${step.description}</li>`;
-                    });
-                    html += '</ol></div>';
-                    html += '</div>';
-                }
-                
-                // Check if there's an authentication error (not just missing database)
-                if (info.error && (info.error.toLowerCase().includes('not authenticated') || info.error.toLowerCase().includes('authorization'))) {
-                    // Not authenticated - show setup instructions
-                    html += `<p style="color: #dc3545;"><strong>Status:</strong> ❌ ${info.error}</p>`;
-                    if (info.message) {
-                        html += `<p style="color: #666; font-size: 14px;">${info.message}</p>`;
-                    }
-                    const callbackUrl = info.callback_url || (window.location.origin + '/api/admin/drive/callback');
-                    html += '<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-top: 15px;">';
-                    html += '<p style="color: #856404; font-weight: bold; margin-top: 0;"><strong>⚠️ IMPORTANT: Redirect URI Configuration</strong></p>';
-                    html += '<p style="color: #856404; font-size: 14px;">In Google Cloud Console, make sure your <strong>Authorized redirect URI</strong> is:</p>';
-                    html += `<p style="background: white; padding: 10px; border-radius: 3px; font-family: monospace; color: #d63384; font-weight: bold; margin: 10px 0;">${callbackUrl}</p>`;
-                    html += '<p style="color: #856404; font-size: 14px; margin-bottom: 0;">This must match exactly (including the path <code>/api/admin/drive/callback</code>)!</p>';
-                    html += '</div>';
-                    html += '<p style="color: #666; font-size: 14px; margin-top: 15px;"><strong>Steps to enable:</strong></p>';
-                    html += '<ol style="color: #666; font-size: 14px; margin-left: 20px;">';
-                    html += `<li>Update redirect URI in Google Cloud Console to: <code>${callbackUrl}</code></li>`;
-                    html += '<li>Click "Save" and wait 1-2 minutes</li>';
-                    html += '<li>Click "Get Authorization URL" button</li>';
-                    html += '<li>Authorize the app with your Google account</li>';
-                    html += '<li>After authorization, the database will sync automatically</li>';
-                    html += '</ol>';
-                } else if (!info.exists && !info.error) {
-                    // Authenticated but database doesn't exist yet
-                    html += `<p style="color: #28a745;"><strong>Status:</strong> ✅ Connected</p>`;
-                    html += `<p><strong>Database Exists:</strong> ❌ No</p>`;
-                    html += '<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-top: 15px;">';
-                    html += '<p style="color: #856404; font-weight: bold; margin-top: 0;">💡 No Database in Drive Yet</p>';
-                    html += '<p style="color: #856404; font-size: 14px; margin-bottom: 10px;">To create and upload a database:</p>';
-                    html += '<ol style="color: #856404; font-size: 14px; margin-left: 20px; margin-bottom: 0;">';
-                    html += '<li>Go to <a href="/settings" target="_blank">Settings</a> and configure API credentials (NILA/DAIMA)</li>';
-                    html += '<li>Click "Refresh Now" button (top right) to fetch data from APIs</li>';
-                    html += '<li>Wait for the refresh to complete (this creates a database locally)</li>';
-                    html += '<li>The database will automatically upload to Drive after refresh completes</li>';
-                    html += '<li>After that, each refresh will download the latest from Drive, merge new data, and upload back</li>';
-                    html += '</ol>';
-                    html += '</div>';
-                    if (info.message) {
-                        html += `<p style="color: #ffc107; margin-top: 10px;">⚠️ ${info.message}</p>`;
-                    }
-                    if (info.folder_id) {
-                        html += `<p style="color: #666; font-size: 12px; margin-top: 10px;">Folder ID: ${info.folder_id}</p>`;
-                    }
-                } else {
-                    html += `<p style="color: #28a745;"><strong>Status:</strong> ✅ Connected</p>`;
-                    html += `<p><strong>Database Exists:</strong> ${info.exists ? '✅ Yes' : '❌ No'}</p>`;
-                    if (info.exists) {
-                        html += `<p><strong>Size:</strong> ${info.size_mb} MB</p>`;
-                        html += `<p><strong>Last Modified:</strong> ${info.modified ? new Date(info.modified).toLocaleString() : 'Unknown'}</p>`;
-                        if (info.location && info.location !== 'App Folder') {
-                            html += `<p style="color: #856404; font-size: 13px; margin-top: 5px;"><strong>📍 Location:</strong> ${info.location}</p>`;
-                            if (info.note) {
-                                html += `<p style="color: #856404; font-size: 12px; margin-top: 5px; font-style: italic;">${info.note}</p>`;
-                            }
-                        }
-                        html += `<p style="color: #28a745; font-size: 14px; margin-top: 10px;">✅ Database is synced and available in Google Drive</p>`;
-                        html += '<div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 5px; padding: 10px; margin-top: 10px;">';
-                        html += '<p style="color: #0c5460; font-size: 13px; margin: 0;"><strong>💡 How it works:</strong></p>';
-                        html += '<ul style="color: #0c5460; font-size: 12px; margin: 5px 0 0 20px; padding: 0;">';
-                        html += '<li>On startup, the app downloads the latest database from Drive</li>';
-                        html += '<li>When you click "Refresh Now", it downloads from Drive, merges new data, and uploads back</li>';
-                        html += '<li>This ensures everyone always has the most recent data</li>';
-                        html += '</ul>';
-                        html += '</div>';
-                    } else {
-                        html += `<p style="color: #ffc107; margin-top: 10px;">⚠️ Database not found in Drive. Use the refresh function to upload it.</p>`;
-                    }
-                    if (info.folder_id) {
-                        html += `<p style="color: #666; font-size: 12px; margin-top: 10px;">Folder ID: ${info.folder_id}</p>`;
-                    }
-                }
-                
-                html += '</div>';
-                document.getElementById('driveInfo').innerHTML = html;
-            } else {
-                // Show setup instructions if API call fails
-                // Try to get callback URL from window location
-                const callbackUrl = window.location.origin + '/api/admin/drive/callback';
-                let html = '<div style="padding: 15px; background: #f8f9fa; border-radius: 5px;">';
-                html += '<h3 style="margin-top: 0;">📁 Google Drive Status</h3>';
-                html += '<p style="color: #dc3545;"><strong>Status:</strong> ❌ Not Configured</p>';
-                html += '<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-top: 15px;">';
-                html += '<p style="color: #856404; font-weight: bold; margin-top: 0;"><strong>⚠️ IMPORTANT: Redirect URI Configuration</strong></p>';
-                html += '<p style="color: #856404; font-size: 14px;">In Google Cloud Console, make sure your <strong>Authorized redirect URI</strong> is:</p>';
-                html += `<p style="background: white; padding: 10px; border-radius: 3px; font-family: monospace; color: #d63384; font-weight: bold; margin: 10px 0;">${callbackUrl}</p>`;
-                html += '<p style="color: #856404; font-size: 14px; margin-bottom: 0;">This must match exactly!</p>';
-                html += '</div>';
-                html += '<p style="color: #666; font-size: 14px; margin-top: 15px;"><strong>Steps to enable:</strong></p>';
-                html += '<ol style="color: #666; font-size: 14px; margin-left: 20px;">';
-                html += '<li>Update redirect URI in Google Cloud Console</li>';
-                html += '<li>Click "Save" and wait 1-2 minutes</li>';
-                html += '<li>Click "Get Authorization URL" button below</li>';
-                html += '<li>Authorize the app with your Google account</li>';
-                html += '</ol>';
-                html += '</div>';
-                document.getElementById('driveInfo').innerHTML = html;
-            }
-        } catch (error) {
-            console.error('Error loading drive info:', error);
-            // Show helpful message even on error
-            let html = '<div style="padding: 15px; background: #f8f9fa; border-radius: 5px;">';
-            html += '<h3 style="margin-top: 0;">📁 Google Drive Status</h3>';
-            if (error.message && error.message.includes('401')) {
-                html += '<p style="color: #dc3545;"><strong>Status:</strong> ❌ Authentication Required</p>';
-                html += '<p style="color: #666; font-size: 14px;">Please make sure you are logged in as an admin user.</p>';
-            } else if (error.message && error.message.includes('credentials')) {
-                html += '<p style="color: #dc3545;"><strong>Status:</strong> ❌ Credentials File Missing</p>';
-                html += '<p style="color: #666; font-size: 14px; margin-top: 10px;">';
-                html += 'To enable Google Drive features:<br>';
-                html += '1. Download your OAuth 2.0 credentials from Google Cloud Console<br>';
-                html += '2. Name the file "google_credentials.json"<br>';
-                html += '3. Upload it using the "Upload Credentials" section above';
-                html += '</p>';
-            } else {
-                html += `<p style="color: #dc3545;"><strong>Status:</strong> ❌ Error: ${error.message || 'Unknown error'}</p>`;
-            }
-            html += '<p style="color: #666; font-size: 14px; margin-top: 15px;">Click "Get Authorization URL" to start the setup process (after uploading credentials).</p>';
-            html += '</div>';
-            document.getElementById('driveInfo').innerHTML = html;
-        }
-    }
-    
-    async function uploadCredentials() {
-        const fileInput = document.getElementById('credentialsFile');
-        const file = fileInput.files[0];
-        
-        if (!file) {
-            alert('❌ Please select a file to upload');
-            return;
-        }
-        
-        if (file.name !== 'google_credentials.json') {
-            alert('❌ File must be named "google_credentials.json"');
-            return;
-        }
-        
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            const response = await fetch('/api/admin/drive/upload-credentials', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-                },
-                body: formData
-            });
-            
-            const result = await response.json();
-            
-            if (response.ok && result.success) {
-                alert(`✅ ${result.message}`);
-                // Clear file input
-                fileInput.value = '';
-                // Reload drive info
-                loadDriveInfo();
-            } else {
-                alert(`❌ Error: ${result.detail || result.message || 'Failed to upload credentials'}`);
-            }
-        } catch (error) {
-            alert(`❌ Error uploading credentials: ${error.message}`);
-        }
-    }
-    
-    async function getAuthorizationUrl() {
-        try {
-            const result = await apiRequest('/api/admin/drive/authorize', {
-                method: 'GET'
-            });
-            
-            if (result.success && result.authorization_url) {
-                // Show instructions first
-                const callbackUrl = result.callback_url || window.location.origin + '/api/admin/drive/callback';
-                const instructions = `IMPORTANT: Before proceeding, make sure you have added this redirect URI in Google Cloud Console:\n\n${callbackUrl}\n\nSteps:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID\n3. Add the redirect URI above to "Authorized redirect URIs"\n4. Save and wait 1-2 minutes\n5. Then click OK to open the authorization URL`;
-                
-                if (confirm(instructions + '\n\nHave you added the redirect URI in Google Cloud Console?')) {
-                    // Open in new window
-                    window.open(result.authorization_url, '_blank');
-                    alert('✅ Authorization URL opened in new window.\n\nComplete the authorization and you will be redirected back automatically.');
-                }
-            } else {
-                alert(`❌ Error: ${result.message || result.detail || 'Failed to get authorization URL'}`);
-            }
-        } catch (error) {
-            let errorMsg = error.message || 'Unknown error';
-            if (error.detail) {
-                errorMsg = error.detail;
-            }
-            
-            // Check for common errors
-            const callbackUrl = window.location.origin + '/api/admin/drive/callback';
-            let helpText = '';
-            if (errorMsg.includes('redirect_uri_mismatch')) {
-                helpText = `\n\n❌ Redirect URI Mismatch:\nMake sure you have added:\n${callbackUrl}\nto your Google Cloud Console OAuth credentials.`;
-            } else if (errorMsg.includes('access_denied') || errorMsg.includes('403')) {
-                helpText = '\n\n❌ Access Denied (403):\nYour app is in "Testing" mode. You need to:\n1. Go to Google Cloud Console → OAuth consent screen\n2. Scroll to "Test users" section\n3. Click "+ ADD USERS"\n4. Add your email: controleddrugsalesdaimamerudda@gmail.com\n5. Click "ADD"\n6. Try authorization again';
-            }
-            
-            alert(`Error: ${errorMsg}${helpText}`);
-        }
-    }
-    
-    async function syncDatabase() {
-        if (!confirm('Download database from Google Drive? This will overwrite local database.')) {
-            return;
-        }
-        
-        try {
-            const result = await apiRequest('/api/admin/drive/sync', {
-                method: 'POST'
-            });
-            
-            if (result.success) {
-                alert('✅ Database downloaded from Google Drive successfully!');
-                loadDriveInfo();
-                // Reload page to refresh data
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1000);
-            } else {
-                alert(`❌ Failed: ${result.message}`);
-            }
-        } catch (error) {
-            alert(`Error: ${error.message}`);
-        }
-    }
-    
-    async function uploadDatabase() {
-        if (!confirm('Upload local database to Google Drive? This will replace any existing database in Drive.\n\nThis will run in the background to prevent app freezing. You can continue using the app while upload is in progress.')) {
-            return;
-        }
-        
-        // Show upload status indicator
-        const uploadBtn = event.target;
-        const originalText = uploadBtn.textContent;
-        uploadBtn.disabled = true;
-        uploadBtn.textContent = '📤 Uploading...';
-        
-        try {
-            // Start upload (non-blocking, returns immediately)
-            const result = await apiRequest('/api/admin/drive/upload', {
-                method: 'POST',
-                timeout: 5000  // Short timeout - upload runs in background
-            });
-            
-            if (result.success) {
-                // Show success message and start polling for progress
-                showUploadProgress(result.size_mb || 0);
-                // Poll for upload status
-                pollUploadStatus();
-            } else {
-                alert(`❌ Failed: ${result.message}`);
-                uploadBtn.disabled = false;
-                uploadBtn.textContent = originalText;
-            }
-        } catch (error) {
-            // Even if request times out, upload might have started
-            console.log('Upload request completed (may have timed out, but upload continues in background)');
-            showUploadProgress(0);
-            pollUploadStatus();
-        }
-    }
-    
-    function showUploadProgress(sizeMb) {
-        // Create or update upload progress indicator
-        let progressDiv = document.getElementById('uploadProgress');
-        if (!progressDiv) {
-            progressDiv = document.createElement('div');
-            progressDiv.id = 'uploadProgress';
-            progressDiv.className = 'card';
-            progressDiv.style.marginTop = '15px';
-            progressDiv.style.padding = '15px';
-            progressDiv.style.backgroundColor = '#e3f2fd';
-            document.getElementById('driveInfo').parentElement.appendChild(progressDiv);
-        }
-        progressDiv.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <div style="flex: 1;">
-                    <div style="font-weight: bold; margin-bottom: 5px;">📤 Uploading to Google Drive...</div>
-                    <div class="progress" style="height: 25px; background-color: #e0e0e0; border-radius: 5px; overflow: hidden;">
-                        <div id="uploadProgressBar" style="height: 100%; background-color: #4caf50; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">
-                            0%
-                        </div>
-                    </div>
-                    <div id="uploadStatusText" style="margin-top: 5px; font-size: 0.9em; color: #666;">Starting upload...</div>
-                </div>
-                <button onclick="hideUploadProgress()" class="btn btn-sm" style="background: #f44336; color: white;">✕</button>
-            </div>
-        `;
-    }
-    
-    function hideUploadProgress() {
-        const progressDiv = document.getElementById('uploadProgress');
-        if (progressDiv) {
-            progressDiv.remove();
-        }
-    }
-    
-    async function pollUploadStatus() {
-        const maxAttempts = 300; // Poll for up to 5 minutes (300 * 1 second)
-        let attempts = 0;
-        
-        const poll = async () => {
-            try {
-                const status = await apiRequest('/api/admin/drive/upload-status', {
-                    method: 'GET',
-                    timeout: 3000
-                });
-                
-                if (status.is_uploading) {
-                    // Update progress bar
-                    const progressBar = document.getElementById('uploadProgressBar');
-                    const statusText = document.getElementById('uploadStatusText');
-                    if (progressBar) {
-                        const progress = status.upload_progress || 0;
-                        progressBar.style.width = `${progress}%`;
-                        progressBar.textContent = `${Math.round(progress)}%`;
-                    }
-                    if (statusText && status.upload_message) {
-                        statusText.textContent = status.upload_message;
-                    }
-                    
-                    // Continue polling
-                    attempts++;
-                    if (attempts < maxAttempts) {
-                        setTimeout(poll, 1000); // Poll every second
-                    } else {
-                        // Timeout after max attempts
-                        const statusText = document.getElementById('uploadStatusText');
-                        if (statusText) {
-                            statusText.textContent = 'Upload taking longer than expected. Check server logs.';
-                        }
-                    }
-                } else {
-                    // Upload complete or failed
-                    const progressBar = document.getElementById('uploadProgressBar');
-                    const statusText = document.getElementById('uploadStatusText');
-                    const uploadBtn = document.querySelector('button[onclick="uploadDatabase()"]');
-                    
-                    if (status.upload_progress === 100) {
-                        if (progressBar) {
-                            progressBar.style.backgroundColor = '#4caf50';
-                            progressBar.textContent = '100%';
-                        }
-                        if (statusText) {
-                            statusText.textContent = '✅ Upload completed successfully!';
-                            statusText.style.color = '#4caf50';
-                        }
-                        // Reload drive info after a delay
-                        setTimeout(() => {
-                            loadDriveInfo();
-                            setTimeout(hideUploadProgress, 3000);
-                        }, 2000);
-                    } else {
-                        if (statusText) {
-                            statusText.textContent = `❌ Upload failed: ${status.upload_message || 'Unknown error'}`;
-                            statusText.style.color = '#f44336';
-                        }
-                    }
-                    
-                    if (uploadBtn) {
-                        uploadBtn.disabled = false;
-                        uploadBtn.textContent = '📤 Upload to Drive';
-                    }
-                }
-            } catch (error) {
-                console.error('Error polling upload status:', error);
-                attempts++;
-                if (attempts < maxAttempts) {
-                    setTimeout(poll, 2000); // Retry after 2 seconds on error
-                }
-            }
-        };
-        
-        // Start polling
-        poll();
-    }
 </script>
 {% endblock %}
-

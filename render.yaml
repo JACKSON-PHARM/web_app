@@ -9,6 +9,10 @@ services:
         value: 3.11.0
       - key: PORT
         value: 8000
+      # DATABASE_URL must be set in Render dashboard (not in YAML for security)
+      # Go to Render Dashboard > Your Service > Environment > Add Environment Variable
+      # Key: DATABASE_URL
+      # Value: postgresql://postgres:b%3F%21HABE69%24TwwSV@db.oagcmmkmypmwmeuodkym.supabase.co:5432/postgres
       # RENDER_EXTERNAL_URL is automatically set by Render - no need to set manually
     # Note: Disk removed for free tier compatibility
     # If upgrading to paid tier, uncomment below:

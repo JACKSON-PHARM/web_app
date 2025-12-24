@@ -7,7 +7,7 @@ import os
 import sys
 import logging
 from typing import Optional, Dict, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 
 # Add the app root to Python path
@@ -48,16 +48,28 @@ class DatabaseBaseFetcher:
         self.app_root = app_root or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.cred_manager = CredentialManager(self.app_root)
         
-        # Initialize database manager - use web app's if available, otherwise original
+        # Initialize database manager - use Supabase if available, otherwise SQLite
         if USE_WEB_APP_SERVICES:
-            # For web app, use the database path from settings or default
-            from app.config import settings
-            db_path = os.path.join(settings.LOCAL_CACHE_DIR, "pharma_stock.db")
-            # Create web app database manager
-            self.db_manager = WebDatabaseManager(db_path)
-            # If web app's manager wraps the original, try to get underlying manager
-            if hasattr(self.db_manager, '_db_manager'):
-                self.db_manager = self.db_manager._db_manager
+            # For web app, check if Supabase is configured
+            try:
+                from app.config import settings
+                if settings.DATABASE_URL:
+                    # Use Supabase PostgreSQL
+                    from app.services.postgres_database_manager import PostgresDatabaseManager
+                    self.db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
+                    self.logger.info("✅ Using Supabase PostgreSQL database")
+                else:
+                    # Use SQLite fallback
+                    db_path = os.path.join(settings.LOCAL_CACHE_DIR, "pharma_stock.db")
+                    self.db_manager = WebDatabaseManager(db_path)
+                    # If web app's manager wraps the original, try to get underlying manager
+                    if hasattr(self.db_manager, '_db_manager'):
+                        self.db_manager = self.db_manager._db_manager
+                    self.logger.info(f"📁 Using SQLite database: {db_path}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not use web app services: {e}")
+                # Fallback to original database manager
+                self.db_manager = DatabaseManager(os.path.join(self.app_root, "database", "pharma_data.db"))
         else:
             # Use original database manager
             self.db_manager = DatabaseManager(os.path.join(self.app_root, "database", "pharma_data.db"))
@@ -154,6 +166,20 @@ class DatabaseBaseFetcher:
             parsed = self.safe_date_parse(date_obj)
             return parsed.strftime("%Y-%m-%d")
         return str(date_obj)
+    
+    def get_retention_date_range(self, days: int = 30):
+        """
+        Get date range for data retention (last N days)
+        
+        Args:
+            days: Number of days to retain (default 30)
+            
+        Returns:
+            tuple: (start_date, end_date) as date objects
+        """
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=days)
+        return start_date, end_date
 
     def api_request(self, session: requests.Session, url: str, params=None, 
                    headers=None, max_retries: int = 3) -> Optional[dict]:

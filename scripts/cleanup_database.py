@@ -56,12 +56,28 @@ def cleanup_database(db_path: str, keep_months: int = 3):
         
         # 3. Clean old supplier invoices
         logger.info("🧹 Cleaning old supplier invoices...")
-        cursor.execute("""
-            DELETE FROM supplier_invoices 
-            WHERE invoice_date < ?
-        """, (cutoff_date,))
-        deleted_inv = cursor.rowcount
-        logger.info(f"   Deleted {deleted_inv} old supplier invoices")
+        # Check which date column exists
+        cursor.execute("PRAGMA table_info(supplier_invoices)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        date_column = None
+        if 'invoice_date' in columns:
+            date_column = 'invoice_date'
+        elif 'document_date' in columns:
+            date_column = 'document_date'
+        elif 'date' in columns:
+            date_column = 'date'
+        
+        if date_column:
+            cursor.execute(f"""
+                DELETE FROM supplier_invoices 
+                WHERE {date_column} < ?
+            """, (cutoff_date,))
+            deleted_inv = cursor.rowcount
+            logger.info(f"   Deleted {deleted_inv} old supplier invoices (using {date_column})")
+        else:
+            logger.warning(f"   Could not find date column in supplier_invoices (columns: {columns})")
+            deleted_inv = 0
         
         # 4. Remove ALL stock snapshots (we only need current_stock, replaced on each refresh)
         logger.info("🧹 Removing all stock snapshots (keeping only current_stock)...")

@@ -635,80 +635,47 @@ async def get_sync_status(
     current_user: dict = Depends(get_current_user),
     db_manager = Depends(get_db_manager)
 ):
-    """Get database sync status - shows if local DB is synced with Drive"""
+    """Get database sync status - shows database connection status"""
     import os
-    from app.dependencies import get_drive_manager
     from app.config import settings
     
+    # Check if using Supabase or SQLite
+    is_supabase = hasattr(db_manager, 'pool')
+    
     status = {
-        "local_database": {
-            "exists": False,
-            "path": db_manager.db_path,
-            "size_mb": 0,
-            "modified": None
-        },
-        "drive_database": {
-            "exists": False,
-            "modified": None
-        },
-        "sync_status": "unknown",
-        "message": ""
+        "database_type": "Supabase PostgreSQL" if is_supabase else "SQLite",
+        "connected": True,
+        "sync_status": "synced",  # Supabase is always synced (no sync needed)
+        "message": "Database is connected and ready" if is_supabase else "Using local SQLite database"
     }
     
     try:
-        # Check local database
-        if db_manager.db_path and os.path.exists(db_manager.db_path):
-            status["local_database"]["exists"] = True
-            status["local_database"]["size_mb"] = round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2)
-            status["local_database"]["modified"] = os.path.getmtime(db_manager.db_path)
-        
-        # Check Drive database
-        drive_manager = get_drive_manager()
-        if drive_manager.is_authenticated():
-            drive_info = drive_manager.get_database_info()
-            if drive_info.get('exists'):
-                status["drive_database"]["exists"] = True
-                status["drive_database"]["modified"] = drive_info.get('modified')
-                
-                # Compare timestamps
-                if status["local_database"]["exists"]:
-                    from datetime import datetime, timezone
-                    # Ensure both datetimes are timezone-aware
-                    local_mtime = datetime.fromtimestamp(status["local_database"]["modified"], tz=timezone.utc)
-                    drive_timestamp = drive_info.get('modified')
-                    if drive_timestamp:
-                        try:
-                            # Parse Drive timestamp and ensure it's timezone-aware
-                            drive_str = drive_timestamp.replace('Z', '+00:00')
-                            drive_mtime = datetime.fromisoformat(drive_str)
-                            # If drive_mtime is naive, make it UTC-aware
-                            if drive_mtime.tzinfo is None:
-                                drive_mtime = drive_mtime.replace(tzinfo=timezone.utc)
-                            # Ensure local_mtime is also timezone-aware (it should be, but double-check)
-                            if local_mtime.tzinfo is None:
-                                local_mtime = local_mtime.replace(tzinfo=timezone.utc)
-                            if drive_mtime > local_mtime:
-                                status["sync_status"] = "outdated"
-                                status["message"] = "Drive has newer data. Click 'Refresh Now' to sync."
-                            else:
-                                status["sync_status"] = "synced"
-                                status["message"] = "Database is up to date."
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Could not parse Drive timestamp: {e}")
-                            status["sync_status"] = "unknown"
-                            status["message"] = "Could not compare timestamps."
-                    else:
-                        status["sync_status"] = "unknown"
-                        status["message"] = "Could not compare timestamps."
-                else:
-                    status["sync_status"] = "missing"
-                    status["message"] = "Local database not found. Will download on next refresh."
-            else:
-                status["sync_status"] = "no_drive_db"
-                status["message"] = "No database in Drive. Create one by refreshing data."
+        # For Supabase, just verify connection
+        if is_supabase:
+            conn = db_manager.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM current_stock")
+            stock_count = cursor.fetchone()[0]
+            cursor.close()
+            db_manager.put_connection(conn)
+            status["stock_records"] = stock_count
+            status["message"] = f"Connected to Supabase - {stock_count:,} stock records available"
         else:
-            status["sync_status"] = "not_authenticated"
-            status["message"] = "Google Drive not authenticated."
+            # For SQLite, check file
+            if db_manager.db_path and os.path.exists(db_manager.db_path):
+                status["local_database"] = {
+                    "exists": True,
+                    "path": db_manager.db_path,
+                    "size_mb": round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2),
+                    "modified": os.path.getmtime(db_manager.db_path)
+                }
+                status["message"] = "Using local SQLite database"
+            else:
+                status["local_database"] = {
+                    "exists": False,
+                    "path": db_manager.db_path
+                }
+                status["message"] = "Database will be created on first use"
     
     except Exception as e:
         status["sync_status"] = "error"

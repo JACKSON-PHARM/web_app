@@ -87,8 +87,19 @@ class RefreshService:
             except Exception as e:
                 self.logger.warning(f"⚠️ Could not patch DatabaseBaseFetcher: {e}")
             
-            # Create orchestrator
+            # Create orchestrator - ensure it uses the web app's database manager
             orchestrator = DatabaseFetcherOrchestrator(app_root=self.app_root)
+            
+            # Override the base fetcher's database manager to use Supabase
+            if hasattr(self.db_manager, 'connection_string'):
+                # It's a PostgresDatabaseManager - pass it to fetchers
+                self.logger.info("✅ Using Supabase PostgreSQL database manager")
+                # The orchestrator's base_fetcher will be used by all fetchers
+                # We need to ensure they all use the same database manager
+                orchestrator.base_fetcher.db_manager = self.db_manager
+                orchestrator.base_fetcher.cred_manager = self.credential_manager
+            else:
+                self.logger.info("📁 Using SQLite database manager")
             
             # Set up progress callback for logging
             def progress_callback(message, progress=None):

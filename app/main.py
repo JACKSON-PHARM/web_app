@@ -14,12 +14,10 @@ import os
 import sys
 
 from app.config import settings
-from app.services.google_drive import GoogleDriveManager
 from app.services.license_service import LicenseService
-from app.services.database_manager import DatabaseManager
 from app.services.scheduler import RefreshScheduler
 from app.api import auth, dashboard, stock_view, refresh, credentials, admin, procurement, suppliers
-from app.dependencies import get_drive_manager, get_db_manager, get_current_user
+from app.dependencies import get_db_manager, get_current_user
 
 # Setup logging
 logging.basicConfig(
@@ -48,112 +46,32 @@ async def lifespan(app: FastAPI):
     # Startup - make it very resilient
     logger.info("🚀 Starting PharmaStock Web Application")
     
-    # Initialize Google Drive manager FIRST to download database before initializing db_manager
-    drive_manager = None
-    try:
-        drive_manager = get_drive_manager()
-        
-        # Check if authenticated (don't block startup if not)
-        try:
-            if drive_manager.is_authenticated():
-                # Ensure Google Drive folder exists
-                folder_id = drive_manager.ensure_folder_exists()
-                settings.GOOGLE_DRIVE_FOLDER_ID = folder_id
-                logger.info(f"✅ Google Drive folder: {folder_id}")
-                
-                # Smart database sync: Check if download is needed, then do it in background
-                local_db_path = os.path.join(settings.LOCAL_CACHE_DIR, settings.DB_FILENAME)
-                local_db_exists = os.path.exists(local_db_path)
-                
-                # Check if we need to download (only if local DB doesn't exist or Drive version is newer)
-                should_download = False
-                drive_timestamp = None
-                
-                if local_db_exists:
-                    # Check Drive timestamp to see if it's newer
-                    drive_timestamp = drive_manager.get_drive_database_timestamp()
-                    if drive_timestamp:
-                        from datetime import datetime, timezone
-                        local_mtime = datetime.fromtimestamp(os.path.getmtime(local_db_path), tz=timezone.utc)
-                        drive_mtime = datetime.fromisoformat(drive_timestamp.replace('Z', '+00:00'))
-                        if drive_mtime.tzinfo is None:
-                            drive_mtime = drive_mtime.replace(tzinfo=timezone.utc)
-                        if drive_mtime > local_mtime:
-                            logger.info(f"📥 Drive database is newer ({drive_timestamp} vs {local_mtime.isoformat()}), will sync in background")
-                            should_download = True
-                        else:
-                            logger.info(f"✅ Local database is up to date (Drive: {drive_timestamp}, Local: {local_mtime.isoformat()})")
-                    else:
-                        logger.info("ℹ️ Could not get Drive timestamp, using local database")
-                else:
-                    logger.info("📥 No local database found, will download from Drive in background")
-                    should_download = True
-                
-                # If local DB exists, use it immediately (don't block startup)
-                if local_db_exists:
-                    db_size = os.path.getsize(local_db_path) / (1024 * 1024)
-                    logger.info(f"✅ Using existing database ({db_size:.2f} MB) - app ready immediately")
-                    logger.info(f"📁 Database location: {local_db_path}")
-                
-                # Download in background if needed (non-blocking)
-                if should_download:
-                    logger.info("🔄 Starting background database sync from Google Drive...")
-                    import asyncio
-                    async def background_download():
-                        try:
-                            logger.info("📥 Background download started...")
-                            downloaded = drive_manager.download_database(local_db_path)
-                            if downloaded:
-                                db_size = os.path.getsize(local_db_path) / (1024 * 1024)
-                                logger.info(f"✅ Background download complete ({db_size:.2f} MB)")
-                                # Reset db_manager so next request uses new database
-                                from app.dependencies import reset_db_manager
-                                reset_db_manager()
-                                logger.info("🔄 Database manager will use updated database on next request")
-                            else:
-                                logger.info("ℹ️ Background download: No database found in Drive")
-                        except Exception as e:
-                            logger.error(f"❌ Background download failed: {e}")
-                            import traceback
-                            logger.error(traceback.format_exc())
-                    
-                    # Schedule background download (don't await - non-blocking)
-                    asyncio.create_task(background_download())
-                else:
-                    logger.info("ℹ️ No database sync needed - using existing local database")
-            else:
-                logger.warning("⚠️ Google Drive not authenticated - authorization required")
-                logger.info("ℹ️ Use /api/admin/drive/authorize endpoint to get authorization URL")
-                logger.info("ℹ️ App will work, but Google Drive features require authorization")
-        except Exception as e:
-            logger.warning(f"⚠️ Google Drive initialization error (non-blocking): {e}")
-            logger.info("ℹ️ App will continue without Google Drive features")
-    except Exception as e:
-        logger.warning(f"⚠️ Google Drive manager creation failed (non-blocking): {e}")
-        logger.info("ℹ️ App will continue without Google Drive features")
-    
-    # Initialize database manager AFTER downloading from Drive (if available)
+    # Initialize database manager (Supabase PostgreSQL or SQLite fallback)
     try:
         db_manager = get_db_manager()
         logger.info("✅ Database manager initialized")
         
-        # Verify database exists and has data
-        if os.path.exists(db_manager.db_path):
-            db_size = os.path.getsize(db_manager.db_path) / (1024 * 1024)
-            logger.info(f"📊 Database file: {db_manager.db_path} ({db_size:.2f} MB)")
-            
-            # Try to verify database has data
+        # Verify database connection
+        if hasattr(db_manager, 'pool'):
+            # PostgreSQL/Supabase
+            logger.info("📊 Connected to Supabase PostgreSQL database")
             try:
-                conn = db_manager.get_db_connection()
+                conn = db_manager.get_connection()
                 cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = cursor.fetchall()
-                logger.info(f"📋 Found {len(tables)} tables in database")
-                conn.close()
+                cursor.execute("SELECT COUNT(*) FROM current_stock")
+                stock_count = cursor.fetchone()[0]
+                logger.info(f"📋 Found {stock_count:,} stock records in database")
+                cursor.close()
+                db_manager.put_connection(conn)
             except Exception as e:
                 logger.warning(f"⚠️ Could not verify database contents: {e}")
-        else:
-            logger.warning(f"⚠️ Database file not found at: {db_manager.db_path}")
+        elif hasattr(db_manager, 'db_path'):
+            # SQLite fallback
+            if os.path.exists(db_manager.db_path):
+                db_size = os.path.getsize(db_manager.db_path) / (1024 * 1024)
+                logger.info(f"📊 SQLite database: {db_manager.db_path} ({db_size:.2f} MB)")
+            else:
+                logger.info(f"📁 SQLite database will be created on first use: {db_manager.db_path}")
     except Exception as e:
         logger.error(f"❌ Database manager initialization failed: {e}")
         import traceback

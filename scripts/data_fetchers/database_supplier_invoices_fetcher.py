@@ -236,15 +236,14 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
         self.logger.info(f"🏢 Processing {branch_name} ({branch_code}, branch_num={branch_num}) [SUPPLIER INVOICES]")
         
         try:
-            # Get date range
-            today = datetime.now().date()
-            year_start = datetime(START_YEAR, 1, 1).date()
+            # Get date range (last 30 days for Supabase free tier)
+            start_date, end_date = self.get_retention_date_range(30)
             
-            self.logger.info(f"📅 {branch_name} (branch_num={branch_num}): Checking {year_start} to {today}")
+            self.logger.info(f"📅 {branch_name} (branch_num={branch_num}): Fetching supplier invoices from {start_date} to {end_date} (last 30 days)")
             
             # Get all supplier invoices from API
-            self.logger.info(f"🔍 Fetching supplier invoices for {branch_name} (branch_num={branch_num}) from {year_start} to {today}")
-            all_invoices = self.get_supplier_invoices(session, token, branch_num, year_start, today)
+            self.logger.info(f"🔍 Fetching supplier invoices for {branch_name} (branch_num={branch_num}) from {start_date} to {end_date}")
+            all_invoices = self.get_supplier_invoices(session, token, branch_num, start_date, end_date)
             
             if not all_invoices:
                 self.logger.warning(f"⚠️ No supplier invoices returned from API for {branch_name} (branch_num={branch_num}). This could mean:")
