@@ -434,7 +434,7 @@
                             const company = branch.company || 'Unknown';
                             const value = `${branchName}|${company}`;
                             option.value = value;
-                            option.textContent = `${branchName} (${company})`;
+                            option.textContent = branchName; // Display only branch name, no company in brackets
                             select.appendChild(option);
                         });
                     }
@@ -495,7 +495,7 @@
                             const option = document.createElement('option');
                             const value = `${branch.branch_name}|${branch.company}`;
                             option.value = value;
-                            option.textContent = `${branch.branch_name} (${branch.company})`;
+                            option.textContent = branch.branch_name; // Display only branch name, no company in brackets
                             select.appendChild(option);
                         });
                     }
@@ -527,7 +527,7 @@
                         const option = document.createElement('option');
                         const value = `${branch.branch_name}|${branch.company}`;
                         option.value = value;
-                        option.textContent = `${branch.branch_name} (${branch.company})`;
+                        option.textContent = branch.branch_name; // Display only branch name, no company in brackets
                         select.appendChild(option);
                     });
                 }
@@ -1560,7 +1560,7 @@
                 const branchName = branch.branch_name || '';
                 const branchCompany = branch.company || '';
                 option.value = `${branchName}|${branchCompany}`;
-                option.textContent = `${branchName} (${branchCompany})`;
+                option.textContent = branchName; // Display only branch name, no company in brackets
                 option.dataset.branchCode = branch.branch_code || branch.branchcode || '';
                 select.appendChild(option);
             });

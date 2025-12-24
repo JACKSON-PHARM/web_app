@@ -826,22 +826,24 @@
                         const option = document.createElement('option');
                         const branchName = branch.branch_name || branch.branch || 'Unknown';
                         const branchCompany = branch.company || 'Unknown';
+                        // Store both branch and company in value for queries, but display only branch name
                         const value = `${branchName}|${branchCompany}`;
                         option.value = value;
-                        option.textContent = `${branchName} (${branchCompany})`;
+                        option.textContent = branchName; // Display only branch name, no company in brackets
                         select.appendChild(option);
                     });
                 });
                 
-                // Set defaults
-                const defaultTarget = 'BABA DOGO HQ|NILA';
-                const defaultSource = 'BABA DOGO HQ|NILA';
+                // Set defaults - find "BABA DOGO HQ" branch (with any company)
+                const defaultBranchName = 'BABA DOGO HQ';
+                const defaultOption = Array.from(targetSelect.options).find(opt => {
+                    const [branchName] = opt.value.split('|');
+                    return branchName === defaultBranchName;
+                });
                 
-                if (targetSelect && targetSelect.querySelector(`option[value="${defaultTarget}"]`)) {
-                    targetSelect.value = defaultTarget;
-                }
-                if (sourceSelect && sourceSelect.querySelector(`option[value="${defaultSource}"]`)) {
-                    sourceSelect.value = defaultSource;
+                if (defaultOption) {
+                    if (targetSelect) targetSelect.value = defaultOption.value;
+                    if (sourceSelect) sourceSelect.value = defaultOption.value;
                 }
                 
                 console.log('Branches loaded successfully');
@@ -1690,7 +1692,7 @@
                 const branchName = branch.branch_name || '';
                 const branchCompany = branch.company || '';
                 option.value = `${branchName}|${branchCompany}`;
-                option.textContent = `${branchName} (${branchCompany})`;
+                option.textContent = branchName; // Display only branch name, no company in brackets
                 option.dataset.branchCode = branch.branch_code || branch.branchcode || '';
                 select.appendChild(option);
             });
