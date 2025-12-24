@@ -85,7 +85,10 @@ async def get_stock_view_data(
                 timeout=240.0  # 4 minutes timeout
             )
             
-            logger.info(f"Stock view service returned: {len(stock_data) if stock_data is not None and not stock_data.empty else 0} rows")
+            rows_returned = len(stock_data) if stock_data is not None and not stock_data.empty else 0
+            logger.info(f"Stock view service returned: {rows_returned} rows")
+            if rows_returned == 0:
+                logger.warning(f"⚠️ Stock view returned empty - branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
         except ImportError as e:
             logger.error(f"Could not import StockViewServicePostgres: {e}")
             return {

@@ -92,6 +92,8 @@ class StockViewServicePostgres:
         Returns:
             DataFrame with all stock view columns
         """
+        conn = None
+        cursor = None
         try:
             branch_name = branch_name.strip() if branch_name else ""
             branch_company = branch_company.strip() if branch_company else ""
@@ -103,7 +105,25 @@ class StockViewServicePostgres:
             conn = self.db_manager.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
-            # Main query with CTEs for PostgreSQL
+            # First verify branch exists and has data
+            cursor.execute("""
+                SELECT COUNT(*) as count 
+                FROM current_stock 
+                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+            """, (branch_name, branch_company))
+            branch_check = cursor.fetchone()
+            branch_count = branch_check['count'] if branch_check else 0
+            logger.info(f"Branch '{branch_name}' ({branch_company}) has {branch_count} records in current_stock")
+            
+            if branch_count == 0:
+                logger.warning(f"No stock data found for branch '{branch_name}' ({branch_company})")
+                cursor.close()
+                self.db_manager.put_connection(conn)
+                return pd.DataFrame()
+            
+            # Main query with CTEs for PostgreSQL (matching desktop version logic)
+            # Start with branch_stock to ensure we get items for the target branch
             query = """
             WITH branch_stock AS (
                 SELECT 
@@ -123,10 +143,8 @@ class StockViewServicePostgres:
                 FROM (
                     SELECT item_code, item_name FROM branch_stock
                     UNION
-                    SELECT DISTINCT item_code, MAX(item_name) as item_name 
-                    FROM current_stock 
+                    SELECT item_code, item_name FROM current_stock 
                     WHERE UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                    GROUP BY item_code
                 ) combined
                 GROUP BY item_code
             ),
@@ -289,15 +307,59 @@ class StockViewServicePostgres:
                 'BABA DOGO HQ', branch_company  # hq_stock_data
             )
             
+            logger.info(f"Executing stock view query with params: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
+            logger.info(f"Query params: {params[:4]}... (showing first 4)")
+            
             cursor.execute(query, params)
             results = cursor.fetchall()
+            
+            logger.info(f"Query executed successfully, fetched {len(results)} rows")
             
             if results:
                 df = pd.DataFrame(results)
                 logger.info(f"Main query returned {len(df)} rows")
+                logger.info(f"Sample columns: {list(df.columns)[:5]}")
+                if len(df) > 0:
+                    logger.info(f"Sample row: {df.iloc[0].to_dict()}")
             else:
-                logger.warning("Main query returned no results")
-                df = pd.DataFrame()
+                logger.warning("Main query returned no results - trying simplified query")
+                # Try a simpler query - just get items from branch_stock directly (fallback)
+                simple_query = """
+                    SELECT 
+                        item_code,
+                        item_name,
+                        stock_pieces as branch_stock,
+                        pack_size,
+                        unit_price,
+                        stock_value,
+                        0 as supplier_stock,
+                        NULL::date as last_order_date,
+                        NULL::text as last_order_doc,
+                        NULL::numeric as last_order_quantity,
+                        NULL::date as last_invoice_date,
+                        NULL::text as last_invoice_doc,
+                        NULL::numeric as last_invoice_quantity,
+                        NULL::date as last_supply_date,
+                        NULL::text as last_supply_doc,
+                        NULL::numeric as last_supply_quantity,
+                        NULL::date as last_grn_date,
+                        NULL::text as last_grn_doc,
+                        NULL::numeric as last_grn_quantity,
+                        0 as hq_stock
+                    FROM current_stock
+                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                    ORDER BY item_code
+                    LIMIT 1000
+                """
+                cursor.execute(simple_query, (branch_name, branch_company))
+                simple_results = cursor.fetchall()
+                if simple_results:
+                    df = pd.DataFrame(simple_results)
+                    logger.info(f"✅ Simplified query returned {len(df)} rows")
+                else:
+                    logger.warning(f"Even simplified query returned no results for '{branch_name}' ({branch_company})")
+                    df = pd.DataFrame()
             
             cursor.close()
             self.db_manager.put_connection(conn)
@@ -397,5 +459,15 @@ class StockViewServicePostgres:
             logger.error(f"Error getting stock view data: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if conn:
+                try:
+                    self.db_manager.put_connection(conn)
+                except:
+                    pass
             return pd.DataFrame()
 
