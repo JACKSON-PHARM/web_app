@@ -31,6 +31,28 @@ class PostgresDatabaseManager:
         self._db_path_value = "Supabase PostgreSQL"  # Set internal value first
         self.setup_logging()
         
+        # Check if using direct connection (will fail with IPv6 on free tier)
+        if 'db.' in connection_string and '.supabase.co' in connection_string and 'pooler' not in connection_string:
+            logger.error("❌ DETECTED: You're using Supabase DIRECT connection string")
+            logger.error("   Direct connections (db.xxx.supabase.co) only support IPv6")
+            logger.error("   Supabase FREE TIER doesn't support IPv6!")
+            logger.error("")
+            logger.error("   🔧 SOLUTION: Use POOLER connection string instead")
+            logger.error("   1. Go to: https://supabase.com/dashboard → Your Project")
+            logger.error("   2. Settings → Database")
+            logger.error("   3. Scroll to 'Connection pooling' section")
+            logger.error("   4. Click 'Session mode' or 'Transaction mode'")
+            logger.error("   5. Copy the connection string (starts with pooler.supabase.com)")
+            logger.error("   6. Update DATABASE_URL in Render with that pooler connection string")
+            logger.error("")
+            logger.error("   Current connection string uses: db.xxx.supabase.co (WRONG - IPv6 only)")
+            logger.error("   Need connection string with: pooler.supabase.com (CORRECT - IPv4 supported)")
+            raise ValueError(
+                "Supabase direct connection (db.xxx.supabase.co) doesn't support IPv4. "
+                "You MUST use the pooler connection string from Supabase Dashboard. "
+                "Go to: Settings → Database → Connection pooling → Copy pooler connection string"
+            )
+        
         # Create connection pool
         # IMPORTANT: For Supabase free tier (no IPv6 support), you MUST use the pooler connection string
         # Get it from: Supabase Dashboard → Settings → Database → Connection pooling → Copy connection string
@@ -54,11 +76,17 @@ class PostgresDatabaseManager:
                 logger.error("   4. Select 'Session mode' or 'Transaction mode'")
                 logger.error("   5. Copy the connection string EXACTLY as shown")
                 logger.error("   6. Update DATABASE_URL in Render with that exact string")
-            elif "Network is unreachable" in error_msg or "IPv6" in error_msg:
-                logger.error("💡 ERROR: IPv6 connection issue")
+            elif "Network is unreachable" in error_msg or "IPv6" in error_msg or "2a05:" in error_msg:
+                logger.error("💡 ERROR: IPv6 connection issue detected")
                 logger.error("   Supabase free tier doesn't support IPv6.")
-                logger.error("   SOLUTION: Use the pooler connection string (not direct connection)")
-                logger.error("   Get it from: Supabase Dashboard → Settings → Database → Connection pooling")
+                logger.error("   Your connection string is still using direct connection (db.xxx.supabase.co)")
+                logger.error("")
+                logger.error("   🔧 SOLUTION: Update DATABASE_URL in Render with pooler connection string")
+                logger.error("   1. Go to Supabase Dashboard → Settings → Database → Connection pooling")
+                logger.error("   2. Copy the pooler connection string (has 'pooler.supabase.com' in it)")
+                logger.error("   3. Go to Render Dashboard → Your Service → Environment")
+                logger.error("   4. Edit DATABASE_URL and paste the pooler connection string")
+                logger.error("   5. Save - Render will restart automatically")
             
             raise
     
@@ -401,85 +429,119 @@ class PostgresDatabaseManager:
     
     def get_branches(self, company: Optional[str] = None) -> List[Dict]:
         """Get list of branches from inventory_analysis or current_stock table"""
+        branches = {}
+        
+        # First try inventory_analysis table (has branch info)
         try:
             conn = self.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
-            branches = {}
+            # Check if inventory_analysis table exists first
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'inventory_analysis'
+                )
+            """)
+            table_exists = cursor.fetchone()[0]
             
-            # First try inventory_analysis table (has branch info)
-            try:
-                if company:
-                    cursor.execute("""
-                        SELECT DISTINCT company_name as company, branch_name as branch_name
-                        FROM inventory_analysis
-                        WHERE company_name = %s
-                        ORDER BY company_name, branch_name
-                    """, (company,))
-                else:
-                    cursor.execute("""
-                        SELECT DISTINCT company_name as company, branch_name as branch_name
-                        FROM inventory_analysis
-                        ORDER BY company_name, branch_name
-                    """)
-                
-                results = cursor.fetchall()
-                for row in results:
-                    key = f"{row['branch_name']}|{row['company']}"
-                    branches[key] = {
-                        'branch_name': row['branch_name'],
-                        'company': row['company'],
-                        'branch': row['branch_name']
-                    }
-                
-                if branches:
-                    self.logger.info(f"Found {len(branches)} branches from inventory_analysis")
-            except Exception as e:
-                self.logger.warning(f"Could not query inventory_analysis: {e}")
-            
-            # Fallback to current_stock if inventory_analysis is empty
-            if not branches:
+            if table_exists:
                 try:
                     if company:
                         cursor.execute("""
-                            SELECT DISTINCT company, branch as branch_name
-                            FROM current_stock
-                            WHERE company = %s
-                            ORDER BY company, branch
+                            SELECT DISTINCT company_name as company, branch_name as branch_name
+                            FROM inventory_analysis
+                            WHERE company_name = %s
+                            ORDER BY company_name, branch_name
                         """, (company,))
                     else:
                         cursor.execute("""
-                            SELECT DISTINCT company, branch as branch_name
-                            FROM current_stock
-                            ORDER BY company, branch
+                            SELECT DISTINCT company_name as company, branch_name as branch_name
+                            FROM inventory_analysis
+                            ORDER BY company_name, branch_name
                         """)
                     
                     results = cursor.fetchall()
                     for row in results:
                         key = f"{row['branch_name']}|{row['company']}"
-                        if key not in branches:
-                            branches[key] = {
-                                'branch_name': row['branch_name'],
-                                'company': row['company'],
-                                'branch': row['branch_name']
-                            }
+                        branches[key] = {
+                            'branch_name': row['branch_name'],
+                            'company': row['company'],
+                            'branch': row['branch_name']
+                        }
                     
                     if branches:
-                        self.logger.info(f"Found {len(branches)} branches from current_stock")
+                        self.logger.info(f"Found {len(branches)} branches from inventory_analysis")
+                        cursor.close()
+                        self.put_connection(conn)
+                        return list(branches.values())
                 except Exception as e:
-                    self.logger.warning(f"Could not query current_stock: {e}")
+                    self.logger.warning(f"Could not query inventory_analysis: {e}")
+                    cursor.close()
+                    self.put_connection(conn)
+            else:
+                self.logger.info("inventory_analysis table does not exist, using current_stock")
+                cursor.close()
+                self.put_connection(conn)
+        except Exception as e:
+            self.logger.warning(f"Error checking inventory_analysis: {e}")
+            if conn:
+                try:
+                    cursor.close()
+                    self.put_connection(conn)
+                except:
+                    pass
+        
+        # Fallback to current_stock if inventory_analysis is empty or doesn't exist
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            if company:
+                cursor.execute("""
+                    SELECT DISTINCT company, branch as branch_name
+                    FROM current_stock
+                    WHERE company = %s
+                    ORDER BY company, branch
+                """, (company,))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT company, branch as branch_name
+                    FROM current_stock
+                    ORDER BY company, branch
+                """)
+            
+            results = cursor.fetchall()
+            for row in results:
+                key = f"{row['branch_name']}|{row['company']}"
+                if key not in branches:
+                    branches[key] = {
+                        'branch_name': row['branch_name'],
+                        'company': row['company'],
+                        'branch': row['branch_name']
+                    }
             
             cursor.close()
             self.put_connection(conn)
+            
+            if branches:
+                self.logger.info(f"Found {len(branches)} branches from current_stock")
             
             result = list(branches.values())
             self.logger.info(f"Returning {len(result)} branches" + (f" for {company}" if company else ""))
             return result
             
         except Exception as e:
-            self.logger.error(f"Error getting branches: {e}")
+            self.logger.error(f"Error getting branches from current_stock: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
+            if conn:
+                try:
+                    cursor.close()
+                    self.put_connection(conn)
+                except:
+                    pass
             return []
     
     @property

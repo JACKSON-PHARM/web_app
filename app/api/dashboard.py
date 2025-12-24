@@ -678,17 +678,27 @@ async def get_branches(
     current_user: dict = Depends(get_current_user),
     db_manager = Depends(get_db_manager)
 ):
-    """Get list of branches"""
+    """Get list of unique branches from inventory_analysis (preferred) or current_stock (fallback)"""
     import logging
     logger = logging.getLogger(__name__)
     
     try:
         logger.info(f"Fetching branches" + (f" for {company}" if company else ""))
+        
+        # Get branches from database manager (handles inventory_analysis -> current_stock fallback)
         branches = db_manager.get_branches(company)
         logger.info(f"Found {len(branches)} branches")
         
         if not branches:
             logger.warning("No branches found, returning empty list")
+            # Check if we have data at all
+            try:
+                result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock")
+                stock_count = result[0]['count'] if result else 0
+                if stock_count > 0:
+                    logger.info(f"Database has {stock_count} stock records but no branches found - this is unusual")
+            except:
+                pass
         
         return {
             "success": True,
@@ -707,5 +717,78 @@ async def get_branches(
             "error": str(e),
             "data": [],
             "message": f"Failed to load branches: {str(e)}"
+        }
+
+@router.get("/items")
+async def get_items(
+    branch: Optional[str] = None,
+    company: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db_manager = Depends(get_db_manager)
+):
+    """Get list of unique items from current_stock table"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"Fetching items" + (f" for branch={branch}, company={company}" if branch or company else ""))
+        
+        # Build query to get unique items from current_stock
+        if branch and company:
+            query = """
+                SELECT DISTINCT 
+                    item_code,
+                    MAX(item_name) as item_name,
+                    MAX(company) as company,
+                    MAX(branch) as branch
+                FROM current_stock
+                WHERE branch = %s AND company = %s
+                GROUP BY item_code
+                ORDER BY item_code
+            """
+            params = (branch, company)
+        elif company:
+            query = """
+                SELECT DISTINCT 
+                    item_code,
+                    MAX(item_name) as item_name,
+                    MAX(company) as company
+                FROM current_stock
+                WHERE company = %s
+                GROUP BY item_code
+                ORDER BY item_code
+            """
+            params = (company,)
+        else:
+            query = """
+                SELECT DISTINCT 
+                    item_code,
+                    MAX(item_name) as item_name
+                FROM current_stock
+                GROUP BY item_code
+                ORDER BY item_code
+            """
+            params = None
+        
+        items = db_manager.execute_query(query, params)
+        logger.info(f"Found {len(items)} unique items")
+        
+        return {
+            "success": True,
+            "data": items,
+            "count": len(items)
+        }
+    except Exception as e:
+        logger.error(f"Error getting items: {e}")
+        import traceback
+        error_traceback = traceback.format_exc()
+        logger.error(error_traceback)
+        
+        return {
+            "success": False,
+            "error": str(e),
+            "data": [],
+            "count": 0,
+            "message": f"Failed to load items: {str(e)}"
         }
 
