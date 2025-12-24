@@ -399,7 +399,6 @@ async def get_priority_items(
             db_has_data = total_records > 0
             
             if db_has_data:
-                
                 # Check if refresh is in progress
                 from app.services.refresh_status import RefreshStatusService
                 refresh_status = RefreshStatusService.get_status()
@@ -415,16 +414,16 @@ async def get_priority_items(
                         "is_refreshing": is_refreshing,
                         "message": "No data available yet. Refresh in progress..." if is_refreshing else "Database is empty. Please refresh data.",
                         "diagnostics": {
-                            "database_path": db_manager.db_path if hasattr(db_manager, 'db_path') else "Supabase PostgreSQL",
+                            "database_path": "Supabase PostgreSQL",
                             "database_exists": True,
                             "table_counts": table_counts,
                             "refresh_in_progress": is_refreshing
                         }
                     }
-            except Exception as e:
-                logger.error(f"❌ Error checking database: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+        except Exception as e:
+            logger.error(f"❌ Error checking database: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # Use PostgreSQL database manager directly
         dashboard_service = DashboardService(db_manager)
@@ -476,23 +475,23 @@ async def get_priority_items(
             
             # Check database again to provide helpful message
             try:
-                import sqlite3
-                conn = sqlite3.connect(db_manager.db_path)
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM current_stock")
-                stock_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM stock_data")
-                stock_data_count = cursor.fetchone()[0]
+                # Always PostgreSQL - use execute_query
+                result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock")
+                stock_count = result[0]['count'] if result else 0
+                
+                try:
+                    stock_data_result = db_manager.execute_query("SELECT COUNT(*) as count FROM stock_data")
+                    stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
+                except:
+                    stock_data_count = 0
                 
                 # Check if source branch has stock
-                cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", (source_branch, source_company))
-                source_stock_count = cursor.fetchone()[0]
+                source_result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = %s AND company = %s", (source_branch, source_company))
+                source_stock_count = source_result[0]['count'] if source_result else 0
                 
                 # Check if target branch has stock
-                cursor.execute("SELECT COUNT(*) FROM current_stock WHERE branch = ? AND company = ?", (target_branch, target_company))
-                target_stock_count = cursor.fetchone()[0]
-                
-                conn.close()
+                target_result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = %s AND company = %s", (target_branch, target_company))
+                target_stock_count = target_result[0]['count'] if target_result else 0
                 
                 if stock_count == 0 and stock_data_count == 0:
                     return {
@@ -540,12 +539,9 @@ async def get_database_diagnostics(
     db_manager = Depends(get_db_manager)
 ):
     """Get database diagnostics to help troubleshoot empty data issues"""
-    import sqlite3
-    # Check if PostgreSQL
-    is_postgres = hasattr(db_manager, 'connection_string') or hasattr(db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(db_manager))
-    
+    # Always PostgreSQL
     diagnostics = {
-        "database_path": db_manager.db_path if hasattr(db_manager, 'db_path') else "Supabase PostgreSQL",
+        "database_path": "Supabase PostgreSQL",
         "database_exists": False,
         "database_size_mb": 0,
         "tables": {},
@@ -553,54 +549,48 @@ async def get_database_diagnostics(
     }
     
     try:
-        # Check if PostgreSQL
-        is_postgres = hasattr(db_manager, 'connection_string') or hasattr(db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(db_manager))
+        # Always PostgreSQL - use database manager queries
+        diagnostics["database_exists"] = True
+        diagnostics["database_size_mb"] = None  # PostgreSQL doesn't have file size
         
-        if is_postgres:
-            # PostgreSQL - use database manager queries
-            diagnostics["database_exists"] = True
-            diagnostics["database_size_mb"] = None  # PostgreSQL doesn't have file size
-        elif hasattr(db_manager, 'db_path') and db_manager.db_path and os.path.exists(db_manager.db_path):
-            # SQLite - check file
-            diagnostics["database_exists"] = True
-            diagnostics["database_size_mb"] = round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2)
-            
-            conn = sqlite3.connect(db_manager.db_path)
-            cursor = conn.cursor()
-            
-            # Get all tables
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
+        # Get table counts from PostgreSQL
+        try:
+            # Query information_schema to get all tables
+            tables_result = db_manager.execute_query("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+            """)
+            tables = [row['table_name'] for row in tables_result] if tables_result else []
             
             # Count rows in each table
             for table in tables:
                 try:
-                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                    count = cursor.fetchone()[0]
+                    result = db_manager.execute_query(f"SELECT COUNT(*) as count FROM {table}")
+                    count = result[0]['count'] if result else 0
                     diagnostics["tables"][table] = count
                 except Exception as e:
                     diagnostics["tables"][table] = f"Error: {str(e)}"
             
-            conn.close()
-            
             # Summary
-            key_tables = ['current_stock', 'stock_data', 'purchase_orders', 'branch_orders', 'sales']
+            key_tables = ['current_stock', 'supplier_invoices', 'purchase_orders', 'branch_orders', 'hq_invoices']
             diagnostics["summary"] = {
-                "has_stock_data": diagnostics["tables"].get('current_stock', 0) > 0 or diagnostics["tables"].get('stock_data', 0) > 0,
+                "has_stock_data": diagnostics["tables"].get('current_stock', 0) > 0,
                 "has_order_data": diagnostics["tables"].get('purchase_orders', 0) > 0 or diagnostics["tables"].get('branch_orders', 0) > 0,
-                "has_sales_data": diagnostics["tables"].get('sales', 0) > 0,
+                "has_invoice_data": diagnostics["tables"].get('supplier_invoices', 0) > 0 or diagnostics["tables"].get('hq_invoices', 0) > 0,
                 "total_tables": len(tables),
                 "key_table_counts": {table: diagnostics["tables"].get(table, 0) for table in key_tables}
             }
             
             if not diagnostics["summary"]["has_stock_data"]:
-                diagnostics["message"] = "⚠️ Database has no stock data. Please refresh data by clicking 'Refresh Now' button."
+                diagnostics["message"] = "⚠️ Database has no stock data. Data refreshes automatically every hour."
             elif diagnostics["summary"]["has_stock_data"] and diagnostics["summary"]["has_order_data"]:
                 diagnostics["message"] = "✅ Database appears to have data. If tables are still empty, check branch selection or query filters."
             else:
-                diagnostics["message"] = "⚠️ Database has stock data but may be missing order data. Try refreshing."
-        else:
-            diagnostics["message"] = "❌ Database file not found. Please refresh data to create database."
+                diagnostics["message"] = "⚠️ Database has stock data but may be missing order data. Wait for next scheduled refresh."
+        except Exception as e:
+            diagnostics["error"] = str(e)
+            diagnostics["message"] = f"Error checking database: {str(e)}"
     except Exception as e:
         diagnostics["error"] = str(e)
         import traceback
@@ -643,20 +633,13 @@ async def get_sync_status(
             status["message"] = f"Connected to Supabase - {stock_count:,} stock records available"
         else:
             # For SQLite, check file
-            if db_manager.db_path and os.path.exists(db_manager.db_path):
-                status["local_database"] = {
-                    "exists": True,
-                    "path": db_manager.db_path,
-                    "size_mb": round(os.path.getsize(db_manager.db_path) / (1024 * 1024), 2),
-                    "modified": os.path.getmtime(db_manager.db_path)
-                }
-                status["message"] = "Using local SQLite database"
-            else:
-                status["local_database"] = {
-                    "exists": False,
-                    "path": db_manager.db_path
-                }
-                status["message"] = "Database will be created on first use"
+            # Always PostgreSQL - no local database
+            status["local_database"] = {
+                "exists": False,
+                "path": None,
+                "message": "All data stored in Supabase PostgreSQL"
+            }
+            status["message"] = "Using Supabase PostgreSQL database"
     
     except Exception as e:
         status["sync_status"] = "error"

@@ -657,11 +657,13 @@
                 </select>
             </div>
         </div>
-        <div class="refresh-controls">
-            <button class="btn-refresh" onclick="triggerRefresh()" id="refreshBtn">
-                🔄 Refresh All Data
-            </button>
-            <span class="refresh-status" id="refreshStatus"></span>
+        <div style="padding: 10px; background: #e3f2fd; border-radius: 5px; margin-top: 10px;">
+            <div class="refresh-status" id="lastRefresh" style="font-size: 13px; color: #1976d2;">
+                Last refresh: Checking...
+            </div>
+            <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                Data auto-refreshes every hour. Current data is displayed below.
+            </div>
         </div>
     </div>
     
@@ -904,12 +906,8 @@
                                 <div style="color: #666; margin-bottom: 20px;">
                                     ${message}
                                 </div>
-                                <button onclick="triggerRefresh()" class="btn-refresh" style="padding: 12px 24px; font-size: 16px;">
-                                    🔄 Refresh Data Now
-                                </button>
                                 <div style="margin-top: 15px; font-size: 12px; color: #999;">
-                                    This will fetch new data from APIs and save directly to Supabase database.
-                                    <br>Progress will be shown in a popup window.
+                                    Data refreshes automatically every hour. Please wait for the next scheduled refresh.
                                 </div>
                             </td>
                         </tr>

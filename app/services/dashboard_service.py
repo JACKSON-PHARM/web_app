@@ -569,8 +569,8 @@ class DashboardService:
                     FROM current_stock cs_source
                     LEFT JOIN current_stock cs_target
                         ON cs_target.item_code = cs_source.item_code
-                        AND cs_target.company = ?
-                        AND cs_target.branch = ?
+                        AND cs_target.company = %s
+                        AND cs_target.branch = %s
                     -- Last order/invoice date: combine purchase_orders, branch_orders, and hq_invoices
                     LEFT JOIN (
                         SELECT 
@@ -579,20 +579,20 @@ class DashboardService:
                         FROM (
                             SELECT item_code, document_date as date
                             FROM purchase_orders
-                            WHERE company = ? AND branch = ?
+                            WHERE company = %s AND branch = %s
                             UNION ALL
                             SELECT item_code, document_date as date
                             FROM branch_orders
-                            WHERE company = ? AND source_branch = ?
+                            WHERE company = %s AND source_branch = %s
                             UNION ALL
                             SELECT item_code, date
                             FROM hq_invoices
-                            WHERE branch = ?
+                            WHERE branch = %s
                         ) combined_orders
                         GROUP BY item_code
                     ) po ON po.item_code = cs_source.item_code
-                    WHERE cs_source.branch = ? 
-                        AND cs_source.company = ?
+                    WHERE cs_source.branch = %s 
+                        AND cs_source.company = %s
                         AND cs_source.stock_pieces > 0  -- Source branch MUST have stock
                         -- Get items where target branch has no stock or low stock
                         -- We'll filter by reorder level in Python after we have AMC and ABC class
