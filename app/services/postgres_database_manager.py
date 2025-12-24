@@ -31,17 +31,35 @@ class PostgresDatabaseManager:
         self._db_path_value = "Supabase PostgreSQL"  # Set internal value first
         self.setup_logging()
         
-        # Force IPv4 for Supabase (free tier doesn't support IPv6)
-        # Parse connection string and ensure IPv4 resolution
-        connection_string_ipv4 = self._force_ipv4_connection(connection_string)
-        
         # Create connection pool
+        # IMPORTANT: For Supabase free tier (no IPv6 support), you MUST use the pooler connection string
+        # Get it from: Supabase Dashboard → Settings → Database → Connection pooling → Copy connection string
+        # Do NOT use the direct connection string (db.xxx.supabase.co) - it only has IPv6
         try:
-            self.pool = ThreadedConnectionPool(1, 5, connection_string_ipv4)
-            logger.info("✅ PostgreSQL connection pool created (IPv4)")
+            self.pool = ThreadedConnectionPool(1, 5, connection_string)
+            logger.info("✅ PostgreSQL connection pool created")
             self._init_database()
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"❌ Failed to create PostgreSQL connection pool: {e}")
+            
+            # Provide helpful error message for common issues
+            if "Tenant or user not found" in error_msg:
+                logger.error("💡 ERROR: 'Tenant or user not found'")
+                logger.error("   This means the connection string username format is incorrect.")
+                logger.error("   SOLUTION: Get the EXACT pooler connection string from Supabase Dashboard:")
+                logger.error("   1. Go to Supabase Dashboard → Your Project")
+                logger.error("   2. Settings → Database")
+                logger.error("   3. Scroll to 'Connection pooling' section")
+                logger.error("   4. Select 'Session mode' or 'Transaction mode'")
+                logger.error("   5. Copy the connection string EXACTLY as shown")
+                logger.error("   6. Update DATABASE_URL in Render with that exact string")
+            elif "Network is unreachable" in error_msg or "IPv6" in error_msg:
+                logger.error("💡 ERROR: IPv6 connection issue")
+                logger.error("   Supabase free tier doesn't support IPv6.")
+                logger.error("   SOLUTION: Use the pooler connection string (not direct connection)")
+                logger.error("   Get it from: Supabase Dashboard → Settings → Database → Connection pooling")
+            
             raise
     
     def _force_ipv4_connection(self, connection_string: str) -> str:
