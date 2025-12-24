@@ -941,14 +941,24 @@ class DashboardService:
             ]
             logger.info(f"After reorder level filter: {len(df)} items (was {before_reorder_filter})")
 
-            # Calculate packs from pieces using pack_size
-            source_pack_size = df['source_pack_size'].replace(0, 1)
-            df['source_stock_packs'] = (df['source_stock_pieces'] / source_pack_size).round(0).astype(int)
-            df['target_stock_packs'] = (df['target_stock_pieces'] / df['pack_size'].replace(0, 1)).round(0).astype(int)
+            # Ensure pack_size is available - get from source or target stock, or use default 1
+            if 'pack_size' not in df.columns or df['pack_size'].isna().all():
+                # Try to get pack_size from source_pack_size
+                if 'source_pack_size' in df.columns:
+                    df['pack_size'] = df['source_pack_size'].fillna(1)
+                else:
+                    df['pack_size'] = 1
             
-            # Convert AMC from pieces to packs (using target branch pack_size)
-            target_pack_size = df['pack_size'].replace(0, 1)
-            df['amc_packs'] = (df['amc_pieces'] / target_pack_size).round(2)
+            # Replace 0 or NaN pack_size with 1 to avoid division by zero
+            df['pack_size'] = df['pack_size'].replace(0, 1).fillna(1)
+            source_pack_size = df['source_pack_size'].replace(0, 1).fillna(1) if 'source_pack_size' in df.columns else df['pack_size']
+            
+            # Calculate packs from pieces using pack_size (round to whole packs)
+            df['source_stock_packs'] = (df['source_stock_pieces'] / source_pack_size).round(0).astype(int)
+            df['target_stock_packs'] = (df['target_stock_pieces'] / df['pack_size']).round(0).astype(int)
+            
+            # Convert AMC from pieces to packs (using target branch pack_size) - round to 2 decimals for display
+            df['amc_packs'] = (df['amc_pieces'] / df['pack_size']).round(2)
             
             # Recalculate stock_level_pct using AMC from Inventory_Analysis
             df['stock_level_pct'] = df.apply(
@@ -959,8 +969,11 @@ class DashboardService:
             # Add branch_name column (target branch)
             df['branch_name'] = target_branch
             
-            # Format last_order_date
-            df['last_order_date'] = pd.to_datetime(df['last_order_date'], errors='coerce')
+            # Format dates - convert to datetime and format as string for display
+            if 'last_order_date' in df.columns:
+                df['last_order_date'] = pd.to_datetime(df['last_order_date'], errors='coerce')
+                # Format as YYYY-MM-DD or empty string if NaT
+                df['last_order_date'] = df['last_order_date'].dt.strftime('%Y-%m-%d').replace('NaT', '').replace('nan', '')
             
             # Drop temporary columns
             df = df.drop(columns=['source_pack_size', 'reorder_threshold'], errors='ignore')

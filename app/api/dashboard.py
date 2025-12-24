@@ -443,11 +443,26 @@ async def get_priority_items(
             import numpy as np
             priority_items = priority_items.replace([np.nan, np.inf, -np.inf], None)
             records = priority_items.to_dict('records')
-            # Ensure all NaN-like values are None
+            # Ensure all NaN-like values are None and format dates
             for record in records:
                 for key, value in record.items():
                     if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
                         record[key] = None
+                    # Format date fields
+                    if 'date' in key.lower() and value:
+                        if isinstance(value, str):
+                            # Already a string, check if it's a valid date format
+                            if value not in ['', 'NaT', 'nan', 'None']:
+                                record[key] = value
+                            else:
+                                record[key] = None
+                        elif pd.notna(value):
+                            try:
+                                record[key] = pd.to_datetime(value).strftime('%Y-%m-%d')
+                            except:
+                                record[key] = str(value) if value else None
+                        else:
+                            record[key] = None
             logger.info(f"✅ Returning {len(records)} priority items")
             # Check if refresh is in progress
             from app.services.refresh_status import RefreshStatusService

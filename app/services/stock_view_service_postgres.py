@@ -383,6 +383,13 @@ class StockViewServicePostgres:
             )
             df['stock_level_pct'] = df['stock_level']
             
+            # Format dates for display
+            date_columns = ['last_order_date', 'last_supply_date', 'last_invoice_date', 'last_grn_date']
+            for col in date_columns:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                    df[col] = df[col].dt.strftime('%Y-%m-%d').replace('NaT', '').replace('nan', '')
+            
             logger.info(f"Retrieved {len(df)} items for stock view")
             return df
             
