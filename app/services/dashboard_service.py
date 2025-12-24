@@ -607,8 +607,9 @@ class DashboardService:
             
             # Prefer current_stock if available, otherwise use stock_data with latest snapshot
             if source_stock_count > 0:
-                # Use current_stock (most recent data)
+                # Use current_stock (most recent data) - Simplified query to avoid timeouts
                 logger.info(f"Using current_stock table for priority items (found {source_stock_count} records for {source_branch})")
+                # Simplified query - remove complex subquery for last_order_date to avoid timeouts
                 query = """
                     SELECT 
                         cs_source.item_code,
@@ -617,47 +618,22 @@ class DashboardService:
                         MAX(cs_source.pack_size) AS source_pack_size,
                         COALESCE(MAX(cs_target.stock_pieces), 0) AS target_stock_pieces,
                         COALESCE(MAX(cs_target.pack_size), MAX(cs_source.pack_size)) AS pack_size,
-                        -- AMC will be loaded from Inventory_Analysis.csv after query
                         0 AS stock_level_pct,
-                        MAX(po.last_order_date) AS last_order_date
+                        NULL::date AS last_order_date
                     FROM current_stock cs_source
                     LEFT JOIN current_stock cs_target
                         ON cs_target.item_code = cs_source.item_code
-                        AND cs_target.company = %s
-                        AND cs_target.branch = %s
-                    -- Last order/invoice date: combine purchase_orders, branch_orders, and hq_invoices
-                    LEFT JOIN (
-                        SELECT 
-                            item_code,
-                            MAX(date) AS last_order_date
-                        FROM (
-                            SELECT item_code, document_date as date
-                            FROM purchase_orders
-                            WHERE company = %s AND branch = %s
-                            UNION ALL
-                            SELECT item_code, document_date as date
-                            FROM branch_orders
-                            WHERE company = %s AND source_branch = %s
-                            UNION ALL
-                            SELECT item_code, date
-                            FROM hq_invoices
-                            WHERE branch = %s
-                        ) combined_orders
-                        GROUP BY item_code
-                    ) po ON po.item_code = cs_source.item_code
-                    WHERE cs_source.branch = %s 
-                        AND cs_source.company = %s
-                        AND cs_source.stock_pieces > 0  -- Source branch MUST have stock
-                        -- Get items where target branch has no stock or low stock
-                        -- We'll filter by reorder level in Python after we have AMC and ABC class
+                        AND UPPER(TRIM(cs_target.company)) = UPPER(TRIM(%s))
+                        AND UPPER(TRIM(cs_target.branch)) = UPPER(TRIM(%s))
+                    WHERE UPPER(TRIM(cs_source.branch)) = UPPER(TRIM(%s))
+                        AND UPPER(TRIM(cs_source.company)) = UPPER(TRIM(%s))
+                        AND cs_source.stock_pieces > 0
                         AND (
                             cs_target.stock_pieces IS NULL 
                             OR cs_target.stock_pieces <= 0
-                            -- Include items with stock up to a reasonable threshold (will be filtered by reorder level in Python)
-                            -- Threshold of 1000 should catch most items below reorder level (50% of AMC for A class)
                             OR cs_target.stock_pieces < 1000
                         )
-                    GROUP BY cs_source.item_code  -- Ensure one row per item_code
+                    GROUP BY cs_source.item_code
                     ORDER BY MAX(cs_source.stock_pieces) DESC
                     LIMIT %s
                 """
@@ -665,9 +641,6 @@ class DashboardService:
                 query = self._normalize_query(query)
                 params = (
                     target_company, target_branch,  # For cs_target join
-                    target_company, target_branch,  # For purchase_orders
-                    target_company, target_branch,  # For branch_orders
-                    target_branch,  # For hq_invoices
                     source_branch, source_company,  # For cs_source WHERE
                     limit  # For LIMIT
                 )
@@ -761,11 +734,20 @@ class DashboardService:
                 # But ensure it's normalized here too
                 normalized_query = self._normalize_query(query) if 'params' not in locals() else query
                 logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
-                results = self._execute_query(
-                    normalized_query,
-                    params if 'params' in locals() else (target_company, target_branch, target_company, target_branch, target_company, target_branch,
-                     target_branch, source_branch, source_company, limit * 20)  # Get more to filter by ABC later
-                )
+                try:
+                    results = self._execute_query(
+                        normalized_query,
+                        params if 'params' in locals() else (target_company, target_branch, target_company, target_branch, target_company, target_branch,
+                         target_branch, source_branch, source_company, limit * 20)  # Get more to filter by ABC later
+                    )
+                except Exception as query_error:
+                    logger.error(f"Priority items query failed: {query_error}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    # Return empty DataFrame on error to avoid breaking the UI
+                    return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                                                'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                                                'pack_size', 'last_order_date'])
             
             # Convert results to DataFrame
             df = pd.DataFrame(results) if results else pd.DataFrame()
