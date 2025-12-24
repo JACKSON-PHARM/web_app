@@ -56,15 +56,6 @@ async def get_stock_view_data(
         
         # ALL data is in Supabase PostgreSQL
         logger.info("Using Supabase PostgreSQL database")
-        # StockViewService needs to be updated to work with PostgreSQL
-        # For now, return error directing to dashboard
-        return {
-            "success": False,
-            "error": "Stock View is being updated to work with Supabase PostgreSQL. Please use the Dashboard page for viewing stock data.",
-            "data": [],
-            "count": 0,
-            "suggestion": "Use Dashboard page - it fully supports PostgreSQL/Supabase"
-        }
         
         # Use defaults if not provided
         if not source_branch_name:
@@ -72,7 +63,11 @@ async def get_stock_view_data(
         if not source_branch_company:
             source_branch_company = branch_company
         
-        logger.info(f"Calling get_stock_view_data with: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
+        logger.info(f"Calling stock view service with: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
+        
+        # Use PostgreSQL-compatible stock view service
+        from app.services.stock_view_service_postgres import StockViewServicePostgres
+        stock_service = StockViewServicePostgres(db_manager)
         
         # Run query in executor to prevent blocking (with 4 minute timeout)
         loop = asyncio.get_event_loop()
