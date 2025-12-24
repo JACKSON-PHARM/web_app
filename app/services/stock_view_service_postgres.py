@@ -122,10 +122,18 @@ class StockViewServicePostgres:
                 self.db_manager.put_connection(conn)
                 return pd.DataFrame()
             
-            # Main query with CTEs for PostgreSQL (matching desktop version logic)
-            # Start with branch_stock to ensure we get items for the target branch
+            # Simplified query: Start with unique item codes, then left join all data
+            # Step 1: Get all unique item codes for the company
             query = """
-            WITH branch_stock AS (
+            WITH unique_items AS (
+                SELECT DISTINCT 
+                    item_code,
+                    MAX(item_name) as item_name
+                FROM current_stock
+                WHERE UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                GROUP BY item_code
+            ),
+            target_branch_stock AS (
                 SELECT 
                     item_code,
                     item_name,
@@ -134,177 +142,151 @@ class StockViewServicePostgres:
                     unit_price,
                     stock_value
                 FROM current_stock
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
             ),
-            all_items AS (
-                SELECT DISTINCT 
-                    item_code,
-                    MAX(item_name) as item_name
-                FROM (
-                    SELECT item_code, item_name FROM branch_stock
-                    UNION
-                    SELECT item_code, item_name FROM current_stock 
-                    WHERE UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                ) combined
-                GROUP BY item_code
-            ),
-            source_stock AS (
+            source_branch_stock AS (
                 SELECT 
                     item_code,
                     stock_pieces as supplier_stock
                 FROM current_stock
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
             ),
-            combined_orders AS (
-                SELECT 
-                    item_code,
-                    document_date,
-                    document_number,
-                    quantity,
-                    company,
-                    'PURCHASE' as order_type
-                FROM purchase_orders
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                
-                UNION ALL
-                
-                SELECT 
-                    item_code,
-                    document_date,
-                    document_number,
-                    quantity,
-                    company,
-                    'BRANCH' as order_type
-                FROM branch_orders
-                WHERE UPPER(TRIM(source_branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                
-                UNION ALL
-                
-                SELECT 
-                    item_code,
-                    date as document_date,
-                    invoice_number as document_number,
-                    quantity,
-                    'NILA' as company,
-                    'HQ_INVOICE' as order_type
-                FROM hq_invoices
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
-            ),
-            last_order AS (
+            last_order_info AS (
                 SELECT 
                     item_code,
                     MAX(document_date) as last_order_date
-                FROM combined_orders
+                FROM (
+                    SELECT item_code, document_date, document_number, quantity
+                    FROM purchase_orders
+                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                    
+                    UNION ALL
+                    
+                    SELECT item_code, document_date, document_number, quantity
+                    FROM branch_orders
+                    WHERE UPPER(TRIM(destination_branch)) = UPPER(TRIM(%s)) 
+                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                    
+                    UNION ALL
+                    
+                    SELECT item_code, date as document_date, invoice_number as document_number, quantity
+                    FROM hq_invoices
+                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
+                ) all_orders
                 GROUP BY item_code
             ),
             last_order_details AS (
                 SELECT 
-                    co.item_code,
-                    co.document_number as last_order_doc,
-                    SUM(co.quantity) as last_order_quantity
-                FROM combined_orders co
-                INNER JOIN last_order lo ON co.item_code = lo.item_code AND co.document_date = lo.last_order_date
-                GROUP BY co.item_code, co.document_number
+                    ao.item_code,
+                    MAX(ao.document_number) as last_order_doc,
+                    SUM(ao.quantity) as last_order_quantity
+                FROM (
+                    SELECT item_code, document_date, document_number, quantity
+                    FROM purchase_orders
+                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                    
+                    UNION ALL
+                    
+                    SELECT item_code, document_date, document_number, quantity
+                    FROM branch_orders
+                    WHERE UPPER(TRIM(destination_branch)) = UPPER(TRIM(%s)) 
+                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                    
+                    UNION ALL
+                    
+                    SELECT item_code, date as document_date, invoice_number as document_number, quantity
+                    FROM hq_invoices
+                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
+                ) ao
+                INNER JOIN last_order_info loi ON ao.item_code = loi.item_code AND ao.document_date = loi.last_order_date
+                GROUP BY ao.item_code
             ),
-            last_supply AS (
+            last_supply_info AS (
                 SELECT 
                     item_code,
-                    MAX(document_date) as last_supply_date,
-                    MAX(document_number) as last_supply_doc,
-                    SUM(CASE WHEN document_date = (
-                        SELECT MAX(document_date) 
-                        FROM supplier_invoices si2 
-                        WHERE si2.item_code = supplier_invoices.item_code 
-                        AND UPPER(TRIM(si2.branch)) = UPPER(TRIM(supplier_invoices.branch))
-                        AND UPPER(TRIM(si2.company)) = UPPER(TRIM(supplier_invoices.company))
-                    ) THEN units ELSE 0 END) as last_supply_quantity
+                    MAX(document_date) as last_supply_date
                 FROM supplier_invoices
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
+                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
                 GROUP BY item_code
             ),
-            last_hq_invoice AS (
+            last_supply_details AS (
+                SELECT 
+                    si.item_code,
+                    MAX(si.document_number) as last_supply_doc,
+                    SUM(si.units) as last_supply_quantity
+                FROM supplier_invoices si
+                INNER JOIN last_supply_info lsi ON si.item_code = lsi.item_code AND si.document_date = lsi.last_supply_date
+                WHERE UPPER(TRIM(si.branch)) = UPPER(TRIM(%s)) 
+                AND UPPER(TRIM(si.company)) = UPPER(TRIM(%s))
+                GROUP BY si.item_code
+            ),
+            last_invoice_info AS (
                 SELECT 
                     item_code,
-                    MAX(date) as last_invoice_date,
-                    MAX(invoice_number) as last_invoice_doc,
-                    SUM(CASE WHEN date = (
-                        SELECT MAX(date) 
-                        FROM hq_invoices hi2 
-                        WHERE hi2.item_code = hq_invoices.item_code 
-                        AND UPPER(TRIM(hi2.branch)) = UPPER(TRIM(hq_invoices.branch))
-                    ) THEN quantity ELSE 0 END) as last_invoice_quantity
+                    MAX(date) as last_invoice_date
                 FROM hq_invoices
                 WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
                 GROUP BY item_code
             ),
-            last_grn AS (
+            last_invoice_details AS (
                 SELECT 
-                    item_code,
-                    MAX(document_date) as last_grn_date,
-                    MAX(document_number) as last_grn_doc,
-                    SUM(CASE WHEN document_date = (
-                        SELECT MAX(document_date) 
-                        FROM supplier_invoices si2 
-                        WHERE si2.item_code = supplier_invoices.item_code 
-                        AND UPPER(TRIM(si2.branch)) = UPPER(TRIM(supplier_invoices.branch))
-                        AND UPPER(TRIM(si2.company)) = UPPER(TRIM(supplier_invoices.company))
-                    ) THEN units ELSE 0 END) as last_grn_quantity
-                FROM supplier_invoices
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                GROUP BY item_code
-            ),
-            hq_stock_data AS (
-                SELECT 
-                    item_code,
-                    stock_pieces as hq_stock
-                FROM current_stock
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                    hi.item_code,
+                    MAX(hi.invoice_number) as last_invoice_doc,
+                    SUM(hi.quantity) as last_invoice_quantity
+                FROM hq_invoices hi
+                INNER JOIN last_invoice_info lii ON hi.item_code = lii.item_code AND hi.date = lii.last_invoice_date
+                WHERE UPPER(TRIM(hi.branch)) = UPPER(TRIM(%s))
+                GROUP BY hi.item_code
             )
             SELECT 
-                ai.item_code,
-                ai.item_name,
-                COALESCE(ss.supplier_stock, 0) as supplier_stock,
-                COALESCE(bs.branch_stock, 0) as branch_stock,
-                COALESCE(bs.pack_size, 1) as pack_size,
-                COALESCE(bs.unit_price, 0) as unit_price,
-                COALESCE(bs.stock_value, 0) as stock_value,
-                lo.last_order_date,
+                ui.item_code,
+                COALESCE(tbs.item_name, ui.item_name) as item_name,
+                COALESCE(sbs.supplier_stock, 0) as supplier_stock,
+                COALESCE(tbs.branch_stock, 0) as branch_stock,
+                COALESCE(tbs.pack_size, 1) as pack_size,
+                COALESCE(tbs.unit_price, 0) as unit_price,
+                COALESCE(tbs.stock_value, 0) as stock_value,
+                loi.last_order_date,
                 lod.last_order_doc,
                 lod.last_order_quantity,
-                hi.last_invoice_date,
-                hi.last_invoice_doc,
-                hi.last_invoice_quantity,
-                ls.last_supply_date,
-                ls.last_supply_doc,
-                ls.last_supply_quantity,
-                lg.last_grn_date,
-                lg.last_grn_doc,
-                lg.last_grn_quantity,
-                hq.hq_stock
-            FROM all_items ai
-            LEFT JOIN branch_stock bs ON ai.item_code = bs.item_code
-            LEFT JOIN source_stock ss ON ai.item_code = ss.item_code
-            LEFT JOIN last_order lo ON ai.item_code = lo.item_code
-            LEFT JOIN last_order_details lod ON ai.item_code = lod.item_code
-            LEFT JOIN last_supply ls ON ai.item_code = ls.item_code
-            LEFT JOIN last_hq_invoice hi ON ai.item_code = hi.item_code
-            LEFT JOIN last_grn lg ON ai.item_code = lg.item_code
-            LEFT JOIN hq_stock_data hq ON ai.item_code = hq.item_code
-            ORDER BY ai.item_code
-            LIMIT 1000
+                lii.last_invoice_date,
+                lid.last_invoice_doc,
+                lid.last_invoice_quantity,
+                lsi.last_supply_date,
+                lsd.last_supply_doc,
+                lsd.last_supply_quantity
+            FROM unique_items ui
+            LEFT JOIN target_branch_stock tbs ON ui.item_code = tbs.item_code
+            LEFT JOIN source_branch_stock sbs ON ui.item_code = sbs.item_code
+            LEFT JOIN last_order_info loi ON ui.item_code = loi.item_code
+            LEFT JOIN last_order_details lod ON ui.item_code = lod.item_code
+            LEFT JOIN last_supply_info lsi ON ui.item_code = lsi.item_code
+            LEFT JOIN last_supply_details lsd ON ui.item_code = lsd.item_code
+            LEFT JOIN last_invoice_info lii ON ui.item_code = lii.item_code
+            LEFT JOIN last_invoice_details lid ON ui.item_code = lid.item_code
+            ORDER BY ui.item_code
+            LIMIT 5000
             """
             
             params = (
-                branch_name, branch_company,  # branch_stock
-                branch_company,  # all_items
-                source_branch_name, source_branch_company,  # source_stock
-                branch_name, branch_company,  # purchase_orders
-                branch_name, branch_company,  # branch_orders
-                branch_name,  # hq_invoices
-                branch_name, branch_company,  # last_supply
-                branch_name,  # last_hq_invoice
-                branch_name, branch_company,  # last_grn
-                'BABA DOGO HQ', branch_company  # hq_stock_data
+                branch_company,  # unique_items
+                branch_name, branch_company,  # target_branch_stock
+                source_branch_name, source_branch_company,  # source_branch_stock
+                branch_name, branch_company,  # purchase_orders (in last_order_info)
+                branch_name, branch_company,  # branch_orders (in last_order_info)
+                branch_name,  # hq_invoices (in last_order_info)
+                branch_name, branch_company,  # purchase_orders (in last_order_details)
+                branch_name, branch_company,  # branch_orders (in last_order_details)
+                branch_name,  # hq_invoices (in last_order_details)
+                branch_name, branch_company,  # last_supply_info
+                branch_name, branch_company,  # last_supply_details
+                branch_name,  # last_invoice_info
+                branch_name  # last_invoice_details
             )
             
             logger.info(f"Executing stock view query with params: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
@@ -404,10 +386,11 @@ class StockViewServicePostgres:
             
             # Initialize missing columns
             for col in ['abc_class', 'ideal_stock_pieces', 'amc', 'customer_appeal', 'stock_comment',
-                       'last_order_date', 'last_supply_date', 'last_invoice_date', 'last_grn_date',
-                       'last_order_quantity', 'last_supply_quantity', 'last_invoice_quantity', 'last_grn_quantity']:
+                       'last_order_date', 'last_supply_date', 'last_invoice_date',
+                       'last_order_quantity', 'last_supply_quantity', 'last_invoice_quantity',
+                       'last_order_doc', 'last_supply_doc', 'last_invoice_doc']:
                 if col not in df.columns:
-                    df[col] = None if 'date' in col or 'quantity' in col else ('' if 'class' in col or 'comment' in col else 0)
+                    df[col] = None if 'date' in col or 'quantity' in col or 'doc' in col else ('' if 'class' in col or 'comment' in col else 0)
             
             # Fill NaN values
             df['branch_stock'] = df['branch_stock'].fillna(0)
@@ -415,16 +398,15 @@ class StockViewServicePostgres:
             df['pack_size'] = df['pack_size'].fillna(1)
             df['unit_price'] = df['unit_price'].fillna(0)
             df['stock_value'] = df['stock_value'].fillna(0)
-            df['hq_stock'] = df['hq_stock'].fillna(0)
             df['amc'] = df['amc'].fillna(0)
             df['ideal_stock_pieces'] = df['ideal_stock_pieces'].fillna(0)
             df['customer_appeal'] = df['customer_appeal'].fillna(1.0)
             df['abc_class'] = df['abc_class'].fillna('')
             df['stock_comment'] = df['stock_comment'].fillna('')
             
-            # Calculate derived columns
+            # Calculate AMC in packs: adjusted_amc / pack_size (as user requested)
             df['amc_packs'] = df.apply(
-                lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
                 axis=1
             )
             df['ideal_stock_packs'] = df.apply(
@@ -446,7 +428,7 @@ class StockViewServicePostgres:
             df['stock_level_pct'] = df['stock_level']
             
             # Format dates for display
-            date_columns = ['last_order_date', 'last_supply_date', 'last_invoice_date', 'last_grn_date']
+            date_columns = ['last_order_date', 'last_supply_date', 'last_invoice_date']
             for col in date_columns:
                 if col in df.columns:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
