@@ -784,10 +784,10 @@ class DashboardService:
             # Verify source stock > 0 (should already be filtered in SQL, but double-check)
             df = df[df['source_stock_pieces'] > 0]
             
-            # Load ABC class and AMC from Inventory_Analysis (same as desktop version)
+            # Load ABC class and AMC from Inventory_Analysis for TARGET branch (items that need restocking)
             inventory_df = self._load_inventory_analysis()
             if not inventory_df.empty:
-                # Filter by target branch and company (same as desktop)
+                # Filter by TARGET branch and company (items that need restocking at target)
                 branch_inventory = inventory_df[
                     (inventory_df['branch_name'] == target_branch) & 
                     (inventory_df['company_name'] == target_company)
@@ -795,19 +795,20 @@ class DashboardService:
                 
                 if branch_inventory.empty:
                     # Try without branch filter (use company only)
+                    logger.info(f"No inventory analysis found for target branch {target_branch}, trying company-wide")
                     branch_inventory = inventory_df[
                         inventory_df['company_name'] == target_company
                     ].copy()
                 
                 if not branch_inventory.empty:
-                    # Prepare columns to merge (same as desktop)
+                    # Prepare columns to merge - get ABC class from TARGET branch
                     merge_cols = ['item_code']
                     
-                    # Add ABC class
+                    # Add ABC class (from target branch - items that need restocking)
                     if 'abc_class' in branch_inventory.columns:
                         merge_cols.append('abc_class')
                     
-                    # Add AMC (use adjusted_amc if available, else base_amc)
+                    # Add AMC (use adjusted_amc if available, else base_amc) - from target branch
                     if 'adjusted_amc' in branch_inventory.columns:
                         merge_cols.append('adjusted_amc')
                     elif 'base_amc' in branch_inventory.columns:
@@ -819,13 +820,13 @@ class DashboardService:
                         branch_inventory_dedup = branch_inventory[available_cols].drop_duplicates('item_code')
                         df = df.merge(branch_inventory_dedup, on='item_code', how='left')
                         
-                        # Set ABC class (same as desktop)
+                        # Set ABC class (from target branch)
                         if 'abc_class' in df.columns:
                             df['abc_class'] = df['abc_class'].fillna('')
                         else:
                             df['abc_class'] = ''
                         
-                        # Set AMC (use adjusted_amc if available, else base_amc) - same as desktop
+                        # Set AMC (use adjusted_amc if available, else base_amc) - from target branch
                         if 'adjusted_amc' in df.columns:
                             df['amc_pieces'] = df['adjusted_amc'].fillna(0)
                         elif 'base_amc' in df.columns:
@@ -836,10 +837,12 @@ class DashboardService:
                         df['abc_class'] = ''
                         df['amc_pieces'] = 0
                 else:
+                    logger.warning(f"No inventory analysis found for target branch {target_branch} ({target_company})")
                     df['abc_class'] = ''
                     df['amc_pieces'] = 0
             else:
-                # Fallback: Load ABC class from ABC map (same as desktop)
+                # Fallback: Load ABC class from ABC map
+                logger.warning("No inventory analysis table found, using ABC map fallback")
                 abc_map = self._load_abc_map()
                 if not abc_map.empty:
                     # Ensure ABC map is deduplicated by item_code before merging
@@ -852,10 +855,10 @@ class DashboardService:
                     df['abc_class'] = ''
                 df['amc_pieces'] = 0
             
-            # Filter to A/B/C only (fast moving items) - same as desktop version (no conditional check)
+            # Filter to A/B/C only (fast moving items) - ABC class from TARGET branch
             before_abc = len(df)
             df = df[df['abc_class'].isin(['A', 'B', 'C'])]
-            logger.info(f"After ABC filter (A/B/C): {len(df)} items (was {before_abc})")
+            logger.info(f"After ABC filter (A/B/C from target branch): {len(df)} items (was {before_abc})")
             
             # Log detailed diagnostics before reorder filter
             logger.info(f"📊 Before reorder level filter: {len(df)} items")

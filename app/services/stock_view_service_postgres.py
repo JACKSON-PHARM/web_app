@@ -285,7 +285,6 @@ class StockViewServicePostgres:
             LEFT JOIN last_invoice_info lii ON ui.item_code = lii.item_code
             LEFT JOIN last_invoice_details lid ON ui.item_code = lid.item_code
             ORDER BY ui.item_code
-            LIMIT 5000
             """
             
             params = (
