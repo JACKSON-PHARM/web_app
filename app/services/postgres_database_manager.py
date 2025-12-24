@@ -464,46 +464,35 @@ class PostgresDatabaseManager:
             if table_name:
                 try:
                     # Try to get column names to determine if it's new or old format
+                    # Table name is validated, safe to use in query
                     cursor.execute(f"""
                         SELECT column_name 
                         FROM information_schema.columns 
                         WHERE table_schema = 'public' 
-                        AND table_name = %s
+                        AND table_name = '{table_name}'
                         AND column_name IN ('company_name', 'branch_name', 'company', 'branch')
-                    """, (table_name,))
+                    """)
                     columns = [row[0] for row in cursor.fetchall()]
                     
                     # Use appropriate column names based on table structure
                     if 'company_name' in columns and 'branch_name' in columns:
-                        # New format (inventory_analysis_new)
+                        # New format (inventory_analysis_new) - has company_name and branch_name
+                        self.logger.info(f"Using inventory_analysis_new format (company_name, branch_name)")
                         if company:
-                            cursor.execute(f"""
-                                SELECT DISTINCT company_name as company, branch_name as branch_name
-                                FROM {table_name}
-                                WHERE company_name = %s
-                                ORDER BY company_name, branch_name
-                            """, (company,))
+                            query = f'SELECT DISTINCT company_name as company, branch_name as branch_name FROM "{table_name}" WHERE company_name = %s ORDER BY company_name, branch_name'
+                            cursor.execute(query, (company,))
                         else:
-                            cursor.execute(f"""
-                                SELECT DISTINCT company_name as company, branch_name as branch_name
-                                FROM {table_name}
-                                ORDER BY company_name, branch_name
-                            """)
+                            query = f'SELECT DISTINCT company_name as company, branch_name as branch_name FROM "{table_name}" ORDER BY company_name, branch_name'
+                            cursor.execute(query)
                     elif 'company' in columns and 'branch' in columns:
-                        # Old format (inventory_analysis)
+                        # Old format (inventory_analysis) - has company and branch
+                        self.logger.info(f"Using inventory_analysis format (company, branch)")
                         if company:
-                            cursor.execute(f"""
-                                SELECT DISTINCT company, branch as branch_name
-                                FROM {table_name}
-                                WHERE company = %s
-                                ORDER BY company, branch
-                            """, (company,))
+                            query = f'SELECT DISTINCT company, branch as branch_name FROM "{table_name}" WHERE company = %s ORDER BY company, branch'
+                            cursor.execute(query, (company,))
                         else:
-                            cursor.execute(f"""
-                                SELECT DISTINCT company, branch as branch_name
-                                FROM {table_name}
-                                ORDER BY company, branch
-                            """)
+                            query = f'SELECT DISTINCT company, branch as branch_name FROM "{table_name}" ORDER BY company, branch'
+                            cursor.execute(query)
                     
                     results = cursor.fetchall()
                     for row in results:
