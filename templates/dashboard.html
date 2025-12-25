@@ -778,7 +778,8 @@
             console.error('❌ Error in loadBranches():', error);
         });
         
-        // Check refresh status in background (non-blocking)
+        // Check refresh status once on page load (don't poll continuously)
+        // Only check if user manually triggers refresh
         checkRefreshStatus();
         
         // Add event listeners for branch changes
@@ -1560,10 +1561,9 @@
         }
     }
     
-    // Check refresh status every 2 minutes (reduced frequency to reduce server load)
-    setInterval(checkRefreshStatus, 120000);
-    
-    // Check on initial load too
+    // Only check refresh status once on page load
+    // Don't poll continuously - only check when user manually triggers refresh
+    // This prevents unnecessary API calls and authentication errors
     checkRefreshStatus();
     
     // Check sync status and credentials
@@ -1614,12 +1614,10 @@
     }
     
     // Check sync status on load and every 30 seconds (reduced from 5s to reduce server load)
+    // Only check sync status once on page load
+    // Don't poll continuously - only check when user manually triggers refresh
+    // This prevents unnecessary API calls and authentication errors
     checkSyncStatus();
-    setInterval(checkSyncStatus, 30000);
-    
-    // Check sync status on load and every 5 seconds
-    checkSyncStatus();
-    setInterval(checkSyncStatus, 5000);
     
     function toggleAllItems(type, checked) {
         const tableId = 'priorityTable';

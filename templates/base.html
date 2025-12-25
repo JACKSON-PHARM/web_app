@@ -316,11 +316,52 @@
         
         // Start freshness checking when page loads
         document.addEventListener('DOMContentLoaded', () => {
+            // Only check status once on page load, not continuously
+            // Continuous polling causes unnecessary API calls and authentication issues
             updateDataFreshnessNotification();
             updateSyncStatus();
-            // Check every 30 seconds (reduced from 10s) to reduce server load
-            freshnessCheckInterval = setInterval(updateDataFreshnessNotification, 30000);
-            syncCheckInterval = setInterval(updateSyncStatus, 30000); // Reduced from 5s to 30s
+            
+            // Only poll if user is actively viewing the page and refresh is in progress
+            // Check every 2 minutes (120 seconds) instead of 30 seconds to reduce load
+            // Only start polling if refresh is actually in progress
+            let checkIfRefreshing = async () => {
+                try {
+                    const status = await apiRequest('/api/refresh/status');
+                    if (status && status.is_refreshing) {
+                        // Refresh is in progress, start polling
+                        if (!freshnessCheckInterval) {
+                            freshnessCheckInterval = setInterval(updateDataFreshnessNotification, 120000); // 2 minutes
+                        }
+                        if (!syncCheckInterval) {
+                            syncCheckInterval = setInterval(updateSyncStatus, 120000); // 2 minutes
+                        }
+                    } else {
+                        // Not refreshing, stop polling
+                        if (freshnessCheckInterval) {
+                            clearInterval(freshnessCheckInterval);
+                            freshnessCheckInterval = null;
+                        }
+                        if (syncCheckInterval) {
+                            clearInterval(syncCheckInterval);
+                            syncCheckInterval = null;
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Error checking refresh status:', error);
+                    // Stop polling on error
+                    if (freshnessCheckInterval) {
+                        clearInterval(freshnessCheckInterval);
+                        freshnessCheckInterval = null;
+                    }
+                    if (syncCheckInterval) {
+                        clearInterval(syncCheckInterval);
+                        syncCheckInterval = null;
+                    }
+                }
+            };
+            
+            // Check once after 5 seconds to see if refresh is in progress
+            setTimeout(checkIfRefreshing, 5000);
         });
         
         // Cleanup on page unload
