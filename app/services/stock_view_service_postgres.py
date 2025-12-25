@@ -143,8 +143,7 @@ class StockViewServicePostgres:
             
             # Check if materialized view exists and use it for faster queries
             has_materialized_view = False
-            query = None
-            params = None
+            materialized_view_has_data = False
             
             try:
                 # Use a fresh connection for the check to avoid SSL issues
@@ -167,7 +166,7 @@ class StockViewServicePostgres:
                     logger.info("✅ Using stock_view_materialized for faster query")
                     # Use materialized view - much faster! All columns pre-computed
                     # IMPORTANT: Use parameterized query with exactly 2 placeholders
-                    query = """
+                    materialized_query = """
                         SELECT 
                             item_code,
                             item_name,
@@ -200,12 +199,12 @@ class StockViewServicePostgres:
                         ORDER BY item_code
                     """
                     # Materialized view only needs 2 parameters: branch_name and branch_company
-                    params = (branch_name, branch_company)
+                    materialized_params = (branch_name, branch_company)
                     logger.info(f"Materialized view query params (2 params): branch={branch_name}, company={branch_company}")
                     
                     # Execute materialized view query immediately and return
                     logger.info(f"Executing materialized view query with params: branch={branch_name}, company={branch_company}")
-                    cursor.execute(query, params)
+                    cursor.execute(materialized_query, materialized_params)
                     results = cursor.fetchall()
                     
                     logger.info(f"Materialized view query executed successfully, fetched {len(results)} rows")
@@ -243,19 +242,19 @@ class StockViewServicePostgres:
                         logger.info(f"✅ Successfully retrieved {len(df)} items from stock_view_materialized")
                         return df
                     else:
-                        logger.warning(f"Materialized view returned no results for branch={branch_name}, company={branch_company}")
-                        # Fall through to regular query if materialized view has no data
-                        has_materialized_view = False
+                        logger.warning(f"Materialized view returned no results for branch={branch_name}, company={branch_company}, falling back to regular query")
+                        materialized_view_has_data = False
                 else:
                     logger.info("⚠️ Materialized view not found, using regular query")
-                    has_materialized_view = False
+                    materialized_view_has_data = False
             except Exception as e:
                 logger.warning(f"⚠️ Error checking for materialized view: {e}, using regular query")
                 import traceback
                 logger.debug(traceback.format_exc())
-                has_materialized_view = False
+                materialized_view_has_data = False
             
-            if not has_materialized_view:
+            # Use regular query if materialized view doesn't exist or has no data
+            if not has_materialized_view or not materialized_view_has_data:
                 # Fallback to regular query if materialized view doesn't exist
                 logger.info("Using regular query (materialized view not available)")
                 # Simplified query: Start with unique item codes, then left join all data

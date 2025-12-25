@@ -211,8 +211,8 @@
                 
                 if (!notification || !icon || !message) return;
                 
-                const isRefreshing = status.is_refreshing || false;
-                const dataAge = status.data_age || {};
+                const isRefreshing = status && (status.is_refreshing || false);
+                const dataAge = (status && status.data_age) || {};
                 const ageMessage = dataAge.message || 'Unknown';
                 const isStale = dataAge.is_stale || false;
                 
@@ -222,30 +222,31 @@
                 if (isRefreshing) {
                     notification.classList.add('refreshing');
                     icon.textContent = '🔄';
-                    message.textContent = status.refresh_message || 'Refreshing data...';
-                    refreshBtn.style.display = 'none';
+                    message.textContent = (status && status.refresh_message) || 'Refreshing data...';
+                    if (refreshBtn) refreshBtn.style.display = 'none';
                     notification.style.display = 'block';
                 } else if (dataAge.age === null || ageMessage === 'Never updated') {
                     notification.classList.add('stale');
                     icon.textContent = '⚠️';
                     message.textContent = 'Data never updated';
-                    refreshBtn.style.display = 'inline-block';
+                    if (refreshBtn) refreshBtn.style.display = 'inline-block';
                     notification.style.display = 'block';
                 } else if (isStale) {
                     notification.classList.add('stale');
                     icon.textContent = '⚠️';
                     message.textContent = `Using data from ${ageMessage}`;
-                    refreshBtn.style.display = 'inline-block';
+                    if (refreshBtn) refreshBtn.style.display = 'inline-block';
                     notification.style.display = 'block';
                 } else {
                     notification.classList.add('fresh');
                     icon.textContent = '✅';
                     message.textContent = `Data updated ${ageMessage}`;
-                    refreshBtn.style.display = 'none';
+                    if (refreshBtn) refreshBtn.style.display = 'none';
                     notification.style.display = 'block';
                 }
             } catch (error) {
                 console.error('Error updating freshness notification:', error);
+                // Don't throw - this is a non-critical notification
             }
         }
         
