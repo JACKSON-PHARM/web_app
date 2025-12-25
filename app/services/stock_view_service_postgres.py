@@ -28,8 +28,12 @@ class StockViewServicePostgres:
         try:
             logger.info("Loading inventory analysis from database...")
             # Try to load from inventory_analysis_new table
+            # Use a fresh connection to avoid SSL issues
             conn = self.db_manager.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Set connection timeout to prevent hanging
+            cursor.execute("SET statement_timeout = '30s'")
             
             # Check which table exists
             cursor.execute("""
@@ -140,14 +144,21 @@ class StockViewServicePostgres:
             # Check if materialized view exists and use it for faster queries
             has_materialized_view = False
             try:
-                cursor.execute("""
+                # Use a fresh connection for the check to avoid SSL issues
+                check_conn = self.db_manager.get_connection()
+                check_cursor = check_conn.cursor()
+                check_cursor.execute("""
                     SELECT EXISTS (
                         SELECT FROM pg_matviews 
                         WHERE schemaname = 'public' 
                         AND matviewname = 'stock_view_materialized'
                     )
                 """)
-                has_materialized_view = cursor.fetchone()[0]
+                has_materialized_view = check_cursor.fetchone()[0]
+                check_cursor.close()
+                self.db_manager.put_connection(check_conn)
+                
+                logger.info(f"📊 Materialized view check: stock_view_materialized exists = {has_materialized_view}")
                 
                 if has_materialized_view:
                     logger.info("✅ Using stock_view_materialized for faster query")
@@ -189,7 +200,9 @@ class StockViewServicePostgres:
                     logger.info("⚠️ Materialized view not found, using regular query")
                     has_materialized_view = False
             except Exception as e:
-                logger.warning(f"Error checking for materialized view: {e}, using regular query")
+                logger.warning(f"⚠️ Error checking for materialized view: {e}, using regular query")
+                import traceback
+                logger.debug(traceback.format_exc())
                 has_materialized_view = False
             
             if not has_materialized_view:
@@ -450,17 +463,21 @@ class StockViewServicePostgres:
             cursor.close()
             self.db_manager.put_connection(conn)
             
-            # Add ABC class and AMC from inventory_analysis_new (with error protection)
+            # Skip inventory analysis loading if we used materialized view (it already has all data)
+            # Only load inventory analysis if we used regular query
             inventory_df = pd.DataFrame()
-            try:
-                logger.info("Loading inventory analysis data...")
-                inventory_df = self.load_inventory_analysis()
-                logger.info(f"Inventory analysis loaded: {len(inventory_df)} rows")
-            except Exception as inv_error:
-                logger.warning(f"Could not load inventory analysis (non-critical, continuing without it): {inv_error}")
-                import traceback
-                logger.debug(traceback.format_exc())
-                inventory_df = pd.DataFrame()  # Continue without inventory analysis
+            if not has_materialized_view:
+                try:
+                    logger.info("Loading inventory analysis data...")
+                    inventory_df = self.load_inventory_analysis()
+                    logger.info(f"Inventory analysis loaded: {len(inventory_df)} rows")
+                except Exception as inv_error:
+                    logger.warning(f"Could not load inventory analysis (non-critical, continuing without it): {inv_error}")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+                    inventory_df = pd.DataFrame()  # Continue without inventory analysis
+            else:
+                logger.info("✅ Skipping inventory analysis load - materialized view already has all data")
             
             if not inventory_df.empty and not df.empty:
                 # Filter inventory by branch if columns exist
