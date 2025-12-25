@@ -519,46 +519,54 @@ class DashboardService:
                         SELECT EXISTS (
                             SELECT FROM pg_matviews 
                             WHERE schemaname = 'public' 
-                            AND matviewname = 'priority_items_materialized'
+                            AND matviewname = 'stock_view_materialized'
                         )
                     """)
                     has_materialized_view = cursor_check.fetchone()[0]
                     cursor_check.close()
                     self.db_manager.put_connection(conn_check)
                     
-                    logger.info(f"📊 Materialized view check: priority_items_materialized exists = {has_materialized_view}")
+                    logger.info(f"📊 Materialized view check: stock_view_materialized exists = {has_materialized_view}")
                     
                     if has_materialized_view:
-                        logger.info("✅ Using priority_items_materialized for faster query")
-                        # Use materialized view - much faster! All columns pre-computed
-                        query = """
+                        logger.info("✅ Using stock_view_materialized for faster query (unified with stock view)")
+                        # Use stock_view_materialized - same view as stock view for consistency
+                        # Priority items: items where target branch has low stock but source branch has stock
+                        # stock_view_materialized is filtered by target_branch/target_company
+                        # We need items where:
+                        # - target_branch matches the selected target (low stock)
+                        # - supplier_stock > 0 (source has stock available)
+                        # - branch_stock is low or zero (target needs stock)
+                        # Note: We use literal values for source_branch/source_company in SELECT since they're constants
+                        query = f"""
                             SELECT 
                                 item_code,
                                 item_name,
-                                source_branch,
-                                source_company,
-                                source_stock_pieces,
+                                '{source_branch}' as source_branch,
+                                '{source_company}' as source_company,
+                                supplier_stock as source_stock_pieces,
                                 target_branch,
                                 target_company,
-                                target_stock_pieces,
+                                branch_stock as target_stock_pieces,
                                 pack_size,
                                 abc_class,
-                                amc_pieces,
+                                amc as amc_pieces,
                                 stock_comment,
                                 last_order_date,
                                 stock_level_pct
-                            FROM priority_items_materialized
-                            WHERE UPPER(TRIM(source_branch)) = UPPER(TRIM(%s))
-                                AND UPPER(TRIM(source_company)) = UPPER(TRIM(%s))
-                                AND UPPER(TRIM(target_branch)) = UPPER(TRIM(%s))
+                            FROM stock_view_materialized
+                            WHERE UPPER(TRIM(target_branch)) = UPPER(TRIM(%s))
                                 AND UPPER(TRIM(target_company)) = UPPER(TRIM(%s))
-                            ORDER BY source_stock_pieces DESC
+                                AND supplier_stock > 0
+                                AND (branch_stock IS NULL OR branch_stock <= 0 OR branch_stock < 1000)
+                                AND (stock_level_pct IS NULL OR stock_level_pct < 0.5)
+                            ORDER BY supplier_stock DESC
                             LIMIT %s
                         """
                         query = self._normalize_query(query)
+                        # Params: target_branch, target_company (for WHERE), limit
                         params = (
-                            source_branch, source_company,
-                            target_branch, target_company,
+                            target_branch, target_company,  # For WHERE clause
                             limit
                         )
                     else:

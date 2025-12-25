@@ -282,6 +282,8 @@
         cursor: not-allowed;
         pointer-events: none;
     }
+    
+    .priority-item-recent {
         background: #d4edda !important;
     }
     
@@ -1157,7 +1159,7 @@
                     setTimeout(() => {
                         if (document.getElementById('progressModal') && document.getElementById('progressModal').classList.contains('show')) {
                             loadPriorityItems();
-                }
+                        }
                     }, 30000);
                 } else {
                     // No refresh in progress - show refresh button
