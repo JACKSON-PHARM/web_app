@@ -788,11 +788,133 @@
     });
     
     async function loadDashboardData() {
-        // Load data immediately from database - don't wait for refresh
+        // Try to load cached priority items first (for persistence across tabs)
+        try {
+            const targetBranch = document.getElementById('targetBranch')?.value || 'BABA DOGO HQ|NILA';
+            const sourceBranch = document.getElementById('sourceBranch')?.value || 'BABA DOGO HQ|NILA';
+            const [targetBranchName] = targetBranch.split('|');
+            const [sourceBranchName] = sourceBranch.split('|');
+            const storageKey = `priorityItems_${targetBranchName}_${sourceBranchName}`;
+            const cached = localStorage.getItem(storageKey);
+            
+            if (cached) {
+                const cachedData = JSON.parse(cached);
+                // Use cached data if less than 5 minutes old
+                if (Date.now() - cachedData.timestamp < 5 * 60 * 1000) {
+                    console.log('Loading cached priority items');
+                    window.priorityItemsData = cachedData.data;
+                    displayPriorityItems(cachedData.data);
+                }
+            }
+        } catch (e) {
+            console.warn('Could not load cached priority items:', e);
+        }
+        
+        // Load fresh data from database
         await loadPriorityItems();
         
         // Check if refresh is needed in background (don't block UI)
         checkRefreshStatus();
+    }
+    
+    function displayPriorityItems(items) {
+        const tbody = document.getElementById('priorityBody');
+        if (!tbody || !items || items.length === 0) return;
+        
+        tbody.innerHTML = '';
+        items.forEach((item, index) => {
+            const row = tbody.insertRow();
+            
+            // Column 0: Checkbox
+            const checkboxCell = row.insertCell(0);
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'item-checkbox';
+            checkbox.dataset.index = index;
+            checkboxCell.appendChild(checkbox);
+            
+            // Column 1: Item Code
+            row.insertCell(1).textContent = item.item_code || '';
+            
+            // Column 2: Item Name
+            row.insertCell(2).textContent = item.item_name || '';
+            
+            // Column 3: HQ Stock (Packs)
+            const hqStock = parseFloat(item.source_stock_packs || item.hq_stock_packs || 0);
+            const hqCell = row.insertCell(3);
+            hqCell.textContent = hqStock.toFixed(0);
+            if (hqStock === 0) {
+                hqCell.classList.add('stock-zero');
+            } else if (hqStock < 10) {
+                hqCell.classList.add('stock-low');
+            } else {
+                hqCell.classList.add('stock-good');
+            }
+            
+            // Column 4: Branch
+            row.insertCell(4).textContent = item.branch_name || item.target_branch || '';
+            
+            // Column 5: Branch Stock (Packs)
+            const branchStock = parseFloat(item.target_stock_packs || item.branch_stock_packs || 0);
+            const branchStockCell = row.insertCell(5);
+            branchStockCell.textContent = branchStock.toFixed(0);
+            if (branchStock === 0) {
+                branchStockCell.classList.add('stock-zero');
+            } else if (branchStock < 10) {
+                branchStockCell.classList.add('stock-low');
+            } else {
+                branchStockCell.classList.add('stock-good');
+            }
+            
+            // Column 6: ABC Class
+            const abcClass = (item.abc_class || '').trim().toUpperCase();
+            const abcCell = row.insertCell(6);
+            abcCell.textContent = abcClass;
+            if (abcClass === 'A') {
+                abcCell.classList.add('abc-class-a');
+            } else if (abcClass === 'B') {
+                abcCell.classList.add('abc-class-b');
+            } else if (abcClass === 'C') {
+                abcCell.classList.add('abc-class-c');
+            }
+            
+            // Column 7: Stock Level %
+            const stockLevel = parseFloat(item.stock_level_pct || 0);
+            const stockLevelCell = row.insertCell(7);
+            stockLevelCell.textContent = stockLevel.toFixed(1) + '%';
+            if (stockLevel < 20) {
+                stockLevelCell.classList.add('stock-pct-critical');
+            } else if (stockLevel < 30) {
+                stockLevelCell.classList.add('stock-pct-warning');
+            } else {
+                stockLevelCell.classList.add('stock-pct-good');
+            }
+            
+            // Column 8: AMC (Packs)
+            const amcPacks = parseFloat(item.amc_packs || 0);
+            row.insertCell(8).textContent = amcPacks.toFixed(1);
+            
+            // Column 9: Order Qty (Packs) - editable
+            const orderQtyCell = row.insertCell(9);
+            const orderQtyInput = document.createElement('input');
+            orderQtyInput.type = 'number';
+            orderQtyInput.min = '0';
+            orderQtyInput.step = '1';
+            orderQtyInput.value = item.custom_order_quantity || '';
+            orderQtyInput.className = 'order-qty-input';
+            orderQtyInput.dataset.index = index;
+            orderQtyInput.addEventListener('change', function() {
+                updateOrderQuantity('priority', index, parseFloat(this.value) || 0);
+            });
+            orderQtyCell.appendChild(orderQtyInput);
+            
+            // Column 10: Last Order Date
+            row.insertCell(10).textContent = item.last_order_date || '';
+        });
+        
+        // Show procurement button
+        const btn = document.getElementById('priorityProcurementBtn');
+        if (btn) btn.style.display = 'inline-block';
     }
     
     async function loadBranches() {
@@ -949,177 +1071,28 @@
                 // Store items for procurement bot
                 window.priorityItemsData = data.data;
                 
+                // Save to localStorage for persistence across tabs
+                try {
+                    const storageKey = `priorityItems_${targetBranchName}_${sourceBranchName}`;
+                    localStorage.setItem(storageKey, JSON.stringify({
+                        data: data.data,
+                        timestamp: Date.now(),
+                        targetBranch: targetBranchName,
+                        sourceBranch: sourceBranchName
+                    }));
+                } catch (e) {
+                    console.warn('Could not save priority items to localStorage:', e);
+                }
+                
                 // Show procurement button
                 const btn = document.getElementById('priorityProcurementBtn');
                 if (btn) btn.style.display = 'inline-block';
                 
-                data.data.forEach((item, index) => {
-                    const row = tbody.insertRow();
-                    
-                    // Column 0: Checkbox
-                    const checkboxCell = row.insertCell(0);
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.className = 'item-checkbox';
-                    checkbox.dataset.index = index;
-                    checkboxCell.appendChild(checkbox);
-                    
-                    // Column 1: Item Code
-                    row.insertCell(1).textContent = item.item_code || '';
-                    
-                    // Column 2: Item Name
-                    row.insertCell(2).textContent = item.item_name || '';
-                    
-                    // Column 3: HQ Stock (Packs) - source_stock_packs
-                    const hqStock = parseFloat(item.source_stock_packs || item.hq_stock_packs || 0);
-                    const hqCell = row.insertCell(3);
-                    hqCell.textContent = hqStock.toFixed(0);
-                    if (hqStock === 0) {
-                        hqCell.classList.add('stock-zero');
-                    } else if (hqStock < 10) {
-                        hqCell.classList.add('stock-low');
-                    } else {
-                        hqCell.classList.add('stock-good');
-                    }
-                    
-                    // Column 4: Branch - branch_name (target branch)
-                    row.insertCell(4).textContent = item.branch_name || item.target_branch || '';
-                    
-                    // Column 5: Branch Stock (Packs) - target_stock_packs
-                    const branchStock = parseFloat(item.target_stock_packs || item.branch_stock_packs || 0);
-                    const branchStockCell = row.insertCell(5);
-                    branchStockCell.textContent = branchStock.toFixed(0);
-                    if (branchStock === 0) {
-                        branchStockCell.classList.add('stock-zero');
-                    } else if (branchStock < 10) {
-                        branchStockCell.classList.add('stock-low');
-                    } else {
-                        branchStockCell.classList.add('stock-good');
-                    }
-                    
-                    // Column 6: ABC Class (with color coding)
-                    const abcClass = (item.abc_class || '').trim().toUpperCase();
-                    const abcCell = row.insertCell(6);
-                    abcCell.textContent = abcClass;
-                    if (abcClass === 'A') {
-                        abcCell.classList.add('abc-class-a');
-                    } else if (abcClass === 'B') {
-                        abcCell.classList.add('abc-class-b');
-                    } else if (abcClass === 'C') {
-                        abcCell.classList.add('abc-class-c');
-                    }
-                    
-                    // Column 7: Stock Level % (with color coding)
-                    const stockLevel = parseFloat(item.stock_level_pct || 0);
-                    const stockLevelCell = row.insertCell(7);
-                    stockLevelCell.textContent = stockLevel.toFixed(1) + '%';
-                    if (stockLevel < 20) {
-                        stockLevelCell.classList.add('stock-pct-critical');
-                    } else if (stockLevel < 30) {
-                        stockLevelCell.classList.add('stock-pct-warning');
-                    } else {
-                        stockLevelCell.classList.add('stock-pct-good');
-                    }
-                    
-                    // Column 8: AMC (Packs)
-                    const amc = parseFloat(item.amc_packs || item.amc || 0);
-                    row.insertCell(8).textContent = amc.toFixed(2);
-                    
-                    // Column 9: Order Qty (Packs) - Editable
-                    const packSize = parseFloat(item.pack_size) || 1;
-                    const amcPieces = parseFloat(item.amc) || 0;
-                    const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
-                    const defaultValue = amcPacks > 0 ? amcPacks.toFixed(2) : '0.00';
-                    
-                    const orderQtyCell = row.insertCell(9);
-                    const qtyInput = document.createElement('input');
-                    qtyInput.type = 'number';
-                    qtyInput.className = 'order-qty-input priority-order-qty-input';
-                    qtyInput.dataset.index = index;
-                    qtyInput.dataset.defaultValue = defaultValue; // Store default for reset
-                    qtyInput.value = defaultValue;
-                    qtyInput.min = '0';
-                    qtyInput.step = '0.01';
-                    qtyInput.style.cssText = 'width: 100%; padding: 4px; border: 1px solid #ced4da; border-radius: 4px; text-align: right; background-color: #e9ecef; cursor: pointer;';
-                    qtyInput.disabled = true;
-                    qtyInput.title = 'Click to edit quantity (auto-selects item)';
-                    
-                    // Enable input and check checkbox when user clicks/focuses on quantity field
-                    qtyInput.addEventListener('focus', function() {
-                        if (this.disabled) {
-                            checkbox.checked = true;
-                            togglePriorityOrderQuantityInput(index, true);
-                            this.select(); // Select text for easy editing
-                        }
-                    });
-                    
-                    qtyInput.addEventListener('click', function() {
-                        if (this.disabled) {
-                            checkbox.checked = true;
-                            togglePriorityOrderQuantityInput(index, true);
-                            this.select(); // Select text for easy editing
-                        }
-                    });
-                    
-                    qtyInput.onchange = function() { 
-                        updatePriorityOrderQuantity(index, this.value);
-                        // Ensure checkbox stays checked when quantity changes
-                        if (!checkbox.checked) {
-                            checkbox.checked = true;
-                        }
-                    };
-                    orderQtyCell.appendChild(qtyInput);
-                    
-                    // Add change listener to checkbox to enable/disable input and reset quantity
-                    checkbox.addEventListener('change', function() {
-                        togglePriorityOrderQuantityInput(index, this.checked);
-                    });
-                    
-                    // Column 10: Last Order Date (with green background if recent)
-                    const lastOrderDateRaw = item.last_order_date || null;
-                    const dateCell = row.insertCell(10);
-                    const formattedDate = formatDate(lastOrderDateRaw);
-                    dateCell.textContent = formattedDate;
-                    
-                    // Check if ordered within last 7 days - apply green background and disable checkbox
-                    let isRecentlyOrdered = false;
-                    if (lastOrderDateRaw && lastOrderDateRaw !== 'Never' && lastOrderDateRaw !== null && lastOrderDateRaw !== '') {
-                        try {
-                            // Handle ISO date strings or other formats
-                            let orderDate;
-                            if (typeof lastOrderDateRaw === 'string') {
-                                // Try parsing ISO format first
-                                orderDate = new Date(lastOrderDateRaw);
-                                // If that fails, try other common formats
-                                if (isNaN(orderDate.getTime())) {
-                                    // Try parsing as date string
-                                    orderDate = new Date(lastOrderDateRaw.replace(/-/g, '/'));
-                                }
-                            } else {
-                                orderDate = new Date(lastOrderDateRaw);
-                            }
-                            
-                            if (!isNaN(orderDate.getTime())) {
-                                const now = new Date();
-                                const daysAgo = (now - orderDate) / (1000 * 60 * 60 * 24);
-                                if (daysAgo >= 0 && daysAgo <= 7) {
-                                    isRecentlyOrdered = true;
-                                    row.classList.add('priority-item-recent');
-                                    // Disable checkbox and input for recently ordered items
-                                    checkbox.disabled = true;
-                                    checkbox.title = `Item ordered ${Math.round(daysAgo)} day(s) ago. Cannot reorder within 7 days.`;
-                                    const quantityInput = row.querySelector('.order-quantity-input');
-                                    if (quantityInput) {
-                                        quantityInput.disabled = true;
-                                        quantityInput.title = 'Cannot order - item was recently ordered';
-                                    }
-                                }
-                            }
-                        } catch (e) {
-                            console.warn('Error parsing last_order_date:', lastOrderDateRaw, e);
-                        }
-                    }
-                });
+                // Use the display function to render items
+                displayPriorityItems(data.data);
+                
+                // Log for debugging
+                console.log(`✅ Displayed ${data.data.length} priority items`);
             } else {
                 tbody.innerHTML = '<tr><td colspan="11" class="empty">No priority items found</td></tr>';
                 const btn = document.getElementById('priorityProcurementBtn');

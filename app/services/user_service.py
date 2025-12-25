@@ -46,10 +46,18 @@ class UserService:
     def _load_users(self) -> dict:
         """Load users database"""
         try:
+            # Ensure file exists first
+            if not os.path.exists(self.users_db_path):
+                self._ensure_users_db()
+            
             with open(self.users_db_path, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                logger.debug(f"Loaded {len(data.get('users', []))} users from {self.users_db_path}")
+                return data
         except Exception as e:
             logger.error(f"Error loading users: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {'users': []}
     
     def _save_users(self, data: dict):
@@ -130,10 +138,20 @@ class UserService:
         users['users'].append(new_user)
         users['last_updated'] = datetime.now().isoformat()
         users['last_updated_by'] = created_by
+        
+        # Save and verify
         self._save_users(users)
         
-        logger.info(f"✅ Created user: {username} (subscription: {subscription_days} days)")
-        return True, f"User '{username}' created successfully with {subscription_days} days subscription"
+        # Verify user was saved by reloading
+        verify_users = self._load_users()
+        user_found = any(u['username'].lower() == username_lower for u in verify_users.get('users', []))
+        
+        if user_found:
+            logger.info(f"✅ Created user: {username} (subscription: {subscription_days} days) - verified in database")
+            return True, f"User '{username}' created successfully with {subscription_days} days subscription"
+        else:
+            logger.error(f"❌ User creation failed: {username} not found after save")
+            return False, f"User creation failed - user not found in database after save"
     
     def update_user_subscription(self, username: str, subscription_days: int, updated_by: str) -> Tuple[bool, str]:
         """Update user's subscription (admin only)"""
