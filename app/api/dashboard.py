@@ -428,15 +428,43 @@ async def get_priority_items(
         # Use PostgreSQL database manager directly
         dashboard_service = DashboardService(db_manager)
         logger.info(f"🔍 Calling get_priority_items_between_branches...")
-        priority_items = dashboard_service.get_priority_items_between_branches(
-            target_branch,
-            target_company,
-            source_branch,
-            source_company,
-            limit=limit
-        )
         
-        logger.info(f"📊 DashboardService returned: {type(priority_items)}, empty: {priority_items is None or (hasattr(priority_items, 'empty') and priority_items.empty)}")
+        # Add timeout wrapper for the query (max 60 seconds)
+        import asyncio
+        import concurrent.futures
+        
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(
+                dashboard_service.get_priority_items_between_branches,
+                target_branch,
+                target_company,
+                source_branch,
+                source_company,
+                limit=limit
+            )
+            try:
+                priority_items = future.result(timeout=60.0)  # 60 second timeout
+                logger.info(f"📊 DashboardService returned: {type(priority_items)}, empty: {priority_items is None or (hasattr(priority_items, 'empty') and priority_items.empty)}")
+            except concurrent.futures.TimeoutError:
+                logger.error("❌ Priority items query timed out after 60 seconds")
+                return {
+                    "success": False,
+                    "error": "Query timeout - the database query took too long. The materialized view may need to be refreshed.",
+                    "data": [],
+                    "count": 0,
+                    "message": "Query timeout. Try refreshing the materialized views or use smaller branch selections."
+                }
+            except Exception as e:
+                logger.error(f"❌ Error executing priority items query: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                raise
         
         # Convert DataFrame to dict - replace NaN with None for JSON serialization
         if priority_items is not None and not priority_items.empty:

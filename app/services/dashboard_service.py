@@ -511,6 +511,7 @@ class DashboardService:
             # Use current_stock if available
             if source_stock_count > 0:
                 # Check if materialized view exists and use it for faster queries
+                has_materialized_view = False
                 try:
                     conn_check = self.db_manager.get_connection()
                     cursor_check = conn_check.cursor()
@@ -524,6 +525,8 @@ class DashboardService:
                     has_materialized_view = cursor_check.fetchone()[0]
                     cursor_check.close()
                     self.db_manager.put_connection(conn_check)
+                    
+                    logger.info(f"📊 Materialized view check: priority_items_materialized exists = {has_materialized_view}")
                     
                     if has_materialized_view:
                         logger.info("✅ Using priority_items_materialized for faster query")
@@ -559,8 +562,14 @@ class DashboardService:
                             limit
                         )
                     else:
-                        raise Exception("No materialized view")
-                except:
+                        logger.info("⚠️ Materialized view not found, will use regular query")
+                except Exception as mv_error:
+                    logger.warning(f"⚠️ Error checking for materialized view: {mv_error}, falling back to regular query")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+                    has_materialized_view = False
+                
+                if not has_materialized_view:
                     # Fallback to regular query
                     logger.info(f"Using current_stock table for priority items (found {source_stock_count} records for {source_branch})")
                     # Simplified query - remove complex subquery for last_order_date to avoid timeouts
@@ -618,14 +627,23 @@ class DashboardService:
             
             # Check if we're using materialized view
             using_materialized_view = 'priority_items_materialized' in query.upper()
+            logger.info(f"📊 Using materialized view: {using_materialized_view}")
             
             # Query was already normalized above when params were set
             normalized_query = self._normalize_query(query)
-            logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
+            logger.info(f"📊 Query type: {'MATERIALIZED VIEW' if using_materialized_view else 'REGULAR QUERY'}")
+            logger.info(f"📊 Query params: source_branch={source_branch}, source_company={source_company}, target_branch={target_branch}, target_company={target_company}, limit={limit}")
+            logger.debug(f"Normalized query (first 300 chars): {normalized_query[:300]}")
+            
             try:
+                import time
+                start_time = time.time()
+                logger.info(f"⏱️ Starting query execution...")
                 results = self._execute_query(normalized_query, params)
+                elapsed_time = time.time() - start_time
+                logger.info(f"✅ Query executed in {elapsed_time:.2f} seconds, returned {len(results) if results else 0} rows")
             except Exception as query_error:
-                logger.error(f"Priority items query failed: {query_error}")
+                logger.error(f"❌ Priority items query failed: {query_error}")
                 import traceback
                 logger.error(traceback.format_exc())
                 # Return empty DataFrame on error to avoid breaking the UI
