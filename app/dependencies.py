@@ -65,12 +65,28 @@ def get_db_manager():
 _user_service = None
 
 def get_user_service():
-    """Get or create user service instance"""
+    """Get or create user service instance - uses Supabase"""
     global _user_service
     if _user_service is None:
-        from app.services.user_service import UserService
-        _user_service = UserService()
+        # Use Supabase-based user service
+        from app.services.user_service_supabase import UserServiceSupabase
+        db_manager = get_db_manager()
+        _user_service = UserServiceSupabase(db_manager)
+        logger.info("✅ Using Supabase-based UserService")
     return _user_service
+
+# Global credential manager instance (singleton)
+_credential_manager = None
+
+def get_credential_manager():
+    """Get or create credential manager instance - uses Supabase"""
+    global _credential_manager
+    if _credential_manager is None:
+        from app.services.credential_manager_supabase import CredentialManagerSupabase
+        db_manager = get_db_manager()
+        _credential_manager = CredentialManagerSupabase(db_manager)
+        logger.info("✅ Using Supabase-based CredentialManager")
+    return _credential_manager
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     """Get current authenticated user from JWT token"""

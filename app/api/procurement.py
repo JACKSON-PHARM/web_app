@@ -32,7 +32,7 @@ except ImportError:
     BRANCH_MAPPING = {}
     ALL_BRANCHES = []
 
-from app.services.credential_manager import CredentialManager
+from app.dependencies import get_credential_manager
 from app.config import settings
 
 router = APIRouter()
@@ -47,6 +47,11 @@ class ProcurementRequest(BaseModel):
     manual_selection: bool = True
     supplier_code: Optional[str] = None  # Supplier code for purchase orders
     supplier_name: Optional[str] = None  # Supplier name for purchase orders
+    # Credentials for accountability - user must provide current credentials
+    company: str  # "NILA" or "DAIMA"
+    username: str
+    password: str
+    base_url: Optional[str] = None
 
 @router.post("/run")
 async def run_procurement_bot(
@@ -82,8 +87,83 @@ async def run_procurement_bot(
         # Convert items list to DataFrame
         items_df = pd.DataFrame(request.items)
         
-        # Initialize credential manager
-        cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+        # Create temporary credential manager with user-provided credentials
+        # This ensures accountability - user must provide current credentials
+        from app.services.credential_manager_supabase import CredentialManagerSupabase
+        from app.services.credential_manager import CredentialManager
+        
+        # Create a temporary credential manager that uses provided credentials
+        # We'll create a temporary instance that doesn't save to database
+        class TempCredentialManager:
+            """Temporary credential manager for procurement using user-provided credentials"""
+            def __init__(self, company, username, password, base_url):
+                self.company = company
+                self.username = username
+                self.password = password
+                self.base_url = base_url or 'https://corebasebackendnila.co.ke:5019'
+                self._token_cache = {}
+                self._session_cache = {}
+            
+            def get_credentials(self, company: str):
+                """Return provided credentials for the specified company"""
+                if company == self.company:
+                    return {
+                        'username': self.username,
+                        'password': self.password,
+                        'base_url': self.base_url,
+                        'enabled': True
+                    }
+                return None
+            
+            def get_valid_token(self, company: str):
+                """Get token using provided credentials"""
+                if company != self.company:
+                    return None
+                
+                import requests
+                try:
+                    session = requests.Session()
+                    auth_url = f"{self.base_url}/api/auth/login"
+                    response = session.post(auth_url, json={
+                        'username': self.username,
+                        'password': self.password
+                    }, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        return data.get('access_token') or data.get('token')
+                except Exception as e:
+                    logger.error(f"Error getting token: {e}")
+                return None
+            
+            def get_session(self, company: str):
+                """Get session for company"""
+                import requests
+                from requests.adapters import HTTPAdapter
+                from urllib3.util.retry import Retry
+                
+                if company != self.company:
+                    return None
+                
+                session = requests.Session()
+                retry_strategy = Retry(
+                    total=3,
+                    backoff_factor=1,
+                    status_forcelist=[429, 500, 502, 503, 504]
+                )
+                adapter = HTTPAdapter(max_retries=retry_strategy)
+                session.mount("http://", adapter)
+                session.mount("https://", adapter)
+                return session
+        
+        # Use user-provided credentials for procurement
+        cred_manager = TempCredentialManager(
+            request.company,
+            request.username,
+            request.password,
+            request.base_url
+        )
+        logger.info(f"✅ Using user-provided credentials for procurement (company: {request.company}, user: {request.username})")
         
         # Get source branch code if provided (for branch orders)
         source_branch_code_str = None

@@ -373,6 +373,37 @@
                 </select>
             </div>
             
+            <!-- Credentials Section (Required for Accountability) -->
+            <div class="procurement-form-group" style="border-top: 2px solid #dee2e6; padding-top: 15px; margin-top: 15px;">
+                <label style="font-weight: bold; color: #dc3545;">🔐 API Credentials (Required for Accountability)</label>
+                <div class="procurement-info-text" style="margin-bottom: 10px; color: #6c757d;">
+                    Please provide current API credentials. These will be used for this order only and are not saved.
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label for="procurementCompany">Company:</label>
+                    <select id="procurementCompany" required style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                        <option value="">-- Select Company --</option>
+                        <option value="NILA">NILA</option>
+                        <option value="DAIMA">DAIMA</option>
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label for="procurementUsername">Username:</label>
+                    <input type="text" id="procurementUsername" required 
+                           placeholder="Enter API username" 
+                           style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label for="procurementPassword">Password:</label>
+                    <input type="password" id="procurementPassword" required 
+                           placeholder="Enter API password" 
+                           style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+            </div>
+            
             <div class="procurement-modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeProcurementModal()">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="confirmProcurementOrder()">Create Order</button>
@@ -1609,6 +1640,16 @@
         // Get order mode
         const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
         
+        // Get credentials (required for accountability)
+        const procurementCompany = document.getElementById('procurementCompany').value;
+        const procurementUsername = document.getElementById('procurementUsername').value;
+        const procurementPassword = document.getElementById('procurementPassword').value;
+        
+        if (!procurementCompany || !procurementUsername || !procurementPassword) {
+            alert('Please provide API credentials (Company, Username, and Password)');
+            return;
+        }
+        
         // Get source branch (for branch orders)
         const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
         const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
@@ -1625,7 +1666,7 @@
             }
             
             // Batch items if more than 20
-            await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName);
+            await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName, procurementCompany, procurementUsername, procurementPassword);
         } else {
             // Branch order mode
             const destinationBranchValue = document.getElementById('destinationBranchSelect').value;
@@ -1637,11 +1678,11 @@
             const [destBranch, destCompany] = destinationBranchValue.split('|').map(s => s.trim());
             
             // Batch items if more than 20
-            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order');
+            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order', null, null, procurementCompany, procurementUsername, procurementPassword);
         }
     }
     
-    async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null) {
+    async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null, procurementCompany = null, procurementUsername = null, procurementPassword = null) {
         const BATCH_SIZE = 20;
         const batches = [];
         
@@ -1669,7 +1710,10 @@
                     source_branch_name: sourceBranch,
                     source_branch_company: sourceCompany,
                     order_mode: orderMode,
-                    manual_selection: true
+                    manual_selection: true,
+                    company: procurementCompany,
+                    username: procurementUsername,
+                    password: procurementPassword
                 };
                 
                 if (orderMode === 'purchase_order' && supplierCode && supplierName) {

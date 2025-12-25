@@ -7,7 +7,7 @@ import sys
 import os
 from typing import Dict, List, Optional
 from app.services.fetcher_manager import FetcherManager
-from app.services.credential_manager import CredentialManager
+# CredentialManager can be either local or Supabase - passed as parameter
 
 # Add parent directory to import orchestrator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -157,6 +157,9 @@ class RefreshService:
                 results['duration'] = orchestrator_result.get('duration', 'Unknown')
                 
                 self.logger.info(f"✅ Refresh completed successfully in {orchestrator_result.get('duration', 'Unknown')}")
+                
+                # Refresh materialized views after data refresh
+                self._refresh_materialized_views()
                 self.logger.info(f"📊 Summary: Stock={stock_records:,}, GRN={grn_count:,}, Orders={purchase_orders + branch_orders:,}, Invoices={supplier_invoices:,}")
             else:
                 results['success'] = False
@@ -248,6 +251,9 @@ class RefreshService:
             else:
                 results['messages'].append("✅ All fetchers completed successfully")
             
+            # Refresh materialized views after data refresh
+            self._refresh_materialized_views()
+            
             return results
             
         except Exception as e:
@@ -261,4 +267,44 @@ class RefreshService:
                 'fetchers_failed': results.get('fetchers_failed', []),
                 'messages': results.get('messages', []) + [f"❌ Refresh failed: {str(e)}"]
             }
+    
+    def _refresh_materialized_views(self):
+        """Refresh materialized views after data refresh"""
+        try:
+            conn = self.db_manager.get_connection()
+            cursor = conn.cursor()
+            
+            self.logger.info("🔄 Refreshing materialized views...")
+            
+            # Refresh stock view materialized view
+            try:
+                cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY stock_view_materialized")
+                self.logger.info("✅ Refreshed stock_view_materialized")
+            except Exception as e:
+                # Try without CONCURRENTLY if it fails (requires unique index)
+                try:
+                    cursor.execute("REFRESH MATERIALIZED VIEW stock_view_materialized")
+                    self.logger.info("✅ Refreshed stock_view_materialized (without CONCURRENTLY)")
+                except Exception as e2:
+                    self.logger.warning(f"⚠️ Could not refresh stock_view_materialized: {e2}")
+            
+            # Refresh priority items materialized view
+            try:
+                cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY priority_items_materialized")
+                self.logger.info("✅ Refreshed priority_items_materialized")
+            except Exception as e:
+                # Try without CONCURRENTLY if it fails
+                try:
+                    cursor.execute("REFRESH MATERIALIZED VIEW priority_items_materialized")
+                    self.logger.info("✅ Refreshed priority_items_materialized (without CONCURRENTLY)")
+                except Exception as e2:
+                    self.logger.warning(f"⚠️ Could not refresh priority_items_materialized: {e2}")
+            
+            conn.commit()
+            cursor.close()
+            self.db_manager.put_connection(conn)
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error refreshing materialized views: {e}")
+            # Don't fail the refresh if materialized views can't be refreshed
 

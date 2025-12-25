@@ -7,7 +7,7 @@ from typing import Optional
 import asyncio
 import logging
 from app.dependencies import get_current_user, get_db_manager
-from app.services.credential_manager import CredentialManager
+from app.dependencies import get_credential_manager
 from app.services.fetcher_manager import FetcherManager
 from app.services.scheduler import RefreshScheduler
 from app.services.refresh_status import RefreshStatusService
@@ -44,7 +44,7 @@ async def run_refresh_task():
         db_manager = get_db_manager()
         
         # Initialize credential manager (credentials already saved or provided)
-        cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+        cred_manager = get_credential_manager()
         
         # Use refresh service
         from app.services.refresh_service import RefreshService
@@ -91,7 +91,7 @@ async def refresh_all_data(
     
     # Get database and credential managers
     db_manager = get_db_manager()
-    cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+    cred_manager = get_credential_manager()
     
     # Check if credentials are saved
     nila_creds = cred_manager.get_credentials("NILA")

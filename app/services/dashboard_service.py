@@ -607,10 +607,61 @@ class DashboardService:
             
             # Prefer current_stock if available, otherwise use stock_data with latest snapshot
             if source_stock_count > 0:
-                # Use current_stock (most recent data) - Simplified query to avoid timeouts
-                logger.info(f"Using current_stock table for priority items (found {source_stock_count} records for {source_branch})")
-                # Simplified query - remove complex subquery for last_order_date to avoid timeouts
-                query = """
+                # Check if materialized view exists and use it for faster queries
+                try:
+                    conn_check = self.db_manager.get_connection()
+                    cursor_check = conn_check.cursor()
+                    cursor_check.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM pg_matviews 
+                            WHERE schemaname = 'public' 
+                            AND matviewname = 'priority_items_materialized'
+                        )
+                    """)
+                    has_materialized_view = cursor_check.fetchone()[0]
+                    cursor_check.close()
+                    self.db_manager.put_connection(conn_check)
+                    
+                    if has_materialized_view:
+                        logger.info("✅ Using priority_items_materialized for faster query")
+                        # Use materialized view - much faster! All columns pre-computed
+                        query = """
+                            SELECT 
+                                item_code,
+                                item_name,
+                                source_branch,
+                                source_company,
+                                source_stock_pieces,
+                                target_branch,
+                                target_company,
+                                target_stock_pieces,
+                                pack_size,
+                                abc_class,
+                                amc_pieces as amc,
+                                stock_comment,
+                                last_order_date,
+                                stock_level_pct
+                            FROM priority_items_materialized
+                            WHERE UPPER(TRIM(source_branch)) = UPPER(TRIM(%s))
+                                AND UPPER(TRIM(source_company)) = UPPER(TRIM(%s))
+                                AND UPPER(TRIM(target_branch)) = UPPER(TRIM(%s))
+                                AND UPPER(TRIM(target_company)) = UPPER(TRIM(%s))
+                            ORDER BY source_stock_pieces DESC
+                            LIMIT %s
+                        """
+                        query = self._normalize_query(query)
+                        params = (
+                            source_branch, source_company,
+                            target_branch, target_company,
+                            limit
+                        )
+                    else:
+                        raise Exception("No materialized view")
+                except:
+                    # Fallback to regular query
+                    logger.info(f"Using current_stock table for priority items (found {source_stock_count} records for {source_branch})")
+                    # Simplified query - remove complex subquery for last_order_date to avoid timeouts
+                    query = """
                     SELECT 
                         cs_source.item_code,
                         MAX(cs_source.item_name) AS item_name,

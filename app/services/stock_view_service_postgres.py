@@ -137,9 +137,62 @@ class StockViewServicePostgres:
                 self.db_manager.put_connection(conn)
                 return pd.DataFrame()
             
-            # Simplified query: Start with unique item codes, then left join all data
-            # Step 1: Get all unique item codes for the company
-            query = """
+            # Check if materialized view exists and use it for faster queries
+            try:
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM pg_matviews 
+                        WHERE schemaname = 'public' 
+                        AND matviewname = 'stock_view_materialized'
+                    )
+                """)
+                has_materialized_view = cursor.fetchone()[0]
+                
+                if has_materialized_view:
+                    logger.info("✅ Using stock_view_materialized for faster query")
+                    # Use materialized view - much faster! All columns pre-computed
+                    query = """
+                        SELECT 
+                            item_code,
+                            item_name,
+                            target_branch,
+                            target_company,
+                            supplier_stock,
+                            branch_stock,
+                            pack_size,
+                            unit_price,
+                            stock_value,
+                            last_order_date,
+                            last_order_doc,
+                            last_order_quantity,
+                            last_invoice_date,
+                            last_invoice_doc,
+                            last_invoice_quantity,
+                            last_supply_date,
+                            last_supply_doc,
+                            last_supply_quantity,
+                            last_grn_date,
+                            last_grn_quantity,
+                            last_grn_doc,
+                            abc_class,
+                            amc,
+                            stock_comment,
+                            stock_level_pct
+                        FROM stock_view_materialized
+                        WHERE UPPER(TRIM(target_branch)) = UPPER(TRIM(%s))
+                            AND UPPER(TRIM(target_company)) = UPPER(TRIM(%s))
+                        ORDER BY item_code
+                    """
+                    params = (branch_name, branch_company)
+                else:
+                    logger.info("⚠️ Materialized view not found, using regular query")
+                    raise Exception("No materialized view")
+            except:
+                # Fallback to regular query if materialized view doesn't exist
+                logger.info("Using regular query (materialized view not available)")
+                # Simplified query: Start with unique item codes, then left join all data
+                # Step 1: Get all unique item codes for the company
+                query = """
             WITH unique_items AS (
                 SELECT DISTINCT 
                     item_code,

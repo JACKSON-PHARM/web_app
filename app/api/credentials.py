@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 from app.dependencies import get_current_user
-from app.services.credential_manager import CredentialManager
+from app.dependencies import get_credential_manager
 from app.config import settings
 
 router = APIRouter()
@@ -31,7 +31,7 @@ async def save_credentials(
     if request.company not in ["NILA", "DAIMA"]:
         return {"success": False, "message": "Company must be NILA or DAIMA"}
     
-    cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+    cred_manager = get_credential_manager()
     
     base_url = request.base_url
     if not base_url:
@@ -58,7 +58,7 @@ async def test_credentials(
     if request.company not in ["NILA", "DAIMA"]:
         return {"success": False, "message": "Company must be NILA or DAIMA"}
     
-    cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+    cred_manager = get_credential_manager()
     
     base_url = request.base_url
     if not base_url:
@@ -79,7 +79,7 @@ async def test_credentials(
 @router.get("/status")
 async def get_credentials_status(current_user: dict = Depends(get_current_user)):
     """Get credentials status for all companies"""
-    cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+    cred_manager = get_credential_manager()
     
     status = {}
     for company in ["NILA", "DAIMA"]:

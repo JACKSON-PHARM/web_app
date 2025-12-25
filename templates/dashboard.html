@@ -1742,6 +1742,16 @@
         // Get order mode
         const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
         
+        // Get credentials (required for accountability)
+        const procurementCompany = document.getElementById('procurementCompany').value;
+        const procurementUsername = document.getElementById('procurementUsername').value;
+        const procurementPassword = document.getElementById('procurementPassword').value;
+        
+        if (!procurementCompany || !procurementUsername || !procurementPassword) {
+            alert('Please provide API credentials (Company, Username, and Password)');
+            return;
+        }
+        
         // Get source branch (for branch orders)
         const sourceBranchValue = document.getElementById('sourceBranch')?.value || `${branch}|${company}`;
         const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
@@ -1758,7 +1768,7 @@
             }
             
             // Batch items if more than 20
-            await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName);
+            await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName, procurementCompany, procurementUsername, procurementPassword);
         } else {
             // Branch order mode
             const destinationBranchValue = document.getElementById('destinationBranchSelect').value;
@@ -1770,11 +1780,11 @@
             const [destBranch, destCompany] = destinationBranchValue.split('|').map(s => s.trim());
             
             // Batch items if more than 20
-            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order');
+            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order', null, null, procurementCompany, procurementUsername, procurementPassword);
         }
     }
     
-    async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null) {
+    async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null, procurementCompany = null, procurementUsername = null, procurementPassword = null) {
         const BATCH_SIZE = 20;
         const batches = [];
         
@@ -1802,7 +1812,10 @@
                     source_branch_name: sourceBranch,
                     source_branch_company: sourceCompany,
                     order_mode: orderMode,
-                    manual_selection: true
+                    manual_selection: true,
+                    company: procurementCompany,
+                    username: procurementUsername,
+                    password: procurementPassword
                 };
                 
                 if (orderMode === 'purchase_order' && supplierCode && supplierName) {
