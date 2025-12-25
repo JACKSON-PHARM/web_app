@@ -143,6 +143,9 @@ class StockViewServicePostgres:
             
             # Check if materialized view exists and use it for faster queries
             has_materialized_view = False
+            query = None
+            params = None
+            
             try:
                 # Use a fresh connection for the check to avoid SSL issues
                 check_conn = self.db_manager.get_connection()
@@ -163,6 +166,7 @@ class StockViewServicePostgres:
                 if has_materialized_view:
                     logger.info("✅ Using stock_view_materialized for faster query")
                     # Use materialized view - much faster! All columns pre-computed
+                    # IMPORTANT: Use parameterized query with exactly 2 placeholders
                     query = """
                         SELECT 
                             item_code,
@@ -195,7 +199,53 @@ class StockViewServicePostgres:
                             AND UPPER(TRIM(target_company)) = UPPER(TRIM(%s))
                         ORDER BY item_code
                     """
+                    # Materialized view only needs 2 parameters: branch_name and branch_company
                     params = (branch_name, branch_company)
+                    logger.info(f"Materialized view query params (2 params): branch={branch_name}, company={branch_company}")
+                    
+                    # Execute materialized view query immediately and return
+                    logger.info(f"Executing materialized view query with params: branch={branch_name}, company={branch_company}")
+                    cursor.execute(query, params)
+                    results = cursor.fetchall()
+                    
+                    logger.info(f"Materialized view query executed successfully, fetched {len(results)} rows")
+                    
+                    if results:
+                        df = pd.DataFrame(results)
+                        logger.info(f"Materialized view returned {len(df)} rows")
+                        
+                        # Materialized view already has all columns, just ensure proper types
+                        df['branch_stock'] = pd.to_numeric(df['branch_stock'], errors='coerce').fillna(0)
+                        df['supplier_stock'] = pd.to_numeric(df['supplier_stock'], errors='coerce').fillna(0)
+                        df['pack_size'] = pd.to_numeric(df['pack_size'], errors='coerce').fillna(1)
+                        df['unit_price'] = pd.to_numeric(df['unit_price'], errors='coerce').fillna(0)
+                        df['stock_value'] = pd.to_numeric(df['stock_value'], errors='coerce').fillna(0)
+                        df['amc'] = pd.to_numeric(df['amc'], errors='coerce').fillna(0)
+                        df['stock_level_pct'] = pd.to_numeric(df['stock_level_pct'], errors='coerce').fillna(0)
+                        
+                        # Calculate packs from pieces
+                        df['amc_packs'] = df.apply(
+                            lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
+                            axis=1
+                        )
+                        df['branch_stock_packs'] = df.apply(
+                            lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                            axis=1
+                        )
+                        df['supplier_stock_packs'] = df.apply(
+                            lambda row: row['supplier_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                            axis=1
+                        )
+                        
+                        # Close cursor and return early - materialized view has everything
+                        cursor.close()
+                        self.db_manager.put_connection(conn)
+                        logger.info(f"✅ Successfully retrieved {len(df)} items from stock_view_materialized")
+                        return df
+                    else:
+                        logger.warning(f"Materialized view returned no results for branch={branch_name}, company={branch_company}")
+                        # Fall through to regular query if materialized view has no data
+                        has_materialized_view = False
                 else:
                     logger.info("⚠️ Materialized view not found, using regular query")
                     has_materialized_view = False
@@ -385,38 +435,6 @@ class StockViewServicePostgres:
             if results:
                 df = pd.DataFrame(results)
                 logger.info(f"Main query returned {len(df)} rows")
-                
-                # If using materialized view, skip complex processing - data is already complete
-                if has_materialized_view:
-                    logger.info("✅ Using materialized view data - skipping complex joins")
-                    # Materialized view already has all columns, just ensure proper types
-                    df['branch_stock'] = pd.to_numeric(df['branch_stock'], errors='coerce').fillna(0)
-                    df['supplier_stock'] = pd.to_numeric(df['supplier_stock'], errors='coerce').fillna(0)
-                    df['pack_size'] = pd.to_numeric(df['pack_size'], errors='coerce').fillna(1)
-                    df['unit_price'] = pd.to_numeric(df['unit_price'], errors='coerce').fillna(0)
-                    df['stock_value'] = pd.to_numeric(df['stock_value'], errors='coerce').fillna(0)
-                    df['amc'] = pd.to_numeric(df['amc'], errors='coerce').fillna(0)
-                    df['stock_level_pct'] = pd.to_numeric(df['stock_level_pct'], errors='coerce').fillna(0)
-                    
-                    # Calculate packs from pieces
-                    df['amc_packs'] = df.apply(
-                        lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
-                        axis=1
-                    )
-                    df['branch_stock_packs'] = df.apply(
-                        lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                        axis=1
-                    )
-                    df['supplier_stock_packs'] = df.apply(
-                        lambda row: row['supplier_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                        axis=1
-                    )
-                    
-                    # Close cursor and return early - materialized view has everything
-                    cursor.close()
-                    self.db_manager.put_connection(conn)
-                    logger.info(f"✅ Successfully retrieved {len(df)} items from stock_view_materialized")
-                    return df
                 logger.info(f"Sample columns: {list(df.columns)[:5]}")
                 if len(df) > 0:
                     logger.info(f"Sample row: {df.iloc[0].to_dict()}")

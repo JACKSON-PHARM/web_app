@@ -420,31 +420,25 @@
 
 <script>
     window.stockViewData = [];
+    let isLoadingStockView = false; // Prevent duplicate calls
     
     window.addEventListener('DOMContentLoaded', () => {
         loadBranches();
         
-        // Add click handler for Load Stock View button
+        // Add single click handler for Load Stock View button (remove onclick attribute to prevent duplicates)
         const loadBtn = document.querySelector('button[onclick="loadStockView()"]');
         if (loadBtn) {
+            // Remove inline onclick to prevent duplicate handlers
+            loadBtn.removeAttribute('onclick');
             loadBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                console.log('Load Stock View button clicked');
-                loadStockView();
+                e.stopPropagation();
+                if (!isLoadingStockView) {
+                    console.log('Load Stock View button clicked');
+                    loadStockView();
+                }
             });
         }
-        
-        // Also check if button exists by text content
-        const buttons = document.querySelectorAll('button');
-        buttons.forEach(btn => {
-            if (btn.textContent.includes('Load Stock View')) {
-                btn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    console.log('Load Stock View button clicked (by text)');
-                    loadStockView();
-                });
-            }
-        });
     });
     
     async function loadBranches() {
@@ -603,12 +597,27 @@
     }
     
     async function loadStockView() {
+        // Prevent duplicate calls
+        if (isLoadingStockView) {
+            console.log('Stock view already loading, skipping duplicate call');
+            return;
+        }
+        
         const branchValue = document.getElementById('branchSelect').value;
         const sourceBranchValue = document.getElementById('sourceBranchSelect').value || branchValue;
         
         if (!branchValue) {
             alert('Please select a target branch');
             return;
+        }
+        
+        isLoadingStockView = true;
+        
+        // Disable button during load
+        const loadBtn = document.querySelector('button:has-text("Load Stock View"), button[class*="btn-primary"]');
+        if (loadBtn) {
+            loadBtn.disabled = true;
+            loadBtn.textContent = 'Loading...';
         }
         
         // Show loading indicator
@@ -875,6 +884,14 @@
                     }
                 }
                 tbody.innerHTML = '<tr><td colspan="10" class="empty">Error loading data: ' + errorMsg + '</td></tr>';
+            }
+        } finally {
+            // Reset loading flag and re-enable button
+            isLoadingStockView = false;
+            const loadBtn = document.querySelector('button:has-text("Load Stock View"), button[class*="btn-primary"]');
+            if (loadBtn) {
+                loadBtn.disabled = false;
+                loadBtn.textContent = 'Load Stock View';
             }
         }
     }
@@ -1362,12 +1379,60 @@
             return;
         }
         
-        // Get selected items
+        // Get selected items (manual selection)
         const checkboxes = document.querySelectorAll('#stockTable .item-checkbox:checked');
+        const useManualSelection = checkboxes.length > 0;
         
-        if (checkboxes.length === 0) {
-            alert('Please select at least one item to order');
-            return;
+        if (!useManualSelection) {
+            // Auto-select items based on criteria
+            if (!window.stockViewData || window.stockViewData.length === 0) {
+                alert('No stock data available. Please load stock view first.');
+                return;
+            }
+            
+            // Auto-select items that need ordering
+            // Criteria: low stock level (< 50%), has AMC, has ABC class, supplier has stock
+            const autoSelectedItems = window.stockViewData.filter(item => {
+                const stockLevel = parseFloat(item.stock_level_pct) || 0;
+                const amc = parseFloat(item.amc) || 0;
+                const abcClass = (item.abc_class || '').trim();
+                const supplierStock = parseFloat(item.supplier_stock) || 0;
+                const packSize = parseFloat(item.pack_size) || 1;
+                const supplierStockPacks = packSize > 0 ? supplierStock / packSize : 0;
+                
+                // Auto-select if:
+                // 1. Stock level is low (< 50% of ideal)
+                // 2. Has valid ABC class
+                // 3. Has AMC > 0
+                // 4. Supplier has stock available
+                return stockLevel < 0.5 && 
+                       ['A', 'B', 'C'].includes(abcClass) && 
+                       amc > 0 && 
+                       supplierStockPacks > 0;
+            });
+            
+            if (autoSelectedItems.length === 0) {
+                alert('No items meet auto-selection criteria. Please manually select items to order.');
+                return;
+            }
+            
+            // Show confirmation dialog
+            const confirmed = confirm(
+                `Auto-selected ${autoSelectedItems.length} items based on stock levels.\n\n` +
+                `Criteria: Stock level < 50%, has ABC class, has AMC, supplier has stock.\n\n` +
+                `Proceed with procurement bot?`
+            );
+            
+            if (!confirmed) {
+                return;
+            }
+            
+            // Temporarily mark items as selected for processing
+            // We'll process these items directly in confirmProcurementOrder
+            window.autoSelectedItems = autoSelectedItems;
+        } else {
+            // Clear auto-selection if manually selecting
+            window.autoSelectedItems = null;
         }
         
         // Get branch information
@@ -1660,33 +1725,55 @@
         const branch = modal.dataset.branch;
         const company = modal.dataset.company;
         
-        // Get selected items with custom order quantities
-        const checkboxes = document.querySelectorAll('#stockTable .item-checkbox:checked');
-        const selectedItems = Array.from(checkboxes).map(cb => {
-            const index = parseInt(cb.dataset.index);
-            const item = { ...window.stockViewData[index] }; // Copy item to avoid modifying original
-            
-            // Get custom order quantity from input field
-            const qtyInput = document.querySelector(`.order-qty-input[data-index="${index}"]`);
-            if (qtyInput && qtyInput.value) {
-                const customQty = parseFloat(qtyInput.value) || 0;
-                // Store custom quantity (will be used by procurement bot)
-                item.custom_order_quantity = customQty;
-                // Also update amc to the custom quantity for manual selection
-                item.amc = customQty;
-                console.log(`Using custom order quantity for ${item.item_code}: ${customQty} packs`);
-            } else {
-                // Use AMC as fallback
+        // Get selected items - either manually selected or auto-selected
+        let selectedItems = [];
+        
+        if (window.autoSelectedItems && window.autoSelectedItems.length > 0) {
+            // Use auto-selected items
+            selectedItems = window.autoSelectedItems.map(item => {
+                const itemCopy = { ...item }; // Copy item to avoid modifying original
+                
+                // Calculate order quantity based on AMC
                 const packSize = parseFloat(item.pack_size) || 1;
                 const amcPieces = parseFloat(item.amc) || 0;
                 const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
-                item.custom_order_quantity = amcPacks;
-                item.amc = amcPacks; // Ensure amc is in packs for manual selection
-                console.log(`Using AMC as order quantity for ${item.item_code}: ${amcPacks} packs`);
-            }
-            
-            return item;
-        });
+                
+                // Use AMC as order quantity for auto-selection
+                itemCopy.custom_order_quantity = Math.max(1, Math.round(amcPacks));
+                itemCopy.amc = itemCopy.custom_order_quantity;
+                
+                console.log(`Auto-selected ${item.item_code}: ${itemCopy.custom_order_quantity} packs (AMC-based)`);
+                return itemCopy;
+            });
+        } else {
+            // Get manually selected items with custom order quantities
+            const checkboxes = document.querySelectorAll('#stockTable .item-checkbox:checked');
+            selectedItems = Array.from(checkboxes).map(cb => {
+                const index = parseInt(cb.dataset.index);
+                const item = { ...window.stockViewData[index] }; // Copy item to avoid modifying original
+                
+                // Get custom order quantity from input field
+                const qtyInput = document.querySelector(`.order-qty-input[data-index="${index}"]`);
+                if (qtyInput && qtyInput.value) {
+                    const customQty = parseFloat(qtyInput.value) || 0;
+                    // Store custom quantity (will be used by procurement bot)
+                    item.custom_order_quantity = customQty;
+                    // Also update amc to the custom quantity for manual selection
+                    item.amc = customQty;
+                    console.log(`Using custom order quantity for ${item.item_code}: ${customQty} packs`);
+                } else {
+                    // Use AMC as fallback
+                    const packSize = parseFloat(item.pack_size) || 1;
+                    const amcPieces = parseFloat(item.amc) || 0;
+                    const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                    item.custom_order_quantity = amcPacks;
+                    item.amc = amcPacks; // Ensure amc is in packs for manual selection
+                    console.log(`Using AMC as order quantity for ${item.item_code}: ${amcPacks} packs`);
+                }
+                
+                return item;
+            });
+        }
         
         // Get order mode
         const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
