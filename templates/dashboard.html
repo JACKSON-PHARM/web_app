@@ -772,12 +772,11 @@
             }
         }
         
-        // Load branches first
-        loadBranches();
-        
-        // Load data IMMEDIATELY from database - don't wait for refresh
-        // Data is already in Supabase, just query it
-        loadDashboardData();
+        // Load branches first - this will trigger loadPriorityItems when done
+        console.log('📋 Calling loadBranches()...');
+        loadBranches().catch(error => {
+            console.error('❌ Error in loadBranches():', error);
+        });
         
         // Check refresh status in background (non-blocking)
         checkRefreshStatus();
@@ -936,31 +935,44 @@
     }
     
     async function loadBranches() {
+        console.log('🔄 loadBranches() called');
         const targetSelect = document.getElementById('targetBranch');
         const sourceSelect = document.getElementById('sourceBranch');
         
+        if (!targetSelect || !sourceSelect) {
+            console.error('❌ Branch select elements not found!');
+            return;
+        }
+        
         // Show loading state
-        if (targetSelect) targetSelect.innerHTML = '<option value="">Loading...</option>';
-        if (sourceSelect) sourceSelect.innerHTML = '<option value="">Loading...</option>';
+        targetSelect.innerHTML = '<option value="">Loading...</option>';
+        sourceSelect.innerHTML = '<option value="">Loading...</option>';
         
         try {
-            console.log('Loading branches from /api/dashboard/branches...');
+            console.log('📡 Loading branches from /api/dashboard/branches...');
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                console.error('❌ No access token found!');
+                targetSelect.innerHTML = '<option value="">Please login</option>';
+                sourceSelect.innerHTML = '<option value="">Please login</option>';
+                return;
+            }
+            
             const data = await apiRequest('/api/dashboard/branches');
-            console.log('Branches API response:', data);
+            console.log('✅ Branches API response:', data);
             
             if (!data) {
-                console.error('No data returned from branches API');
-                if (targetSelect) targetSelect.innerHTML = '<option value="">Error loading branches</option>';
-                if (sourceSelect) sourceSelect.innerHTML = '<option value="">Error loading branches</option>';
+                console.error('❌ No data returned from branches API');
+                targetSelect.innerHTML = '<option value="">Error loading branches</option>';
+                sourceSelect.innerHTML = '<option value="">Error loading branches</option>';
                 return;
             }
             
             if (data.success && data.data && Array.isArray(data.data) && data.data.length > 0) {
-                console.log(`Found ${data.data.length} branches`);
+                console.log(`✅ Found ${data.data.length} branches`);
                 
                 // Clear and populate both selects
                 [targetSelect, sourceSelect].forEach(select => {
-                    if (!select) return;
                     select.innerHTML = '<option value="">Select branch...</option>';
                     data.data.forEach(branch => {
                         const option = document.createElement('option');
@@ -982,20 +994,35 @@
                 });
                 
                 if (defaultOption) {
-                    if (targetSelect) targetSelect.value = defaultOption.value;
-                    if (sourceSelect) sourceSelect.value = defaultOption.value;
+                    targetSelect.value = defaultOption.value;
+                    sourceSelect.value = defaultOption.value;
+                    console.log('✅ Set default branch:', defaultOption.value);
+                } else {
+                    // Use first branch if BABA DOGO HQ not found
+                    if (targetSelect.options.length > 1) {
+                        targetSelect.value = targetSelect.options[1].value;
+                        sourceSelect.value = sourceSelect.options[1].value;
+                        console.log('✅ Set first branch as default:', targetSelect.options[1].value);
+                    }
                 }
                 
-                console.log('Branches loaded successfully');
+                // Trigger loadPriorityItems after branches are loaded
+                console.log('✅ Branches loaded successfully, triggering loadPriorityItems...');
+                setTimeout(() => {
+                    loadPriorityItems();
+                }, 100);
+                
+                console.log('✅ Branches loaded successfully');
             } else {
-                console.warn('Branches API returned no data:', data);
-                if (targetSelect) targetSelect.innerHTML = '<option value="">No branches found</option>';
-                if (sourceSelect) sourceSelect.innerHTML = '<option value="">No branches found</option>';
+                console.warn('⚠️ Branches API returned no data:', data);
+                targetSelect.innerHTML = '<option value="">No branches found</option>';
+                sourceSelect.innerHTML = '<option value="">No branches found</option>';
             }
         } catch (error) {
-            console.error('Error loading branches:', error);
-            if (targetSelect) targetSelect.innerHTML = '<option value="">Error: ' + error.message + '</option>';
-            if (sourceSelect) sourceSelect.innerHTML = '<option value="">Error: ' + error.message + '</option>';
+            console.error('❌ Error loading branches:', error);
+            console.error('Error stack:', error.stack);
+            targetSelect.innerHTML = '<option value="">Error: ' + (error.message || 'Unknown error') + '</option>';
+            sourceSelect.innerHTML = '<option value="">Error: ' + (error.message || 'Unknown error') + '</option>';
         }
     }
     
