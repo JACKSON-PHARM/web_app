@@ -333,14 +333,11 @@ class DashboardService:
             # Query supplier invoices from BABA DOGO HQ (last 7 days from most recent date)
             # Show all items received at HQ, regardless of target branch stock
             # Include branch stock from selected branch for reference
-            # Check if current_stock has data, if not try stock_data as fallback
+            # Use current_stock table only (stock_data table doesn't exist in Supabase)
             hq_stock_result = self._execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = %s", (hq_branch,))
             hq_stock_count = hq_stock_result[0]['count'] if hq_stock_result else 0
-            use_stock_data_fallback = False
-            hq_latest_date = None
-            branch_latest_date = None
             
-            # Default query using current_stock (will show zeros if table is empty)
+            # Query using current_stock (will show zeros if table is empty)
             invoice_query = """
                 SELECT 
                     si.item_code,
@@ -361,73 +358,23 @@ class DashboardService:
                 LEFT JOIN current_stock cs_hq
                     ON cs_hq.item_code = si.item_code 
                    AND cs_hq.company = si.company 
-                   AND cs_hq.branch = ?
+                   AND cs_hq.branch = %s
                 LEFT JOIN current_stock cs_branch
                     ON cs_branch.item_code = si.item_code
-                   AND cs_branch.company = ?
-                   AND cs_branch.branch = ?
-                WHERE si.branch = ?
-                    AND si.document_date >= ? AND si.document_date <= ?
+                   AND cs_branch.company = %s
+                   AND cs_branch.branch = %s
+                WHERE si.branch = %s
+                    AND si.document_date >= %s AND si.document_date <= %s
                 GROUP BY si.item_code
                 ORDER BY MAX(si.document_date) DESC, MAX(si.document_number) DESC
-                LIMIT ?
+                LIMIT %s
             """
             
             if hq_stock_count == 0:
-                # Try to use stock_data as fallback
-                try:
-                    hq_date_result = self._execute_query("SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = %s", (hq_branch,))
-                    hq_latest_date = hq_date_result[0]['max_date'] if hq_date_result and hq_date_result[0].get('max_date') else None
-                    
-                    branch_date_result = self._execute_query("SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE company_name = %s AND branch_name = %s", 
-                                 (target_company, target_branch))
-                    branch_latest_date = branch_date_result[0]['max_date'] if branch_date_result and branch_date_result[0].get('max_date') else None
-                    
-                    if hq_latest_date or branch_latest_date:
-                        use_stock_data_fallback = True
-                        logger.info(f"current_stock table is empty for {hq_branch}, using stock_data table as fallback (HQ date: {hq_latest_date}, Branch date: {branch_latest_date})")
-                        
-                        # Override query to use stock_data
-                        invoice_query = """
-                            SELECT 
-                                si.item_code,
-                                MAX(si.item_name) AS item_name,
-                                MAX(si.units) as quantity,
-                                MAX(COALESCE(sd_hq.pack_size, 1)) AS pack_size,
-                                MAX(ROUND(si.units / NULLIF(COALESCE(sd_hq.pack_size, 1), 0))) AS quantity_packs,
-                                MAX(si.document_date) AS document_date,
-                                MAX(si.document_number) AS document_number,
-                                'Supplier Invoice' as source_type,
-                                COALESCE(MAX(sd_branch.total_pieces_in_stock), 0) AS branch_stock_pieces,
-                                COALESCE(MAX(sd_branch.total_pieces_in_stock / NULLIF(COALESCE(sd_branch.pack_size, 1), 0)), 0) AS branch_stock_packs,
-                                MAX(COALESCE(sd_hq.total_pieces_in_stock, 0)) AS hq_stock_pieces,
-                                COALESCE(MAX(sd_hq.total_pieces_in_stock / NULLIF(COALESCE(sd_hq.pack_size, 1), 0)), 0) AS hq_stock_packs,
-                                MAX(sd_hq.pack_size) AS pack_size_hq,
-                                MAX(sd_branch.pack_size) AS pack_size_branch
-                            FROM supplier_invoices si
-                            LEFT JOIN stock_data sd_hq
-                                ON sd_hq.item_code = si.item_code 
-                               AND sd_hq.company_name = si.company 
-                               AND sd_hq.branch_name = %s
-                               AND (%s IS NULL OR sd_hq.snapshot_date = %s)
-                            LEFT JOIN stock_data sd_branch
-                                ON sd_branch.item_code = si.item_code
-                               AND sd_branch.company_name = %s
-                               AND sd_branch.branch_name = %s
-                               AND (%s IS NULL OR sd_branch.snapshot_date = %s)
-                            WHERE si.branch = %s
-                                AND si.document_date >= %s AND si.document_date <= %s
-                            GROUP BY si.item_code
-                            ORDER BY MAX(si.document_date) DESC, MAX(si.document_number) DESC
-                            LIMIT %s
-                        """
-                    else:
-                        logger.warning(f"Both current_stock and stock_data tables are empty. Stock values will show as 0.")
-                except Exception as e:
-                    logger.warning(f"Error checking stock_data table: {e}. Stock values will show as 0.")
+                logger.warning(f"current_stock table is empty for {hq_branch}. Stock values will show as 0. Please refresh data.")
             
-            # Execute query with appropriate parameters based on whether we're using stock_data fallback
-            if use_stock_data_fallback:
+            # Execute query
+            if True:
                 # Use latest snapshot dates (or None if no data)
                 hq_snapshot_date = hq_latest_date if hq_latest_date else None
                 branch_snapshot_date = branch_latest_date if branch_latest_date else None
@@ -695,62 +642,8 @@ class DashboardService:
                     source_branch, source_company,  # For cs_source WHERE
                     limit  # For LIMIT
                 )
-            elif stock_data_count > 0 and source_latest_date:
-                # Use stock_data with latest snapshot (fallback to most recent available data)
-                use_stock_data_fallback = True
-                logger.info(f"current_stock table has no data for {source_branch}, using stock_data table with latest snapshot (Source date: {source_latest_date}, Target date: {target_latest_date})")
-                
-                # Override query to use stock_data
-                query = """
-                    SELECT 
-                        sd_source.item_code,
-                        MAX(sd_source.item_name) AS item_name,
-                        MAX(sd_source.total_pieces_in_stock) AS source_stock_pieces,
-                        MAX(sd_source.pack_size) AS source_pack_size,
-                        COALESCE(MAX(sd_target.total_pieces_in_stock), 0) AS target_stock_pieces,
-                        COALESCE(MAX(sd_target.pack_size), MAX(sd_source.pack_size)) AS pack_size,
-                        0 AS stock_level_pct,
-                        MAX(po.last_order_date) AS last_order_date
-                    FROM stock_data sd_source
-                    LEFT JOIN stock_data sd_target
-                        ON sd_target.item_code = sd_source.item_code
-                        AND sd_target.company_name = ?
-                        AND sd_target.branch_name = ?
-                        AND (? IS NULL OR sd_target.snapshot_date = ?)
-                    LEFT JOIN (
-                        SELECT 
-                            item_code,
-                            MAX(date) AS last_order_date
-                        FROM (
-                            SELECT item_code, document_date as date
-                            FROM purchase_orders
-                            WHERE company = ? AND branch = ?
-                            UNION ALL
-                            SELECT item_code, document_date as date
-                            FROM branch_orders
-                            WHERE company = ? AND source_branch = ?
-                            UNION ALL
-                            SELECT item_code, date
-                            FROM hq_invoices
-                            WHERE branch = ?
-                        ) combined_orders
-                        GROUP BY item_code
-                    ) po ON po.item_code = sd_source.item_code
-                    WHERE sd_source.branch_name = ? 
-                        AND sd_source.company_name = ?
-                        AND (? IS NULL OR sd_source.snapshot_date = ?)
-                        AND sd_source.total_pieces_in_stock > 0
-                        AND (
-                            sd_target.total_pieces_in_stock IS NULL 
-                            OR sd_target.total_pieces_in_stock <= 0
-                            OR sd_target.total_pieces_in_stock < 1000
-                        )
-                    GROUP BY sd_source.item_code
-                    ORDER BY MAX(sd_source.total_pieces_in_stock) DESC
-                    LIMIT ?
-                """
             else:
-                logger.warning(f"No stock data found for {source_branch} ({source_company}) in either current_stock or stock_data tables.")
+                logger.warning(f"No stock data found for {source_branch} ({source_company}) in current_stock table.")
                 logger.info(f"Please sync stock data using 'Refresh All Data' -> 'Stock' to populate priority items.")
                 return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
                                             'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 

@@ -641,6 +641,11 @@
         </div>
     </div>
     
+    <!-- Credential Warning Banner -->
+    <div id="credentialWarningBanner" style="display: none; background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-bottom: 20px; color: #856404;">
+        <div id="credentialWarningText"></div>
+    </div>
+    
     <div class="refresh-section">
         <h3>Branch Selection</h3>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
@@ -1488,7 +1493,7 @@
     // Check on initial load too
     checkRefreshStatus();
     
-    // Check sync status
+    // Check sync status and credentials
     async function checkSyncStatus() {
         try {
             const status = await apiRequest('/api/dashboard/sync-status');
@@ -1510,6 +1515,25 @@
                     syncStatusText.textContent = message || 'Sync status unknown';
                     syncStatusText.style.color = '#666';
                 }
+            }
+            
+            // Check and display credential warnings
+            const missingCreds = status.status?.missing_credentials || [];
+            const credMessage = status.status?.credentials_message || '';
+            const credWarningBanner = document.getElementById('credentialWarningBanner');
+            
+            if (missingCreds.length > 0 && credWarningBanner) {
+                credWarningBanner.style.display = 'block';
+                const credWarningText = document.getElementById('credentialWarningText');
+                if (credWarningText) {
+                    credWarningText.innerHTML = `
+                        <strong>⚠️ API Credentials Not Configured:</strong> ${missingCreds.join(' and ')} credentials are missing. 
+                        <a href="/settings" style="color: #007bff; text-decoration: underline;">Configure credentials in Settings</a> 
+                        to enable automatic data refresh.
+                    `;
+                }
+            } else if (credWarningBanner) {
+                credWarningBanner.style.display = 'none';
             }
         } catch (error) {
             console.error('Error checking sync status:', error);

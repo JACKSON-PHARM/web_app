@@ -405,7 +405,7 @@ async def get_priority_items(
                 is_refreshing = refresh_status.get("is_refreshing", False)
                 
                 # If no data in key tables, return success with empty data but indicate refresh status
-                if table_counts.get('current_stock', 0) == 0 and table_counts.get('stock_data', 0) == 0:
+                if table_counts.get('current_stock', 0) == 0:
                     logger.warning("⚠️ Database has no stock data yet")
                     return {
                         "success": True,  # Return success so UI can handle gracefully
@@ -494,12 +494,6 @@ async def get_priority_items(
                 result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock")
                 stock_count = result[0]['count'] if result else 0
                 
-                try:
-                    stock_data_result = db_manager.execute_query("SELECT COUNT(*) as count FROM stock_data")
-                    stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
-                except:
-                    stock_data_count = 0
-                
                 # Check if source branch has stock
                 source_result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = %s AND company = %s", (source_branch, source_company))
                 source_stock_count = source_result[0]['count'] if source_result else 0
@@ -508,7 +502,7 @@ async def get_priority_items(
                 target_result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock WHERE branch = %s AND company = %s", (target_branch, target_company))
                 target_stock_count = target_result[0]['count'] if target_result else 0
                 
-                if stock_count == 0 and stock_data_count == 0:
+                if stock_count == 0:
                     return {
                         "success": False,
                         "error": "Database is empty. Please refresh data first by clicking 'Refresh Now' button.",
@@ -632,12 +626,27 @@ async def get_sync_status(
     current_user: dict = Depends(get_current_user),
     db_manager = Depends(get_db_manager)
 ):
-    """Get database sync status - shows database connection status"""
+    """Get database sync status - shows database connection status and credential status"""
     import os
     from app.config import settings
+    from app.dependencies import get_credential_manager
     
     # Check if using Supabase or SQLite
     is_supabase = hasattr(db_manager, 'pool')
+    
+    # Check credentials status
+    cred_manager = get_credential_manager()
+    cred_status = {}
+    missing_credentials = []
+    for company in ["NILA", "DAIMA"]:
+        creds = cred_manager.get_credentials(company)
+        configured = creds is not None and bool(creds.get('username')) and bool(creds.get('password'))
+        cred_status[company] = {
+            "configured": configured,
+            "enabled": creds.get('enabled', False) if creds else False
+        }
+        if not configured:
+            missing_credentials.append(company)
     
     status = {
         "database_type": "Supabase PostgreSQL" if is_supabase else "SQLite",
@@ -681,6 +690,12 @@ async def get_sync_status(
             "error": str(e),
             "status": status
         }
+    
+    # Add credentials status to response
+    status["credentials"] = cred_status
+    status["missing_credentials"] = missing_credentials
+    if missing_credentials:
+        status["credentials_message"] = f"⚠️ API credentials not configured for: {', '.join(missing_credentials)}. Please configure credentials in Settings to enable data refresh."
     
     return {
         "success": True,
