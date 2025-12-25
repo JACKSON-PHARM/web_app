@@ -113,11 +113,19 @@ def create_stock_view_materialized_view(conn):
     cursor = conn.cursor()
     
     try:
+        # hq_invoices table schema: 
+        # - invoice_number (not document_number)
+        # - date (not document_date)  
+        # - no company column (always use 'NILA')
+        # - has quantity column
+        hq_company_expr = "'NILA'::text"
+        logger.info("Using 'NILA' as default company for hq_invoices (table schema: invoice_number, date, no company column)")
+        
         # Drop existing materialized view if exists
         cursor.execute("DROP MATERIALIZED VIEW IF EXISTS stock_view_materialized CASCADE")
         
         # Full materialized view with all joins - pre-computed for performance
-        cursor.execute("""
+        query = """
             CREATE MATERIALIZED VIEW stock_view_materialized AS
             WITH unique_items AS (
                 SELECT DISTINCT 
@@ -159,7 +167,7 @@ def create_stock_view_materialized_view(conn):
                     SELECT item_code, document_date, destination_branch as branch, company
                     FROM branch_orders
                     UNION ALL
-                    SELECT item_code, date as document_date, branch, company
+                    SELECT item_code, date as document_date, branch, {hq_company} as company
                     FROM hq_invoices
                 ) all_orders
                 GROUP BY item_code, branch, company
@@ -178,7 +186,7 @@ def create_stock_view_materialized_view(conn):
                     SELECT item_code, document_date, document_number, quantity, destination_branch as branch, company
                     FROM branch_orders
                     UNION ALL
-                    SELECT item_code, date as document_date, document_number, quantity, branch, company
+                    SELECT item_code, date as document_date, invoice_number as document_number, quantity, branch, {hq_company} as company
                     FROM hq_invoices
                 ) ao
                 INNER JOIN last_order_info loi ON ao.item_code = loi.item_code 
@@ -214,24 +222,23 @@ def create_stock_view_materialized_view(conn):
                 SELECT 
                     item_code,
                     branch,
-                    company,
+                    {hq_company} as company,
                     MAX(date) as last_invoice_date
                 FROM hq_invoices
-                GROUP BY item_code, branch, company
+                GROUP BY item_code, branch
             ),
             last_invoice_details AS (
-                SELECT DISTINCT ON (hi.item_code, hi.branch, hi.company)
+                SELECT DISTINCT ON (hi.item_code, hi.branch)
                     hi.item_code,
                     hi.branch,
-                    hi.company,
-                    hi.document_number as last_invoice_doc,
+                    {hq_company} as company,
+                    hi.invoice_number as last_invoice_doc,
                     hi.quantity as last_invoice_quantity
                 FROM hq_invoices hi
                 INNER JOIN last_invoice_info lii ON hi.item_code = lii.item_code 
                     AND hi.date = lii.last_invoice_date
                     AND hi.branch = lii.branch
-                    AND hi.company = lii.company
-                ORDER BY hi.item_code, hi.branch, hi.company, hi.date DESC, hi.document_number DESC
+                ORDER BY hi.item_code, hi.branch, hi.date DESC, hi.invoice_number DESC
             ),
             inventory_analysis AS (
                 SELECT 
@@ -283,13 +290,13 @@ def create_stock_view_materialized_view(conn):
                 AND lsd.branch = tbs.branch AND lsd.company = tbs.company
             LEFT JOIN last_invoice_info lii ON ui.item_code = lii.item_code 
                 AND lii.branch = tbs.branch
-                AND lii.company = tbs.company
             LEFT JOIN last_invoice_details lid ON ui.item_code = lid.item_code 
                 AND lid.branch = tbs.branch
-                AND lid.company = tbs.company
             LEFT JOIN inventory_analysis ia ON ui.item_code = ia.item_code 
                 AND ia.branch = tbs.branch AND ia.company = tbs.company
-        """)
+        """.format(hq_company=hq_company_expr)
+        
+        cursor.execute(query)
         
         # Create unique index for CONCURRENT refresh
         cursor.execute("""
@@ -370,7 +377,7 @@ def create_priority_items_materialized_view(conn):
                     SELECT item_code, document_date, destination_branch as branch, company
                     FROM branch_orders
                     UNION ALL
-                    SELECT item_code, date as document_date, branch, company
+                    SELECT item_code, date as document_date, branch, 'NILA'::text as company
                     FROM hq_invoices
                 ) all_orders
                 GROUP BY item_code, branch, company
