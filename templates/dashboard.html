@@ -682,7 +682,13 @@
     <div class="section">
         <div class="section-header">
             <h2 class="section-title">⚠️ Priority Items</h2>
-            <div style="display: flex; gap: 15px; align-items: center;">
+            <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <label>🔍 Search:</label>
+                    <input type="text" id="prioritySearch" placeholder="Search by item name or code..." 
+                           style="padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; min-width: 250px;"
+                           onkeyup="filterPriorityTable()">
+                </div>
                 <div>
                     <label>Show items: </label>
                     <input type="number" id="priorityLimit" value="50" min="10" max="5000" style="width: 80px; padding: 5px;">
@@ -1167,6 +1173,46 @@
                 
                 // Use the display function to render items
                 displayPriorityItems(data.data);
+                
+                // Restore selected items and order quantities from saved state
+                setTimeout(() => {
+                    try {
+                        const stateStr = localStorage.getItem('priorityTableState');
+                        if (stateStr) {
+                            const state = JSON.parse(stateStr);
+                            
+                            // Restore checkboxes
+                            if (state.selectedItems) {
+                                state.selectedItems.forEach(index => {
+                                    const checkbox = document.querySelector(`#priorityBody input[type="checkbox"][data-index="${index}"]`);
+                                    if (checkbox) checkbox.checked = true;
+                                });
+                            }
+                            
+                            // Restore order quantities
+                            if (state.orderQuantities) {
+                                Object.entries(state.orderQuantities).forEach(([index, value]) => {
+                                    const input = document.querySelector(`#priorityBody input.order-qty-input[data-index="${index}"]`);
+                                    if (input) input.value = value;
+                                });
+                            }
+                            
+                            // Restore scroll position
+                            const container = document.querySelector('.table-container');
+                            if (container && state.scrollPosition) {
+                                container.scrollTop = state.scrollPosition;
+                            }
+                            
+                            // Apply search filter if exists
+                            if (state.searchTerm && document.getElementById('prioritySearch')) {
+                                document.getElementById('prioritySearch').value = state.searchTerm;
+                                filterPriorityTable();
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Could not restore priority state:', e);
+                    }
+                }, 100);
                 
                 // Log for debugging
                 console.log(`✅ Displayed ${data.data.length} priority items`);
@@ -2292,7 +2338,113 @@
                 </tr>
             `;
         }
+    
+    // Search functionality for priority table
+    function filterPriorityTable() {
+        const searchTerm = document.getElementById('prioritySearch')?.value.toLowerCase() || '';
+        const tbody = document.getElementById('priorityBody');
+        if (!tbody) return;
+        
+        const rows = tbody.querySelectorAll('tr');
+        let visibleCount = 0;
+        
+        rows.forEach(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 2) {
+                row.style.display = '';
+                return;
+            }
+            
+            const itemCode = (cells[1]?.textContent || '').toLowerCase();
+            const itemName = (cells[2]?.textContent || '').toLowerCase();
+            
+            if (!searchTerm || itemCode.includes(searchTerm) || itemName.includes(searchTerm)) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        // Save search term to localStorage
+        try {
+            localStorage.setItem('prioritySearchTerm', searchTerm);
+        } catch (e) {
+            console.warn('Could not save search term:', e);
+        }
     }
+    
+    // State persistence functions
+    function savePriorityState() {
+        try {
+            const state = {
+                selectedItems: Array.from(document.querySelectorAll('#priorityBody input[type="checkbox"]:checked')).map(cb => cb.dataset.index),
+                scrollPosition: document.querySelector('.table-container')?.scrollTop || 0,
+                searchTerm: document.getElementById('prioritySearch')?.value || '',
+                targetBranch: document.getElementById('targetBranch')?.value || '',
+                sourceBranch: document.getElementById('sourceBranch')?.value || '',
+                limit: document.getElementById('priorityLimit')?.value || '50',
+                orderQuantities: {}
+            };
+            
+            // Save order quantities
+            document.querySelectorAll('#priorityBody input.order-qty-input').forEach(input => {
+                if (input.value) {
+                    state.orderQuantities[input.dataset.index] = input.value;
+                }
+            });
+            
+            localStorage.setItem('priorityTableState', JSON.stringify(state));
+        } catch (e) {
+            console.warn('Could not save priority state:', e);
+        }
+    }
+    
+    function restorePriorityState() {
+        try {
+            const stateStr = localStorage.getItem('priorityTableState');
+            if (!stateStr) return;
+            
+            const state = JSON.parse(stateStr);
+            
+            // Restore branch selections
+            if (state.targetBranch && document.getElementById('targetBranch')) {
+                document.getElementById('targetBranch').value = state.targetBranch;
+            }
+            if (state.sourceBranch && document.getElementById('sourceBranch')) {
+                document.getElementById('sourceBranch').value = state.sourceBranch;
+            }
+            if (state.limit && document.getElementById('priorityLimit')) {
+                document.getElementById('priorityLimit').value = state.limit;
+            }
+            if (state.searchTerm && document.getElementById('prioritySearch')) {
+                document.getElementById('prioritySearch').value = state.searchTerm;
+            }
+            
+            // Restore scroll position after data loads
+            setTimeout(() => {
+                const container = document.querySelector('.table-container');
+                if (container && state.scrollPosition) {
+                    container.scrollTop = state.scrollPosition;
+                }
+            }, 500);
+        } catch (e) {
+            console.warn('Could not restore priority state:', e);
+        }
+    }
+    
+    // Save state periodically and on changes
+    setInterval(savePriorityState, 2000); // Save every 2 seconds
+    document.addEventListener('change', (e) => {
+        if (e.target.matches('#priorityBody input[type="checkbox"], #priorityBody input.order-qty-input')) {
+            savePriorityState();
+        }
+    });
+    
+    // Restore state on page load
+    window.addEventListener('DOMContentLoaded', () => {
+        restorePriorityState();
+    });
 </script>
 {% endblock %}
 

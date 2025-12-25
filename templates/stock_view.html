@@ -296,7 +296,13 @@
                 </select>
             </div>
         </div>
-        <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <div style="display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; align-items: center;">
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <label>🔍 Search:</label>
+                <input type="text" id="stockSearch" placeholder="Search by item name or code..." 
+                       style="padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; min-width: 250px;"
+                       onkeyup="filterStockTable()">
+            </div>
             <button onclick="loadStockView()" class="btn btn-primary">Load Stock View</button>
             <button onclick="runStockViewProcurementBot()" class="btn btn-success" id="stockViewProcurementBtn" style="display: none;">
                 🤖 Order Selected Items
@@ -626,6 +632,51 @@
             if (data && data.success && data.data && data.data.length > 0) {
                 console.log(`Found ${data.data.length} stock items`);
                 window.stockViewData = data.data;
+                
+                // Restore selected items and order quantities from saved state
+                setTimeout(() => {
+                    try {
+                        const stateStr = localStorage.getItem('stockViewState');
+                        if (stateStr) {
+                            const state = JSON.parse(stateStr);
+                            
+                            // Restore checkboxes
+                            if (state.selectedItems) {
+                                state.selectedItems.forEach(index => {
+                                    const checkbox = document.querySelector(`#stockTableBody input[type="checkbox"][data-index="${index}"]`);
+                                    if (checkbox) checkbox.checked = true;
+                                });
+                            }
+                            
+                            // Restore order quantities
+                            if (state.orderQuantities) {
+                                Object.entries(state.orderQuantities).forEach(([index, value]) => {
+                                    const input = document.querySelector(`#stockTableBody input.order-qty-input[data-index="${index}"]`);
+                                    if (input) {
+                                        input.value = value;
+                                        // Update the data object too
+                                        if (window.stockViewData && window.stockViewData[index]) {
+                                            window.stockViewData[index].custom_order_quantity = parseFloat(value);
+                                        }
+                                    }
+                                });
+                            }
+                            
+                            // Restore scroll position
+                            const container = document.querySelector('.table-container');
+                            if (container && state.scrollPosition) {
+                                container.scrollTop = state.scrollPosition;
+                            }
+                            
+                            // Apply search filter if exists
+                            if (state.searchTerm) {
+                                filterStockTable();
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Could not restore stock view state:', e);
+                    }
+                }, 100);
                 
                 // Show procurement button
                 const btn = document.getElementById('stockViewProcurementBtn');
@@ -1768,6 +1819,115 @@
         if (event.target === modal) {
             closeProcurementModal();
         }
+    }
+    
+    // Search functionality for stock table
+    function filterStockTable() {
+        const searchTerm = document.getElementById('stockSearch')?.value.toLowerCase() || '';
+        const tbody = document.getElementById('stockTableBody');
+        if (!tbody) return;
+        
+        const rows = tbody.querySelectorAll('tr');
+        
+        rows.forEach(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 2) {
+                row.style.display = '';
+                return;
+            }
+            
+            const itemCode = (cells[1]?.textContent || '').toLowerCase();
+            const itemName = (cells[2]?.textContent || '').toLowerCase();
+            
+            if (!searchTerm || itemCode.includes(searchTerm) || itemName.includes(searchTerm)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        // Save search term to localStorage
+        try {
+            localStorage.setItem('stockSearchTerm', searchTerm);
+            saveStockViewState();
+        } catch (e) {
+            console.warn('Could not save search term:', e);
+        }
+    }
+    
+    // State persistence functions for stock view
+    function saveStockViewState() {
+        try {
+            const state = {
+                selectedItems: Array.from(document.querySelectorAll('#stockTableBody input[type="checkbox"]:checked')).map(cb => cb.dataset.index),
+                scrollPosition: document.querySelector('.table-container')?.scrollTop || 0,
+                searchTerm: document.getElementById('stockSearch')?.value || '',
+                branchSelect: document.getElementById('branchSelect')?.value || '',
+                sourceBranchSelect: document.getElementById('sourceBranchSelect')?.value || '',
+                orderQuantities: {}
+            };
+            
+            // Save order quantities
+            document.querySelectorAll('#stockTableBody input.order-qty-input').forEach(input => {
+                if (input.value) {
+                    state.orderQuantities[input.dataset.index] = input.value;
+                }
+            });
+            
+            localStorage.setItem('stockViewState', JSON.stringify(state));
+        } catch (e) {
+            console.warn('Could not save stock view state:', e);
+        }
+    }
+    
+    function restoreStockViewState() {
+        try {
+            const stateStr = localStorage.getItem('stockViewState');
+            if (!stateStr) return;
+            
+            const state = JSON.parse(stateStr);
+            
+            // Restore branch selections
+            if (state.branchSelect && document.getElementById('branchSelect')) {
+                document.getElementById('branchSelect').value = state.branchSelect;
+            }
+            if (state.sourceBranchSelect && document.getElementById('sourceBranchSelect')) {
+                document.getElementById('sourceBranchSelect').value = state.sourceBranchSelect;
+            }
+            if (state.searchTerm && document.getElementById('stockSearch')) {
+                document.getElementById('stockSearch').value = state.searchTerm;
+            }
+            
+            // Restore scroll position after data loads
+            setTimeout(() => {
+                const container = document.querySelector('.table-container');
+                if (container && state.scrollPosition) {
+                    container.scrollTop = state.scrollPosition;
+                }
+                
+                // Apply search filter if exists
+                if (state.searchTerm) {
+                    filterStockTable();
+                }
+            }, 500);
+        } catch (e) {
+            console.warn('Could not restore stock view state:', e);
+        }
+    }
+    
+    // Save state periodically and on changes
+    setInterval(saveStockViewState, 2000); // Save every 2 seconds
+    document.addEventListener('change', (e) => {
+        if (e.target.matches('#stockTableBody input[type="checkbox"], #stockTableBody input.order-qty-input')) {
+            saveStockViewState();
+        }
+    });
+    
+    // Restore state on page load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', restoreStockViewState);
+    } else {
+        restoreStockViewState();
     }
 </script>
 {% endblock %}
