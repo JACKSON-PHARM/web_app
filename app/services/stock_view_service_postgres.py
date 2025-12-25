@@ -138,6 +138,7 @@ class StockViewServicePostgres:
                 return pd.DataFrame()
             
             # Check if materialized view exists and use it for faster queries
+            has_materialized_view = False
             try:
                 cursor.execute("""
                     SELECT EXISTS (
@@ -186,8 +187,12 @@ class StockViewServicePostgres:
                     params = (branch_name, branch_company)
                 else:
                     logger.info("⚠️ Materialized view not found, using regular query")
-                    raise Exception("No materialized view")
-            except:
+                    has_materialized_view = False
+            except Exception as e:
+                logger.warning(f"Error checking for materialized view: {e}, using regular query")
+                has_materialized_view = False
+            
+            if not has_materialized_view:
                 # Fallback to regular query if materialized view doesn't exist
                 logger.info("Using regular query (materialized view not available)")
                 # Simplified query: Start with unique item codes, then left join all data

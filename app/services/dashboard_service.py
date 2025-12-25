@@ -373,21 +373,11 @@ class DashboardService:
             if hq_stock_count == 0:
                 logger.warning(f"current_stock table is empty for {hq_branch}. Stock values will show as 0. Please refresh data.")
             
-            # Execute query
-            if True:
-                # Use latest snapshot dates (or None if no data)
-                hq_snapshot_date = hq_latest_date if hq_latest_date else None
-                branch_snapshot_date = branch_latest_date if branch_latest_date else None
-                
-                results = self._execute_query(
-                    invoice_query,
-                    (hq_branch, hq_snapshot_date, hq_snapshot_date, target_company, target_branch, branch_snapshot_date, branch_snapshot_date, hq_branch, start_date, end_date, limit * 2)
-                )
-            else:
-                results = self._execute_query(
-                    invoice_query,
-                    (hq_branch, target_company, target_branch, hq_branch, start_date, end_date, limit * 2)
-                )
+            # Execute query using current_stock only
+            results = self._execute_query(
+                invoice_query,
+                (hq_branch, target_company, target_branch, hq_branch, start_date, end_date, limit * 2)
+            )
             
             combined = pd.DataFrame(results) if results else pd.DataFrame()
             logger.info(f"New arrivals query returned {len(combined)} items from {hq_branch} (this week: {start_date} to {end_date})")
@@ -396,18 +386,10 @@ class DashboardService:
             if combined.empty:
                 logger.info(f"No invoices in last 7 days, trying last 30 days from today")
                 start_date_fallback = today - timedelta(days=30)
-                if use_stock_data_fallback:
-                    hq_snapshot_date = hq_latest_date if hq_latest_date else None
-                    branch_snapshot_date = branch_latest_date if branch_latest_date else None
-                    results = self._execute_query(
-                        invoice_query,
-                        (hq_branch, hq_snapshot_date, hq_snapshot_date, target_company, target_branch, branch_snapshot_date, branch_snapshot_date, hq_branch, start_date_fallback, end_date, limit * 2)
-                    )
-                else:
-                    results = self._execute_query(
-                        invoice_query,
-                        (hq_branch, target_company, target_branch, hq_branch, start_date_fallback, end_date, limit * 2)
-                    )
+                results = self._execute_query(
+                    invoice_query,
+                    (hq_branch, target_company, target_branch, hq_branch, start_date_fallback, end_date, limit * 2)
+                )
                 combined = pd.DataFrame(results) if results else pd.DataFrame()
                 logger.info(f"Fallback query returned {len(combined)} items from {hq_branch} (last 30 days)")
             
@@ -519,40 +501,14 @@ class DashboardService:
         """
         try:
             # Use database manager instead of direct SQLite connection
-            # Check if current_stock has data, if not use stock_data as fallback
-            # Check both current_stock and stock_data for source branch
+            # Use current_stock table only (stock_data table doesn't exist in Supabase)
             source_stock_result = self._execute_query(
-                "SELECT COUNT(*) as count FROM current_stock WHERE branch = ? AND company = ?",
+                "SELECT COUNT(*) as count FROM current_stock WHERE branch = %s AND company = %s",
                 (source_branch, source_company)
             )
             source_stock_count = source_stock_result[0]['count'] if source_stock_result else 0
             
-            # Also check stock_data for source branch (if table exists - PostgreSQL might not have this)
-            try:
-                stock_data_result = self._execute_query(
-                    "SELECT COUNT(*) as count, MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = %s AND company_name = %s",
-                    (source_branch, source_company)
-                )
-                stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
-                source_latest_date = stock_data_result[0]['max_date'] if stock_data_result and stock_data_result[0].get('max_date') else None
-            except Exception:
-                # stock_data table might not exist in PostgreSQL (we removed it)
-                stock_data_count = 0
-                source_latest_date = None
-            
-            # Check target branch stock_data
-            try:
-                target_latest_date_result = self._execute_query(
-                    "SELECT MAX(snapshot_date) as max_date FROM stock_data WHERE branch_name = %s AND company_name = %s",
-                    (target_branch, target_company)
-                )
-                target_latest_date = target_latest_date_result[0]['max_date'] if target_latest_date_result and target_latest_date_result[0].get('max_date') else None
-            except Exception:
-                target_latest_date = None
-            
-            use_stock_data_fallback = False
-            
-            # Prefer current_stock if available, otherwise use stock_data with latest snapshot
+            # Use current_stock if available
             if source_stock_count > 0:
                 # Check if materialized view exists and use it for faster queries
                 try:
@@ -656,42 +612,23 @@ class DashboardService:
                                             'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
                                             'pack_size', 'last_order_date'])
             
-            # Execute query with appropriate parameters using database manager
+            # Execute query using database manager
             logger.info(f"🔍 Executing priority items query: source={source_branch} ({source_company}), target={target_branch} ({target_company})")
-            logger.info(f"📊 Query will be normalized for {'PostgreSQL' if self.is_postgres else 'SQLite'}")
+            logger.info(f"📊 Query will be normalized for PostgreSQL")
             
-            if use_stock_data_fallback:
-                source_snapshot_date = source_latest_date if source_latest_date else None
-                target_snapshot_date = target_latest_date if target_latest_date else None
-                # Normalize query before executing
-                normalized_query = self._normalize_query(query)
-                logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
-                results = self._execute_query(
-                    normalized_query,
-                    (target_company, target_branch, target_snapshot_date, target_snapshot_date, 
-                     target_company, target_branch, target_company, target_branch, 
-                     source_branch, source_company, 
-                     source_snapshot_date, source_snapshot_date, limit * 20)
-                )
-            else:
-                # Query was already normalized above when params were set
-                # But ensure it's normalized here too
-                normalized_query = self._normalize_query(query) if 'params' not in locals() else query
-                logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
-                try:
-                    results = self._execute_query(
-                        normalized_query,
-                        params if 'params' in locals() else (target_company, target_branch, target_company, target_branch, target_company, target_branch,
-                         target_branch, source_branch, source_company, limit * 20)  # Get more to filter by ABC later
-                    )
-                except Exception as query_error:
-                    logger.error(f"Priority items query failed: {query_error}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    # Return empty DataFrame on error to avoid breaking the UI
-                    return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
-                                                'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
-                                                'pack_size', 'last_order_date'])
+            # Query was already normalized above when params were set
+            normalized_query = self._normalize_query(query)
+            logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
+            try:
+                results = self._execute_query(normalized_query, params)
+            except Exception as query_error:
+                logger.error(f"Priority items query failed: {query_error}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # Return empty DataFrame on error to avoid breaking the UI
+                return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                                            'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                                            'pack_size', 'last_order_date'])
             
             # Convert results to DataFrame
             df = pd.DataFrame(results) if results else pd.DataFrame()
