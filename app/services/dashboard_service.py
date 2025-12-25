@@ -540,7 +540,7 @@ class DashboardService:
                                 target_stock_pieces,
                                 pack_size,
                                 abc_class,
-                                amc_pieces as amc,
+                                amc_pieces,
                                 stock_comment,
                                 last_order_date,
                                 stock_level_pct
@@ -616,6 +616,9 @@ class DashboardService:
             logger.info(f"🔍 Executing priority items query: source={source_branch} ({source_company}), target={target_branch} ({target_company})")
             logger.info(f"📊 Query will be normalized for PostgreSQL")
             
+            # Check if we're using materialized view
+            using_materialized_view = 'priority_items_materialized' in query.upper()
+            
             # Query was already normalized above when params were set
             normalized_query = self._normalize_query(query)
             logger.debug(f"Normalized query (first 200 chars): {normalized_query[:200]}")
@@ -634,6 +637,51 @@ class DashboardService:
             df = pd.DataFrame(results) if results else pd.DataFrame()
             
             logger.info(f"📊 Query returned {len(df)} rows before filtering")
+            
+            # If using materialized view, skip complex processing - data is already complete
+            if using_materialized_view and not df.empty:
+                logger.info("✅ Using priority_items_materialized - data already includes ABC, AMC, and stock levels")
+                # Materialized view already has all columns, just ensure proper types and column names
+                # Map column names to expected format
+                column_mapping = {
+                    'source_stock_pieces': 'source_stock_pieces',
+                    'target_stock_pieces': 'target_stock_pieces',
+                    'amc': 'amc_pieces',  # Materialized view has amc_pieces as amc
+                    'amc_pieces': 'amc_pieces'
+                }
+                
+                # Ensure numeric columns are numeric
+                numeric_cols = ['source_stock_pieces', 'target_stock_pieces', 'pack_size', 'amc_pieces', 'stock_level_pct']
+                for col in numeric_cols:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                
+                # Calculate packs from pieces
+                df['source_stock_packs'] = df.apply(
+                    lambda row: row['source_stock_pieces'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                    axis=1
+                )
+                df['target_stock_packs'] = df.apply(
+                    lambda row: row['target_stock_pieces'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                    axis=1
+                )
+                df['amc_packs'] = df.apply(
+                    lambda row: row['amc_pieces'] / row['pack_size'] if row['pack_size'] > 0 and row['amc_pieces'] > 0 else 0,
+                    axis=1
+                )
+                
+                # Map branch_name from target_branch
+                if 'target_branch' in df.columns and 'branch_name' not in df.columns:
+                    df['branch_name'] = df['target_branch']
+                
+                # Ensure required columns exist
+                for col in ['abc_class', 'stock_comment', 'last_order_date']:
+                    if col not in df.columns:
+                        df[col] = '' if col in ['abc_class', 'stock_comment'] else None
+                
+                logger.info(f"✅ Processed {len(df)} items from priority_items_materialized")
+                # Skip the complex filtering below - materialized view already has correct data
+                return df
             
             if df.empty:
                 logger.info(f"No priority items found: source={source_branch} has stock, target={target_branch} doesn't")
