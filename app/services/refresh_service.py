@@ -276,6 +276,20 @@ class RefreshService:
             
             self.logger.info("🔄 Refreshing materialized views...")
             
+            # Try to use PostgreSQL function first (if it exists)
+            try:
+                cursor.execute("SELECT refresh_materialized_views()")
+                result = cursor.fetchone()[0]
+                conn.commit()
+                cursor.close()
+                self.db_manager.put_connection(conn)
+                self.logger.info(f"✅ Refreshed materialized views via function: {result}")
+                return
+            except Exception as func_error:
+                # Function doesn't exist, use direct refresh
+                self.logger.debug(f"Refresh function not available, using direct refresh: {func_error}")
+                conn.rollback()
+            
             # Refresh stock view materialized view
             try:
                 cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY stock_view_materialized")

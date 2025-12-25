@@ -156,10 +156,10 @@ def create_stock_view_materialized_view(conn):
                     SELECT item_code, document_date, branch, company
                     FROM purchase_orders
                     UNION ALL
-                    SELECT item_code, document_date, branch, company
+                    SELECT item_code, document_date, destination_branch as branch, company
                     FROM branch_orders
                     UNION ALL
-                    SELECT item_code, date as document_date, branch, 'NILA' as company
+                    SELECT item_code, date as document_date, branch, company
                     FROM hq_invoices
                 ) all_orders
                 GROUP BY item_code, branch, company
@@ -175,10 +175,10 @@ def create_stock_view_materialized_view(conn):
                     SELECT item_code, document_date, document_number, quantity, branch, company
                     FROM purchase_orders
                     UNION ALL
-                    SELECT item_code, document_date, document_number, quantity, branch, company
+                    SELECT item_code, document_date, document_number, quantity, destination_branch as branch, company
                     FROM branch_orders
                     UNION ALL
-                    SELECT item_code, date as document_date, invoice_number as document_number, quantity, branch, 'NILA' as company
+                    SELECT item_code, date as document_date, document_number, quantity, branch, company
                     FROM hq_invoices
                 ) ao
                 INNER JOIN last_order_info loi ON ao.item_code = loi.item_code 
@@ -214,21 +214,24 @@ def create_stock_view_materialized_view(conn):
                 SELECT 
                     item_code,
                     branch,
+                    company,
                     MAX(date) as last_invoice_date
                 FROM hq_invoices
-                GROUP BY item_code, branch
+                GROUP BY item_code, branch, company
             ),
             last_invoice_details AS (
-                SELECT DISTINCT ON (hi.item_code, hi.branch)
+                SELECT DISTINCT ON (hi.item_code, hi.branch, hi.company)
                     hi.item_code,
                     hi.branch,
-                    hi.invoice_number as last_invoice_doc,
+                    hi.company,
+                    hi.document_number as last_invoice_doc,
                     hi.quantity as last_invoice_quantity
                 FROM hq_invoices hi
                 INNER JOIN last_invoice_info lii ON hi.item_code = lii.item_code 
                     AND hi.date = lii.last_invoice_date
                     AND hi.branch = lii.branch
-                ORDER BY hi.item_code, hi.branch, hi.date DESC, hi.invoice_number DESC
+                    AND hi.company = lii.company
+                ORDER BY hi.item_code, hi.branch, hi.company, hi.date DESC, hi.document_number DESC
             ),
             inventory_analysis AS (
                 SELECT 
@@ -280,8 +283,10 @@ def create_stock_view_materialized_view(conn):
                 AND lsd.branch = tbs.branch AND lsd.company = tbs.company
             LEFT JOIN last_invoice_info lii ON ui.item_code = lii.item_code 
                 AND lii.branch = tbs.branch
+                AND lii.company = tbs.company
             LEFT JOIN last_invoice_details lid ON ui.item_code = lid.item_code 
                 AND lid.branch = tbs.branch
+                AND lid.company = tbs.company
             LEFT JOIN inventory_analysis ia ON ui.item_code = ia.item_code 
                 AND ia.branch = tbs.branch AND ia.company = tbs.company
         """)
@@ -362,10 +367,10 @@ def create_priority_items_materialized_view(conn):
                     SELECT item_code, document_date, branch, company
                     FROM purchase_orders
                     UNION ALL
-                    SELECT item_code, document_date, branch, company
+                    SELECT item_code, document_date, destination_branch as branch, company
                     FROM branch_orders
                     UNION ALL
-                    SELECT item_code, date as document_date, branch, 'NILA' as company
+                    SELECT item_code, date as document_date, branch, company
                     FROM hq_invoices
                 ) all_orders
                 GROUP BY item_code, branch, company
@@ -488,6 +493,19 @@ def main():
         # Create materialized views
         create_stock_view_materialized_view(conn)
         create_priority_items_materialized_view(conn)
+        
+        # Create refresh function for Supabase API calls
+        try:
+            cursor = conn.cursor()
+            with open(os.path.join(os.path.dirname(__file__), 'create_refresh_function.sql'), 'r') as f:
+                cursor.execute(f.read())
+            conn.commit()
+            cursor.close()
+            logger.info("✅ Created refresh_materialized_views() function")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not create refresh function (may already exist): {e}")
+            if conn:
+                conn.rollback()
         
         # Refresh views
         refresh_materialized_views(conn)

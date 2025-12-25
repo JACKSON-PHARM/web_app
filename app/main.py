@@ -16,7 +16,7 @@ import sys
 from app.config import settings
 from app.services.license_service import LicenseService
 from app.services.scheduler import RefreshScheduler
-from app.api import auth, dashboard, stock_view, refresh, credentials, admin, procurement, suppliers, diagnostics
+from app.api import auth, dashboard, stock_view, refresh, credentials, admin, procurement, suppliers, diagnostics, materialized_views
 from app.dependencies import get_db_manager, get_current_user
 
 # Setup logging
@@ -132,6 +132,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(procurement.router, prefix="/api/procurement", tags=["Procurement"])
 app.include_router(suppliers.router, prefix="/api/suppliers", tags=["Suppliers"])
 app.include_router(diagnostics.router, prefix="/api/diagnostics", tags=["Diagnostics"])
+app.include_router(materialized_views.router, prefix="/api/materialized-views", tags=["Materialized Views"])
 
 @app.get("/health")
 async def health_check():
