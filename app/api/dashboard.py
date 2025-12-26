@@ -736,27 +736,62 @@ async def get_branches(
     current_user: dict = Depends(get_current_user),
     db_manager = Depends(get_db_manager)
 ):
-    """Get list of unique branches from inventory_analysis (preferred) or current_stock (fallback)"""
+    """Get list of unique branches from current_stock table (matches desktop version behavior)"""
     import logging
     logger = logging.getLogger(__name__)
     
     try:
-        logger.info(f"Fetching branches" + (f" for {company}" if company else ""))
+        logger.info(f"Fetching branches from current_stock" + (f" for {company}" if company else ""))
         
-        # Get branches from database manager (handles inventory_analysis -> current_stock fallback)
-        branches = db_manager.get_branches(company)
-        logger.info(f"Found {len(branches)} branches")
+        # Query current_stock directly like desktop version does
+        # Desktop version: SELECT DISTINCT branch, company FROM current_stock ORDER BY company, branch
+        if company:
+            query = """
+                SELECT DISTINCT branch, company 
+                FROM current_stock 
+                WHERE UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                ORDER BY company, branch
+            """
+            params = (company,)
+        else:
+            query = """
+                SELECT DISTINCT branch, company 
+                FROM current_stock 
+                ORDER BY company, branch
+            """
+            params = None
+        
+        # Execute query using database manager
+        result = db_manager.execute_query(query, params)
+        logger.info(f"Query returned {len(result) if result else 0} rows")
+        
+        # Format branches like desktop version: [{"branch_name": "...", "company": "...", "branch_code": "..."}]
+        branches = []
+        if result:
+            for row in result:
+                branch_name = row.get('branch') or row.get('branch_name', '')
+                branch_company = row.get('company') or row.get('company_name', '')
+                if branch_name and branch_company:
+                    branches.append({
+                        "branch_name": branch_name.strip(),
+                        "company": branch_company.strip(),
+                        "branch_code": row.get('branch_code', ''),  # May not exist
+                        "branch": branch_name.strip()  # For compatibility
+                    })
+        
+        logger.info(f"Found {len(branches)} unique branches")
         
         if not branches:
-            logger.warning("No branches found, returning empty list")
+            logger.warning("No branches found in current_stock table")
             # Check if we have data at all
             try:
-                result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock")
-                stock_count = result[0]['count'] if result else 0
+                count_result = db_manager.execute_query("SELECT COUNT(*) as count FROM current_stock")
+                stock_count = count_result[0]['count'] if count_result else 0
+                logger.info(f"Database has {stock_count} stock records but no distinct branches found")
                 if stock_count > 0:
-                    logger.info(f"Database has {stock_count} stock records but no branches found - this is unusual")
-            except:
-                pass
+                    logger.warning("⚠️ current_stock has data but no distinct branches - check branch/company columns")
+            except Exception as check_error:
+                logger.error(f"Error checking stock count: {check_error}")
         
         return {
             "success": True,
@@ -774,7 +809,8 @@ async def get_branches(
             "success": False,
             "error": str(e),
             "data": [],
-            "message": f"Failed to load branches: {str(e)}"
+            "message": f"Failed to load branches: {str(e)}",
+            "traceback": error_traceback
         }
 
 @router.get("/items")

@@ -251,9 +251,11 @@ class StockViewServicePostgres:
                 logger.warning(f"⚠️ Error checking for materialized view: {e}, using regular query")
                 import traceback
                 logger.debug(traceback.format_exc())
+                has_materialized_view = False
                 materialized_view_has_data = False
             
             # Use regular query if materialized view doesn't exist or has no data
+            # CRITICAL: Always fallback if view doesn't exist OR returns 0 rows OR query fails
             if not has_materialized_view or not materialized_view_has_data:
                 # Fallback to regular query if materialized view doesn't exist
                 logger.info("Using regular query (materialized view not available)")

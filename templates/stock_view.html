@@ -304,7 +304,7 @@
                        onkeyup="filterStockTable()">
             </div>
             <button onclick="loadStockView()" class="btn btn-primary">Load Stock View</button>
-            <button onclick="runStockViewProcurementBot()" class="btn btn-success" id="stockViewProcurementBtn" style="display: none;">
+            <button class="btn btn-success" id="stockViewProcurementBtn" style="display: none;">
                 🤖 Order Selected Items
             </button>
         </div>
@@ -422,22 +422,65 @@
     window.stockViewData = [];
     let isLoadingStockView = false; // Prevent duplicate calls
     
+    // Global error handler for uncaught JS errors
+    window.addEventListener('error', (event) => {
+        console.error('Uncaught JavaScript error:', event.error);
+        console.error('Error details:', {
+            message: event.message,
+            filename: event.filename,
+            lineno: event.lineno,
+            colno: event.colno
+        });
+        // Don't break execution - log and continue
+        return true;
+    });
+    
+    // Global promise rejection handler
+    window.addEventListener('unhandledrejection', (event) => {
+        console.error('Unhandled promise rejection:', event.reason);
+        // Don't break execution - log and continue
+        event.preventDefault();
+    });
+    
     window.addEventListener('DOMContentLoaded', () => {
-        loadBranches();
-        
-        // Add single click handler for Load Stock View button (remove onclick attribute to prevent duplicates)
-        const loadBtn = document.querySelector('button[onclick="loadStockView()"]');
-        if (loadBtn) {
-            // Remove inline onclick to prevent duplicate handlers
-            loadBtn.removeAttribute('onclick');
-            loadBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (!isLoadingStockView) {
-                    console.log('Load Stock View button clicked');
-                    loadStockView();
-                }
-            });
+        try {
+            loadBranches();
+            
+            // Add single click handler for Load Stock View button (remove onclick attribute to prevent duplicates)
+            const loadBtn = document.querySelector('button[onclick="loadStockView()"]');
+            if (loadBtn) {
+                // Remove inline onclick to prevent duplicate handlers
+                loadBtn.removeAttribute('onclick');
+                loadBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!isLoadingStockView) {
+                        console.log('Load Stock View button clicked');
+                        loadStockView();
+                    }
+                });
+            } else {
+                console.warn('Load Stock View button not found on page load');
+            }
+            
+            // Ensure procurement bot button has event listener
+            const procurementBtn = document.getElementById('stockViewProcurementBtn');
+            if (procurementBtn) {
+                // Remove any existing onclick attribute
+                procurementBtn.removeAttribute('onclick');
+                procurementBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try {
+                        runStockViewProcurementBot();
+                    } catch (error) {
+                        console.error('Error running procurement bot:', error);
+                        alert('Error running procurement bot: ' + error.message);
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Error in DOMContentLoaded handler:', error);
         }
     });
     
@@ -614,9 +657,12 @@
         isLoadingStockView = true;
         
         // Disable button during load
-        const loadBtn = document.querySelector('button:has-text("Load Stock View"), button[class*="btn-primary"]');
+        const loadBtn = document.querySelector('button.btn-primary') || 
+                       Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.includes('Load Stock View'));
         if (loadBtn) {
             loadBtn.disabled = true;
+            const originalText = loadBtn.textContent;
+            loadBtn.dataset.originalText = originalText;
             loadBtn.textContent = 'Loading...';
         }
         
@@ -888,10 +934,11 @@
         } finally {
             // Reset loading flag and re-enable button
             isLoadingStockView = false;
-            const loadBtn = document.querySelector('button:has-text("Load Stock View"), button[class*="btn-primary"]');
+            const loadBtn = document.querySelector('button.btn-primary') || 
+                           Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.includes('Loading...') || btn.textContent.includes('Load Stock View'));
             if (loadBtn) {
                 loadBtn.disabled = false;
-                loadBtn.textContent = 'Load Stock View';
+                loadBtn.textContent = loadBtn.dataset.originalText || 'Load Stock View';
             }
         }
     }

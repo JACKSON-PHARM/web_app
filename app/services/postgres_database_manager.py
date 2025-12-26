@@ -32,6 +32,7 @@ class PostgresDatabaseManager:
         self.setup_logging()
         
         # Check if using direct connection (will fail with IPv6 on free tier)
+        # CRITICAL: Render + Supabase free tier requires pooler connection (IPv4 compatible)
         if 'db.' in connection_string and '.supabase.co' in connection_string and 'pooler' not in connection_string:
             logger.error("❌ DETECTED: You're using Supabase DIRECT connection string")
             logger.error("   Direct connections (db.xxx.supabase.co) only support IPv6")

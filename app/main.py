@@ -136,24 +136,74 @@ app.include_router(materialized_views.router, prefix="/api/materialized-views", 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Render"""
+    """Health check endpoint for Render - checks database, materialized views, and scheduler"""
+    health_status = {
+        "status": "ok",
+        "message": "PharmaStock Web App is running",
+        "timestamp": None,
+        "database": {
+            "type": "Supabase PostgreSQL",
+            "connected": False,
+            "error": None
+        },
+        "materialized_views": {
+            "stock_view_materialized": False,
+            "priority_items_materialized": False
+        },
+        "scheduler": {
+            "enabled": settings.AUTO_REFRESH_ENABLED,
+            "running": False
+        }
+    }
+    
+    from datetime import datetime
+    health_status["timestamp"] = datetime.now().isoformat()
+    
+    # Check database connection
     try:
-        # Test database connection
         db_manager = get_db_manager()
-        return {
-            "status": "ok", 
-            "message": "PharmaStock Web App is running",
-            "database": {
-                "type": "Supabase PostgreSQL",
-                "connected": True
-            }
-        }
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        cursor.close()
+        db_manager.put_connection(conn)
+        health_status["database"]["connected"] = True
+        
+        # Check materialized views
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT matviewname 
+                FROM pg_matviews 
+                WHERE schemaname = 'public' 
+                AND matviewname IN ('stock_view_materialized', 'priority_items_materialized')
+            """)
+            views = [row[0] for row in cursor.fetchall()]
+            health_status["materialized_views"]["stock_view_materialized"] = "stock_view_materialized" in views
+            health_status["materialized_views"]["priority_items_materialized"] = "priority_items_materialized" in views
+            cursor.close()
+            db_manager.put_connection(conn)
+        except Exception as mv_error:
+            logger.warning(f"Could not check materialized views: {mv_error}")
+        
     except Exception as e:
-        return {
-            "status": "degraded",
-            "message": "PharmaStock Web App is running but some services may be unavailable",
-            "error": str(e)
-        }
+        health_status["status"] = "degraded"
+        health_status["database"]["error"] = str(e)
+        health_status["message"] = "Database connection failed - some features may be unavailable"
+        logger.error(f"Health check database error: {e}")
+    
+    # Check scheduler status
+    try:
+        global scheduler
+        if scheduler:
+            health_status["scheduler"]["running"] = scheduler.is_running() if hasattr(scheduler, 'is_running') else True
+    except Exception as sched_error:
+        logger.warning(f"Could not check scheduler status: {sched_error}")
+    
+    # Return appropriate status code
+    status_code = 200 if health_status["status"] == "ok" else 503
+    return JSONResponse(content=health_status, status_code=status_code)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
