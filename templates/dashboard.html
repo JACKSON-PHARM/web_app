@@ -754,31 +754,57 @@
         }
     }
     
+    // Global error handler for uncaught JS errors
+    window.addEventListener('error', (event) => {
+        console.error('Uncaught JavaScript error:', event.error);
+        console.error('Error details:', {
+            message: event.message,
+            filename: event.filename,
+            lineno: event.lineno,
+            colno: event.colno
+        });
+        // Don't break execution - log and continue
+        return true;
+    });
+    
+    // Global promise rejection handler
+    window.addEventListener('unhandledrejection', (event) => {
+        console.error('Unhandled promise rejection:', event.reason);
+        // Don't break execution - log and continue
+        event.preventDefault();
+    });
+    
     // Check authentication first
     window.addEventListener('DOMContentLoaded', () => {
-        const token = localStorage.getItem('access_token');
-        
-        // Redirect to login if not authenticated
-        if (!token) {
-            window.location.href = '/';
-            return;
-        }
-        
-        // Show loading state immediately
-        // Initialize tables
-        const priorityItemsTable = document.getElementById('priorityTable');
-        if (priorityItemsTable) {
-            const tbody = priorityItemsTable.querySelector('tbody');
-            if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px;">Loading...</td></tr>';
+        try {
+            const token = localStorage.getItem('access_token');
+            
+            // Redirect to login if not authenticated
+            if (!token) {
+                window.location.href = '/';
+                return;
             }
-        }
-        
-        // Load branches first - this will trigger loadPriorityItems when done
-        console.log('📋 Calling loadBranches()...');
-        loadBranches().catch(error => {
-            console.error('❌ Error in loadBranches():', error);
-        });
+            
+            // Show loading state immediately
+            // Initialize tables
+            const priorityItemsTable = document.getElementById('priorityTable');
+            if (priorityItemsTable) {
+                const tbody = priorityItemsTable.querySelector('tbody');
+                if (tbody) {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px;">Loading...</td></tr>';
+                }
+            }
+            
+            // Load branches first - this will trigger loadPriorityItems when done
+            console.log('📋 Calling loadBranches()...');
+            loadBranches().catch(error => {
+                console.error('❌ Error in loadBranches():', error);
+                // Show error in dropdowns
+                const targetSelect = document.getElementById('targetBranch');
+                const sourceSelect = document.getElementById('sourceBranch');
+                if (targetSelect) targetSelect.innerHTML = '<option value="">Error loading branches</option>';
+                if (sourceSelect) sourceSelect.innerHTML = '<option value="">Error loading branches</option>';
+            });
         
         // Check refresh status once on page load (don't poll continuously)
         // Only check if user manually triggers refresh
@@ -1012,7 +1038,11 @@
                 // Trigger loadPriorityItems after branches are loaded
                 console.log('✅ Branches loaded successfully, triggering loadPriorityItems...');
                 setTimeout(() => {
-                    loadPriorityItems();
+                    try {
+                        loadPriorityItems();
+                    } catch (error) {
+                        console.error('Error loading priority items:', error);
+                    }
                 }, 100);
                 
                 console.log('✅ Branches loaded successfully');
@@ -1116,7 +1146,11 @@
         const limit = parseInt(document.getElementById('priorityLimit')?.value || '50');
         
         try {
-            const data = await apiRequest(`/api/dashboard/priority-items?target_branch=${encodeURIComponent(targetBranchName)}&target_company=${encodeURIComponent(targetCompany)}&source_branch=${encodeURIComponent(sourceBranchName)}&source_company=${encodeURIComponent(sourceCompany)}&limit=${limit}`);
+            console.log(`📡 Loading priority items: target=${targetBranchName} (${targetCompany}), source=${sourceBranchName} (${sourceCompany}), limit=${limit}`);
+            const apiUrl = `/api/dashboard/priority-items?target_branch=${encodeURIComponent(targetBranchName)}&target_company=${encodeURIComponent(targetCompany)}&source_branch=${encodeURIComponent(sourceBranchName)}&source_company=${encodeURIComponent(sourceCompany)}&limit=${limit}`;
+            console.log('API URL:', apiUrl);
+            
+            const data = await apiRequest(apiUrl);
             
             const tbody = document.getElementById('priorityBody');
             if (!tbody) {
@@ -1126,7 +1160,7 @@
             tbody.innerHTML = '';
             
             // Log response for debugging
-            console.log('Priority items response:', data);
+            console.log('Priority items API response:', data);
             
             // Handle both error and empty data cases
             if (!data.success || (data.count === 0 && (!data.data || data.data.length === 0))) {

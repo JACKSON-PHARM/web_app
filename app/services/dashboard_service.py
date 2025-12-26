@@ -560,6 +560,8 @@ class DashboardService:
                                 AND supplier_stock > 0
                                 AND (branch_stock IS NULL OR branch_stock <= 0 OR branch_stock < 1000)
                                 AND (stock_level_pct IS NULL OR stock_level_pct < 0.5)
+                                AND abc_class IN ('A', 'B')
+                                AND (last_order_date IS NULL OR last_order_date < CURRENT_DATE - INTERVAL '10 days')
                             ORDER BY supplier_stock DESC
                             LIMIT %s
                         """
@@ -705,9 +707,38 @@ class DashboardService:
                     if col not in df.columns:
                         df[col] = '' if col in ['abc_class', 'stock_comment'] else None
                 
-                logger.info(f"✅ Processed {len(df)} items from priority_items_materialized")
-                # Skip the complex filtering below - materialized view already has correct data
-                return df
+                # Apply priority items filters even when using materialized view
+                # REQUIREMENT: ABC class A or B only, last_order_date > 10 days old OR NULL, stock_level_pct < 0.5
+                before_filters = len(df)
+                
+                # Filter by ABC class A or B only
+                df = df[df['abc_class'].isin(['A', 'B'])]
+                logger.info(f"After ABC filter (A/B only): {len(df)} items (was {before_filters})")
+                
+                # Filter by last_order_date > 10 days old OR NULL
+                from datetime import datetime, timedelta
+                ten_days_ago = datetime.now().date() - timedelta(days=10)
+                df['last_order_date_parsed'] = pd.to_datetime(df['last_order_date'], errors='coerce')
+                df = df[
+                    (df['last_order_date_parsed'].isna()) |  # NULL last_order_date
+                    (df['last_order_date_parsed'].dt.date < ten_days_ago)  # > 10 days old
+                ]
+                logger.info(f"After last_order_date filter (>10 days or NULL): {len(df)} items")
+                
+                # Filter by stock_level_pct < 0.5 (already filtered in query, but ensure)
+                df = df[(df['stock_level_pct'].isna()) | (df['stock_level_pct'] < 0.5)]
+                logger.info(f"After stock_level_pct filter (<0.5): {len(df)} items")
+                
+                # Drop temporary column
+                df = df.drop(columns=['last_order_date_parsed'], errors='ignore')
+                
+                logger.info(f"✅ Processed {len(df)} priority items from materialized view (after filters)")
+                # Return filtered results with proper columns
+                return df[['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                          'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                          'pack_size', 'last_order_date']].head(limit) if not df.empty else pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                          'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                          'pack_size', 'last_order_date'])
             
             if df.empty:
                 logger.info(f"No priority items found: source={source_branch} has stock, target={target_branch} doesn't")
@@ -810,10 +841,11 @@ class DashboardService:
                     df['abc_class'] = ''
                 df['amc_pieces'] = 0
             
-            # Filter to A/B/C only (fast moving items) - ABC class from TARGET branch
+            # Filter to A/B only (fast moving items) - ABC class from TARGET branch
+            # REQUIREMENT: Priority items should be ABC class A or B only (not C)
             before_abc = len(df)
-            df = df[df['abc_class'].isin(['A', 'B', 'C'])]
-            logger.info(f"After ABC filter (A/B/C from target branch): {len(df)} items (was {before_abc})")
+            df = df[df['abc_class'].isin(['A', 'B'])]
+            logger.info(f"After ABC filter (A/B only from target branch): {len(df)} items (was {before_abc})")
             
             # Log detailed diagnostics before reorder filter
             logger.info(f"📊 Before reorder level filter: {len(df)} items")
