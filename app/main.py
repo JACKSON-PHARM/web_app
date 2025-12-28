@@ -2,6 +2,17 @@
 FastAPI Main Application
 PharmaStock Web Application Entry Point
 """
+import os
+import sys
+
+# Add scripts directory to Python path BEFORE any other imports
+# This ensures scripts module can be imported by app.services modules
+app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+scripts_dir = os.path.join(app_root, 'scripts')
+if os.path.exists(scripts_dir):
+    if app_root not in sys.path:
+        sys.path.insert(0, app_root)
+
 from fastapi import FastAPI, Request, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -10,8 +21,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
 import logging
-import os
-import sys
 
 from app.config import settings
 from app.services.license_service import LicenseService

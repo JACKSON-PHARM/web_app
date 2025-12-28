@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class RefreshService:
     """Service for refreshing data from APIs"""
     
-    def __init__(self, db_manager: DatabaseManager, app_root: str, credential_manager: CredentialManager):
+    def __init__(self, db_manager, app_root: str, credential_manager):
         self.db_manager = db_manager
         self.app_root = app_root
         self.credential_manager = credential_manager
@@ -268,6 +268,114 @@ class RefreshService:
                 'messages': results.get('messages', []) + [f"❌ Refresh failed: {str(e)}"]
             }
     
+    def refresh_selected_data(self, fetchers: List[str]) -> Dict:
+        """Refresh only selected fetchers"""
+        results = {
+            'success': True,
+            'fetchers_run': [],
+            'fetchers_failed': [],
+            'messages': []
+        }
+        
+        try:
+            # Use DatabaseFetcherOrchestrator to run selected fetchers
+            try:
+                from scripts.data_fetchers.database_fetcher_orchestrator import DatabaseFetcherOrchestrator
+            except ImportError:
+                self.logger.error("⚠️ Could not import DatabaseFetcherOrchestrator: No module named 'scripts'")
+                results['success'] = False
+                results['messages'].append("Data refresh not available - scripts module not found")
+                return results
+            
+            from app.config import settings
+            
+            self.logger.info(f"🔄 Initializing DatabaseFetcherOrchestrator for fetchers: {fetchers}...")
+            
+            # Create orchestrator
+            orchestrator = DatabaseFetcherOrchestrator(app_root=self.app_root)
+            
+            # Override the base fetcher's database manager to use Supabase
+            if hasattr(self.db_manager, 'connection_string') or hasattr(self.db_manager, 'pool'):
+                self.logger.info("✅ Using Supabase PostgreSQL database manager")
+                orchestrator.base_fetcher.db_manager = self.db_manager
+                orchestrator.base_fetcher.cred_manager = self.credential_manager
+            
+            # Set up progress callback
+            from app.services.refresh_status import RefreshStatusService
+            
+            def progress_callback(message, progress=None):
+                if progress is not None:
+                    self.logger.info(f"[{progress*100:.0f}%] {message}")
+                    RefreshStatusService.update_progress(progress, message)
+                else:
+                    self.logger.info(message)
+                    RefreshStatusService.update_progress(None, message)
+            
+            orchestrator.set_progress_callback(progress_callback)
+            
+            self.logger.info(f"🚀 Running selected fetchers: {fetchers}...")
+            
+            # Run selected fetchers
+            orchestrator_result = orchestrator.run_selected(fetchers)
+            
+            if orchestrator_result.get('success'):
+                fetcher_results = orchestrator_result.get('results', {})
+                
+                for fetcher_name in fetchers:
+                    fetcher_result = fetcher_results.get(fetcher_name, {})
+                    if fetcher_result.get('success'):
+                        results['fetchers_run'].append(fetcher_name)
+                        # Extract count based on fetcher type
+                        count = 0
+                        if fetcher_name == 'stock':
+                            count = fetcher_result.get('total_updated', 0)
+                        elif fetcher_name == 'grn':
+                            count = fetcher_result.get('total_grns', 0)
+                        elif fetcher_name == 'orders':
+                            count = fetcher_result.get('total_orders', 0) or (
+                                fetcher_result.get('total_purchase_orders', 0) + 
+                                fetcher_result.get('total_branch_orders', 0)
+                            )
+                        elif fetcher_name == 'supplier_invoices':
+                            count = fetcher_result.get('total_invoices', 0)
+                        
+                        results['messages'].append(f"✅ {fetcher_name}: {count:,} records processed")
+                    else:
+                        results['fetchers_failed'].append(fetcher_name)
+                        error_msg = fetcher_result.get('message', 'Unknown error')
+                        results['messages'].append(f"❌ {fetcher_name} failed: {error_msg}")
+                
+                results['summary'] = fetcher_results
+                results['duration'] = orchestrator_result.get('duration', 'Unknown')
+                
+                self.logger.info(f"✅ Selected fetchers completed in {orchestrator_result.get('duration', 'Unknown')}")
+                
+                # Refresh materialized views after data refresh
+                self._refresh_materialized_views()
+            else:
+                results['success'] = False
+                error_msg = orchestrator_result.get('message', 'Unknown error')
+                results['messages'].append(f"❌ Refresh failed: {error_msg}")
+                self.logger.error(f"❌ Refresh failed: {error_msg}")
+            
+            return results
+            
+        except ImportError as e:
+            self.logger.error(f"❌ Failed to import DatabaseFetcherOrchestrator: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            results['success'] = False
+            results['messages'].append(f"Import error: {str(e)}")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in refresh_selected_data: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            results['success'] = False
+            results['messages'].append(f"Error: {str(e)}")
+            return results
+
     def _refresh_materialized_views(self):
         """Refresh materialized views after data refresh"""
         try:

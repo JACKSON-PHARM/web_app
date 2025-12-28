@@ -5,12 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from datetime import timedelta
 from app.config import settings
-from app.services.user_service import UserService
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_user_service
 from app.security import create_access_token
 
 router = APIRouter()
-user_service = UserService()
 
 class LoginRequest(BaseModel):
     username: str
@@ -30,6 +28,7 @@ async def login(login_data: LoginRequest):
     password = login_data.password
     
     # Authenticate user
+    user_service = get_user_service()
     user = user_service.authenticate(username, password)
     
     if not user:

@@ -1079,8 +1079,8 @@
             showProgressModal();
             updateProgress(0, 'Starting data refresh...', 'Connecting to APIs and fetching latest data');
             
-            // Call refresh API - uses saved credentials from database
-            const response = await fetch('/api/refresh/all', {
+            // Call refresh trigger API - uses saved credentials from database
+            const response = await fetch('/api/refresh/trigger', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

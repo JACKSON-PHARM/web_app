@@ -10,16 +10,13 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 # Try to import original fetcher manager from scripts
+# Note: scripts.fetcher_manager may not exist - this is optional
 OriginalFetcherManager = None
 try:
-    # Add parent directory to path to import existing fetchers
-    parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-    if os.path.exists(parent_path):
-        sys.path.insert(0, parent_path)
     from scripts.fetcher_manager import FetcherManager as OriginalFetcherManager
     logger.info("✅ Imported OriginalFetcherManager from scripts")
 except ImportError:
-    logger.warning("⚠️ Could not import original FetcherManager: No module named 'scripts'")
+    # This is expected - scripts.fetcher_manager doesn't exist, we use DatabaseFetcherOrchestrator instead
     OriginalFetcherManager = None
 
 class FetcherManager:

@@ -2,8 +2,7 @@
 Suppliers API Routes
 """
 from fastapi import APIRouter, Depends, HTTPException
-from app.dependencies import get_current_user
-from app.services.credential_manager import CredentialManager
+from app.dependencies import get_current_user, get_credential_manager
 from app.config import settings
 import requests
 import logging
@@ -23,8 +22,8 @@ async def get_suppliers(
 ):
     """Get list of suppliers for a branch"""
     try:
-        # Initialize credential manager
-        cred_manager = CredentialManager(app_root=settings.LOCAL_CACHE_DIR)
+        # Get credential manager
+        cred_manager = get_credential_manager()
         
         # Determine company from branch_code (you may need to adjust this logic)
         # For now, try both companies

@@ -356,6 +356,13 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
                 self.logger.warning("No enabled companies found")
                 return 0
             
+            # Clean up old records (>90 days) before fetching new ones
+            self.logger.info("🧹 Cleaning old orders (>90 days)...")
+            deleted_po = self.cleanup_old_records("purchase_orders", "document_date", retention_days=90)
+            deleted_bo = self.cleanup_old_records("branch_orders", "document_date", retention_days=90)
+            if deleted_po > 0 or deleted_bo > 0:
+                self.logger.info(f"✅ Cleaned {deleted_po + deleted_bo:,} old order records")
+            
             self.logger.info(f"🔄 Starting orders sync for companies: {companies}")
             total_orders = 0
             

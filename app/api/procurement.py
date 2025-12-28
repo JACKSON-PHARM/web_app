@@ -19,15 +19,13 @@ BRANCH_MAPPING = {}
 ALL_BRANCHES = []
 
 try:
-    # Add parent directory to import procurement bot
-    parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-    if os.path.exists(parent_path):
-        sys.path.insert(0, parent_path)
+    # Path should already be set in app/main.py, so scripts module should be available
     from scripts.procurement_bot.integrated_procurement_bot import IntegratedProcurementBot
     from scripts.data_fetchers.branch_config import BRANCH_MAPPING, ALL_BRANCHES
     logger.info("✅ Imported procurement bot and branch config from scripts")
 except ImportError:
-    logger.warning("⚠️ Could not import procurement bot: No module named 'scripts' - procurement features will be limited")
+    # This is expected if procurement_bot doesn't exist - feature will be unavailable
+    logger.warning("⚠️ Could not import procurement bot - procurement features will be limited")
     # Provide fallback empty values
     BRANCH_MAPPING = {}
     ALL_BRANCHES = []

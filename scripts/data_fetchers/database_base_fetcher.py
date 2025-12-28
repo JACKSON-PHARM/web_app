@@ -268,3 +268,69 @@ class DatabaseBaseFetcher:
             return False
         return True
 
+    def cleanup_old_records(self, table_name: str, date_column: str, retention_days: int = 90) -> int:
+        """
+        Delete old records from a table
+        
+        Args:
+            table_name: Name of the table to clean
+            date_column: Name of the date column to check
+            retention_days: Number of days to retain (default 90)
+            
+        Returns:
+            Number of records deleted
+        """
+        try:
+            from datetime import datetime, timedelta
+            
+            cutoff_date = (datetime.now() - timedelta(days=retention_days)).date()
+            cutoff_date_str = cutoff_date.strftime('%Y-%m-%d')
+            
+            self.logger.info(f"🧹 Cleaning {table_name}: deleting records older than {cutoff_date_str} ({retention_days} days)")
+            
+            # Check if using PostgreSQL or SQLite
+            if hasattr(self.db_manager, 'get_connection'):
+                conn = self.db_manager.get_connection()
+                cursor = conn.cursor()
+                
+                try:
+                    # Check if table exists and get date column type
+                    if hasattr(self.db_manager, 'pool') or 'PostgresDatabaseManager' in str(type(self.db_manager)):
+                        # PostgreSQL
+                        cursor.execute(f"""
+                            DELETE FROM {table_name} 
+                            WHERE {date_column} < %s
+                        """, (cutoff_date_str,))
+                    else:
+                        # SQLite
+                        cursor.execute(f"""
+                            DELETE FROM {table_name} 
+                            WHERE {date_column} < ?
+                        """, (cutoff_date_str,))
+                    
+                    deleted_count = cursor.rowcount
+                    conn.commit()
+                    cursor.close()
+                    self.db_manager.put_connection(conn)
+                    
+                    if deleted_count > 0:
+                        self.logger.info(f"✅ Deleted {deleted_count:,} old records from {table_name}")
+                    else:
+                        self.logger.info(f"ℹ️ No old records to delete from {table_name}")
+                    
+                    return deleted_count
+                    
+                except Exception as e:
+                    conn.rollback()
+                    cursor.close()
+                    self.db_manager.put_connection(conn)
+                    self.logger.warning(f"⚠️ Error cleaning {table_name}: {e}")
+                    return 0
+            else:
+                self.logger.warning(f"⚠️ Database manager does not support cleanup operations")
+                return 0
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error in cleanup_old_records for {table_name}: {e}")
+            return 0
+

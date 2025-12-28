@@ -3,7 +3,7 @@ Data Refresh API Routes
 """
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import asyncio
 import logging
 from app.dependencies import get_current_user, get_db_manager
@@ -154,13 +154,118 @@ async def get_refresh_status(current_user: dict = Depends(get_current_user)):
         }
     }
 
+class TriggerRefreshRequest(BaseModel):
+    """Request model for trigger refresh endpoint"""
+    fetchers: Optional[List[str]] = None  # List of fetcher names: ['stock', 'grn', 'orders', 'supplier_invoices'] or None for all
+    nila_username: Optional[str] = None
+    nila_password: Optional[str] = None
+    daima_username: Optional[str] = None
+    daima_password: Optional[str] = None
+
 @router.post("/trigger")
 async def trigger_manual_refresh(
-    request: RefreshRequest,
+    request: TriggerRefreshRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user)
 ):
-    """Trigger immediate manual refresh"""
-    # Similar to refresh_all_data but synchronous
-    # Implementation similar to above
-    return {"status": "triggered", "message": "Manual refresh triggered"}
+    """
+    Trigger manual refresh - can run specific fetchers or all fetchers
+    Runs in background and refreshes materialized views after completion
+    """
+    # Get database and credential managers
+    db_manager = get_db_manager()
+    cred_manager = get_credential_manager()
+    
+    # Check if credentials are saved
+    nila_creds = cred_manager.get_credentials("NILA")
+    daima_creds = cred_manager.get_credentials("DAIMA")
+    
+    # Use provided credentials if given, otherwise use saved ones
+    has_nila = (request.nila_username and request.nila_password) or (nila_creds and nila_creds.get('username') and nila_creds.get('password'))
+    has_daima = (request.daima_username and request.daima_password) or (daima_creds and daima_creds.get('username') and daima_creds.get('password'))
+    
+    # Validate that at least one set of credentials is available
+    if not has_nila and not has_daima:
+        raise HTTPException(
+            status_code=400,
+            detail="No credentials available. Please configure credentials in Settings first or provide them in the request."
+        )
+    
+    # Save user credentials if provided (will overwrite saved ones)
+    if request.nila_username and request.nila_password:
+        cred_manager.save_credentials(
+            "NILA",
+            request.nila_username,
+            request.nila_password,
+            settings.NILA_API_URL
+        )
+    
+    if request.daima_username and request.daima_password:
+        cred_manager.save_credentials(
+            "DAIMA",
+            request.daima_username,
+            request.daima_password,
+            settings.DAIMA_API_URL
+        )
+    
+    # Run refresh in background with fetcher selection
+    background_tasks.add_task(run_refresh_task_with_fetchers, request.fetchers)
+    
+    fetcher_list = request.fetchers if request.fetchers else "all"
+    return {
+        "status": "started",
+        "message": f"Data refresh started for fetchers: {fetcher_list}. Database will be updated when complete.",
+        "fetchers": fetcher_list,
+        "last_refresh": None
+    }
+
+async def run_refresh_task_with_fetchers(fetchers: Optional[List[str]] = None):
+    """Background task to run refresh with optional fetcher selection"""
+    RefreshStatusService.set_refreshing(True, f"Starting data refresh for fetchers: {fetchers or 'all'}...")
+    
+    try:
+        db_manager = get_db_manager()
+        cred_manager = get_credential_manager()
+        
+        # Use refresh service
+        from app.services.refresh_service import RefreshService
+        refresh_service = RefreshService(db_manager, settings.LOCAL_CACHE_DIR, cred_manager)
+        
+        # Run refresh with fetcher selection
+        logger.info(f"🔄 Fetching data from APIs for fetchers: {fetchers or 'all'}...")
+        RefreshStatusService.update_progress(0.1, f"Connecting to database and starting fetchers: {fetchers or 'all'}...")
+        
+        if fetchers:
+            # Run specific fetchers
+            result = refresh_service.refresh_selected_data(fetchers)
+        else:
+            # Run all fetchers
+            result = refresh_service.refresh_all_data()
+        
+        if result.get('success'):
+            logger.info("✅ Data refresh complete - all changes saved to database")
+            RefreshStatusService.update_progress(1.0, "Refresh complete!")
+            RefreshStatusService.set_refresh_complete(True, "Data refreshed successfully")
+            return {
+                "success": True,
+                "message": "Data refreshed successfully - all changes saved to database",
+                "details": result,
+                "fetchers": fetchers or "all"
+            }
+        else:
+            logger.error(f"❌ Refresh failed: {result.get('error', 'Unknown error')}")
+            RefreshStatusService.set_refresh_complete(False, result.get('error', 'Unknown error'))
+            return {
+                "success": False,
+                "message": result.get('error', 'Unknown error'),
+                "details": result,
+                "fetchers": fetchers or "all"
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Error in refresh task: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        RefreshStatusService.set_refresh_complete(False, str(e))
+        return {"success": False, "message": str(e), "fetchers": fetchers or "all"}
 

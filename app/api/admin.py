@@ -9,13 +9,11 @@ from typing import List, Optional
 import os
 import json
 import logging
-from app.dependencies import get_current_admin
-from app.services.user_service import UserService
+from app.dependencies import get_current_admin, get_user_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-user_service = UserService()
 
 # Templates for OAuth callback
 templates_dir = os.path.join(os.path.dirname(__file__), "..", "..", "templates")
@@ -37,6 +35,7 @@ async def create_user(
     current_user: dict = Depends(get_current_admin)
 ):
     """Create a new user (admin only)"""
+    user_service = get_user_service()
     success, message = user_service.create_user(
         request.username,
         request.password,
@@ -56,6 +55,7 @@ async def update_subscription(
     current_user: dict = Depends(get_current_admin)
 ):
     """Update user subscription (admin only)"""
+    user_service = get_user_service()
     success, message = user_service.update_user_subscription(
         request.username,
         request.subscription_days,
@@ -79,6 +79,7 @@ async def deactivate_user(
     current_user: dict = Depends(get_current_admin)
 ):
     """Deactivate a user (admin only)"""
+    user_service = get_user_service()
     success, message = user_service.deactivate_user(request.username, current_user["username"])
     
     if success:
@@ -92,6 +93,7 @@ async def activate_user(
     current_user: dict = Depends(get_current_admin)
 ):
     """Activate a user (admin only)"""
+    user_service = get_user_service()
     success, message = user_service.activate_user(request.username, current_user["username"])
     
     if success:
@@ -108,6 +110,7 @@ async def delete_user(
     if request.username == current_user["username"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
+    user_service = get_user_service()
     success, message = user_service.delete_user(request.username, current_user["username"])
     
     if success:
@@ -118,6 +121,7 @@ async def delete_user(
 @router.get("/users/list")
 async def list_users(current_user: dict = Depends(get_current_admin)):
     """List all users (admin only)"""
+    user_service = get_user_service()
     users = user_service.list_users()
     
     return {

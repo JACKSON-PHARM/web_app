@@ -377,6 +377,12 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
                 self.logger.warning("No enabled companies found")
                 return 0
             
+            # Clean up old records (>90 days) before fetching new ones
+            self.logger.info("🧹 Cleaning old supplier invoices (>90 days)...")
+            deleted = self.cleanup_old_records("supplier_invoices", "document_date", retention_days=90)
+            if deleted > 0:
+                self.logger.info(f"✅ Cleaned {deleted:,} old supplier invoice records")
+            
             self.logger.info(f"🔄 Starting supplier invoices sync for companies: {companies}")
             total_invoices = 0
             

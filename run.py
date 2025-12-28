@@ -2,8 +2,17 @@
 Run script for PharmaStock Web Application
 Compatible with Render deployment (uses PORT env var)
 """
-import uvicorn
+import sys
 import os
+
+# Add scripts directory to Python path to fix import issues
+# Add parent directory (web_app) so 'from scripts.xxx' imports work
+app_root = os.path.dirname(os.path.abspath(__file__))
+scripts_dir = os.path.join(app_root, 'scripts')
+if os.path.exists(scripts_dir) and app_root not in sys.path:
+    sys.path.insert(0, app_root)
+
+import uvicorn
 from app.config import settings
 
 if __name__ == "__main__":
