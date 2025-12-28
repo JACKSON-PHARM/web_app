@@ -891,6 +891,9 @@
                 if (targetSelect) targetSelect.innerHTML = '<option value="">Error loading branches</option>';
                 if (sourceSelect) sourceSelect.innerHTML = '<option value="">Error loading branches</option>';
             });
+        } catch (e) {
+            console.error('❌ Error in DOMContentLoaded handler:', e);
+        }
         
         // Check refresh status once on page load (don't poll continuously)
         // Only check if user manually triggers refresh
