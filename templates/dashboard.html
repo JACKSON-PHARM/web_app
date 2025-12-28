@@ -634,9 +634,6 @@
     <div class="dashboard-header">
         <h1>📊 Dashboard</h1>
         <div>
-        <div class="refresh-status" id="lastRefresh">
-            Last refresh: Never
-            </div>
             <div id="syncStatusInfo" style="font-size: 12px; color: #666; margin-top: 5px;">
                 <span id="syncStatusText">Checking sync status...</span>
             </div>
@@ -724,6 +721,95 @@
                 </tbody>
             </table>
         </div>
+    </div>
+</div>
+
+<!-- Procurement Mode Selection Modal -->
+<div id="procurementModal" class="procurement-modal">
+    <div class="procurement-modal-content">
+        <div class="procurement-modal-header">
+            <h2>Select Procurement Mode</h2>
+            <button class="close-procurement-modal" onclick="closeProcurementModal()">&times;</button>
+        </div>
+        
+        <form id="procurementForm">
+            <div class="procurement-form-group">
+                <label>Order Type:</label>
+                <div>
+                    <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <input type="radio" name="orderMode" value="purchase_order" checked onchange="toggleProcurementOptions()">
+                        <span style="margin-left: 8px;">Purchase Order</span>
+                    </label>
+                    <div class="procurement-info-text">• Orders from supplier</div>
+                    
+                    <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <input type="radio" name="orderMode" value="branch_order" onchange="toggleProcurementOptions()">
+                        <span style="margin-left: 8px;">Branch Order</span>
+                    </label>
+                    <div class="procurement-info-text">• Orders from another branch (inter-branch transfer)</div>
+                </div>
+            </div>
+            
+            <!-- Supplier Selection (for Purchase Order) -->
+            <div class="procurement-form-group" id="supplierSelectionGroup">
+                <label for="supplierSearch">Supplier (Purchase Order):</label>
+                <div class="supplier-search-container">
+                    <input type="text" id="supplierSearch" placeholder="Search supplier by name or code..." 
+                           autocomplete="off" oninput="searchSuppliers(this.value)" 
+                           onfocus="showSupplierDropdown()" onblur="hideSupplierDropdown()">
+                    <div id="supplierDropdown" class="supplier-dropdown"></div>
+                </div>
+                <input type="hidden" id="selectedSupplierCode" value="">
+                <input type="hidden" id="selectedSupplierName" value="">
+                <div id="selectedSupplierDisplay" style="margin-top: 8px; padding: 8px; background: #e9ecef; border-radius: 4px; display: none;">
+                    <strong>Selected:</strong> <span id="selectedSupplierText"></span>
+                </div>
+            </div>
+            
+            <!-- Destination Branch Selection (for Branch Order) -->
+            <div class="procurement-form-group" id="branchSelectionGroup" style="display: none;">
+                <label for="destinationBranchSelect">Destination Branch (Branch Order):</label>
+                <select id="destinationBranchSelect">
+                    <option value="">-- Select Branch --</option>
+                </select>
+            </div>
+            
+            <!-- Credentials Section (Required for Accountability) -->
+            <div class="procurement-form-group" style="border-top: 2px solid #dee2e6; padding-top: 15px; margin-top: 15px;">
+                <label style="font-weight: bold; color: #dc3545;">🔐 API Credentials (Required for Accountability)</label>
+                <div class="procurement-info-text" style="margin-bottom: 10px; color: #6c757d;">
+                    Please provide current API credentials. These will be used for this order only and are not saved.
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label for="procurementCompany">Company:</label>
+                    <select id="procurementCompany" required style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                        <option value="">-- Select Company --</option>
+                        <option value="NILA">NILA</option>
+                        <option value="DAIMA">DAIMA</option>
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label for="procurementUsername">Username:</label>
+                    <input type="text" id="procurementUsername" required 
+                           placeholder="Enter API username" 
+                           style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+                
+                <div style="margin-bottom: 10px;">
+                    <label for="procurementPassword">Password:</label>
+                    <input type="password" id="procurementPassword" required 
+                           placeholder="Enter API password" 
+                           style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                </div>
+            </div>
+            
+            <div class="procurement-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeProcurementModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmProcurementOrder()">Create Order</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -1035,6 +1121,16 @@
                     }
                 }
                 
+                // Add change event listeners to reload priority items when branches change
+                targetSelect.addEventListener('change', () => {
+                    console.log('Target branch changed, reloading priority items...');
+                    loadPriorityItems();
+                });
+                sourceSelect.addEventListener('change', () => {
+                    console.log('Source branch changed, reloading priority items...');
+                    loadPriorityItems();
+                });
+                
                 // Trigger loadPriorityItems after branches are loaded
                 console.log('✅ Branches loaded successfully, triggering loadPriorityItems...');
                 setTimeout(() => {
@@ -1048,19 +1144,29 @@
                 console.log('✅ Branches loaded successfully');
             } else {
                 console.warn('⚠️ Branches API returned no data:', data);
-                targetSelect.innerHTML = '<option value="">No branches found</option>';
-                sourceSelect.innerHTML = '<option value="">No branches found</option>';
+                const errorMsg = data?.message || data?.error || 'No branches found in database';
+                targetSelect.innerHTML = `<option value="">${errorMsg}</option>`;
+                sourceSelect.innerHTML = `<option value="">${errorMsg}</option>`;
+                if (data?.message && data.message.includes('empty')) {
+                    console.log('💡 Tip: Database is empty. Click "Refresh Data Now" to load branches.');
+                }
             }
         } catch (error) {
             console.error('❌ Error loading branches:', error);
             console.error('Error stack:', error.stack);
-            targetSelect.innerHTML = '<option value="">Error: ' + (error.message || 'Unknown error') + '</option>';
-            sourceSelect.innerHTML = '<option value="">Error: ' + (error.message || 'Unknown error') + '</option>';
+            const errorMsg = error.message || 'Unknown error';
+            targetSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+            sourceSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
         }
     }
     
     async function manualRefreshData() {
         const btn = document.getElementById('manualRefreshBtn');
+        if (!btn) {
+            console.error('Refresh button not found');
+            return;
+        }
+        
         const originalText = btn.innerHTML;
         
         // Disable button and show loading
@@ -1080,6 +1186,7 @@
             updateProgress(0, 'Starting data refresh...', 'Connecting to APIs and fetching latest data');
             
             // Call refresh trigger API - uses saved credentials from database
+            console.log('📡 Calling /api/refresh/trigger...');
             const response = await fetch('/api/refresh/trigger', {
                 method: 'POST',
                 headers: {
@@ -1089,7 +1196,13 @@
                 body: JSON.stringify({})
             });
             
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+            }
+            
             const data = await response.json();
+            console.log('✅ Refresh trigger response:', data);
             
             if (data.status === 'started' || data.success) {
                 updateProgress(10, '✅ Refresh started!', 'Fetching data from APIs. This may take 10-30 minutes.');
@@ -1102,14 +1215,16 @@
                     alert('✅ Data refresh started! The progress modal will show updates. Current data remains visible.');
                 }, 1000);
             } else {
-                updateProgress(0, '❌ Refresh failed', data.message || 'Unknown error occurred');
+                const errorMsg = data.message || data.detail || 'Unknown error';
+                console.error('❌ Refresh failed:', errorMsg);
+                updateProgress(0, '❌ Refresh failed', errorMsg);
                 setTimeout(() => {
                     hideProgressModal();
-                    alert('❌ Refresh failed: ' + (data.message || 'Unknown error'));
+                    alert('❌ Refresh failed: ' + errorMsg);
                 }, 3000);
             }
         } catch (error) {
-            console.error('Error refreshing data:', error);
+            console.error('❌ Error refreshing data:', error);
             updateProgress(0, '❌ Error', 'Failed to refresh data: ' + error.message);
             setTimeout(() => {
                 hideProgressModal();
@@ -1134,13 +1249,21 @@
         
         // Show loading indicator
         const tbody = document.getElementById('priorityBody');
-        if (tbody) {
-            tbody.innerHTML = '<tr><td colspan="11" class="empty">Loading...</td></tr>';
+        if (!tbody) {
+            console.error('Priority table body not found');
+            return;
         }
+        tbody.innerHTML = '<tr><td colspan="11" class="empty">Loading...</td></tr>';
         
         // Get selected branches
-        const targetBranch = document.getElementById('targetBranch')?.value || 'BABA DOGO HQ|NILA';
-        const sourceBranch = document.getElementById('sourceBranch')?.value || 'BABA DOGO HQ|NILA';
+        const targetBranch = document.getElementById('targetBranch')?.value;
+        const sourceBranch = document.getElementById('sourceBranch')?.value;
+        
+        if (!targetBranch || !sourceBranch) {
+            tbody.innerHTML = '<tr><td colspan="11" class="empty">Please select both target and source branches</td></tr>';
+            return;
+        }
+        
         const [targetBranchName, targetCompany] = targetBranch.split('|');
         const [sourceBranchName, sourceCompany] = sourceBranch.split('|');
         const limit = parseInt(document.getElementById('priorityLimit')?.value || '50');
@@ -1152,18 +1275,28 @@
             
             const data = await apiRequest(apiUrl);
             
-            const tbody = document.getElementById('priorityBody');
-            if (!tbody) {
-                console.error('priorityBody element not found');
+            if (!data) {
+                console.error('❌ No data returned from priority items API');
+                tbody.innerHTML = '<tr><td colspan="11" class="empty">Error loading priority items. Please try again.</td></tr>';
                 return;
             }
+            
+            // Clear existing content
             tbody.innerHTML = '';
             
             // Log response for debugging
             console.log('Priority items API response:', data);
             
+            // Handle error cases first
+            if (!data.success) {
+                const errorMsg = data.error || data.message || 'Unknown error';
+                console.error('❌ Priority items API error:', errorMsg);
+                tbody.innerHTML = `<tr><td colspan="11" class="empty">Error: ${errorMsg}</td></tr>`;
+                return;
+            }
+            
             // Handle both error and empty data cases
-            if (!data.success || (data.count === 0 && (!data.data || data.data.length === 0))) {
+            if (data.count === 0 && (!data.data || data.data.length === 0)) {
                 const isRefreshing = data.is_refreshing || false;
                 const message = data.message || (data.error || 'No data available');
                 
@@ -1717,6 +1850,12 @@
     
     function openProcurementModal() {
         const modal = document.getElementById('procurementModal');
+        if (!modal) {
+            console.error('❌ Procurement modal not found!');
+            alert('Procurement modal not found. Please refresh the page.');
+            return;
+        }
+        
         const targetBranch = document.getElementById('targetBranch')?.value || 'BABA DOGO HQ|NILA';
         const [targetBranchName, targetCompany] = targetBranch.split('|');
         

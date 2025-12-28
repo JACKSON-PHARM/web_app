@@ -43,10 +43,34 @@ class DatabaseBaseFetcher:
     - Logging and error handling
     """
     
-    def __init__(self, script_name: str, app_root: str = None):
+    def __init__(self, script_name: str, app_root: str = None, credential_manager=None):
         self.script_name = script_name
         self.app_root = app_root or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.cred_manager = CredentialManager(self.app_root)
+        
+        # Setup logging first so we can use logger later
+        self.setup_logging()
+        
+        # Use provided credential manager or try to create one (will be overridden by refresh_service)
+        if credential_manager:
+            self.cred_manager = credential_manager
+        else:
+            # Try to create credential manager - will fail gracefully if not available
+            try:
+                # For web app, try to get from dependencies
+                if USE_WEB_APP_SERVICES:
+                    try:
+                        from app.dependencies import get_credential_manager
+                        self.cred_manager = get_credential_manager()
+                    except Exception as e:
+                        # Fallback: create a dummy that will be overridden
+                        self.logger.warning(f"Could not get credential manager from dependencies: {e}, will be set by refresh_service")
+                        self.cred_manager = None
+                else:
+                    self.cred_manager = CredentialManager(self.app_root)
+            except Exception as e:
+                # Will be set by refresh_service
+                self.logger.warning(f"Could not create credential manager: {e}, will be set by refresh_service")
+                self.cred_manager = None
         
         # Initialize database manager - use Supabase if available, otherwise SQLite
         if USE_WEB_APP_SERVICES:
@@ -74,8 +98,6 @@ class DatabaseBaseFetcher:
             # Use original database manager
             self.db_manager = DatabaseManager(os.path.join(self.app_root, "database", "pharma_data.db"))
         
-        self.setup_logging()
-        
     def setup_logging(self):
         """Setup logging for the script"""
         log_dir = os.path.join(self.app_root, "logs")
@@ -95,6 +117,10 @@ class DatabaseBaseFetcher:
         """
         Get authenticated session using credential manager
         """
+        if not self.cred_manager:
+            self.logger.error(f"❌ Credential manager not initialized")
+            return None
+            
         try:
             session = self.cred_manager.get_session(company)
             token = self.cred_manager.get_valid_token(company)
@@ -112,14 +138,21 @@ class DatabaseBaseFetcher:
             
         except Exception as e:
             self.logger.error(f"❌ Failed to create authenticated session for {company}: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             return None
 
     def get_enabled_companies(self) -> List[str]:
         """Get list of enabled companies from credential manager"""
+        if not self.cred_manager:
+            self.logger.warning("Credential manager not initialized, returning empty list")
+            return []
         return self.cred_manager.get_enabled_companies()
     
     def get_company_base_url(self, company: str) -> str:
         """Return base URL for a company (falls back to default)"""
+        if not self.cred_manager:
+            return "https://corebasebackendnila.co.ke:5019"
         creds = self.cred_manager.get_credentials(company)
         if creds and creds.get("base_url"):
             return creds["base_url"].rstrip("/")
@@ -180,6 +213,20 @@ class DatabaseBaseFetcher:
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=days)
         return start_date, end_date
+    
+    def get_full_year_date_range(self, start_year: int = 2025):
+        """
+        Get date range from start of year to today (like standalone scripts)
+        
+        Args:
+            start_year: Year to start from (default 2025)
+            
+        Returns:
+            tuple: (start_date, end_date) as date objects
+        """
+        today = datetime.now().date()
+        year_start = datetime(start_year, 1, 1).date()
+        return year_start, today
 
     def api_request(self, session: requests.Session, url: str, params=None, 
                    headers=None, max_retries: int = 3) -> Optional[dict]:

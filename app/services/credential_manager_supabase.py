@@ -161,7 +161,7 @@ class CredentialManagerSupabase:
         return enabled
     
     def get_valid_token(self, company: str) -> Optional[str]:
-        """Get valid authentication token for company"""
+        """Get valid authentication token for company - uses /Auth endpoint like standalone scripts"""
         with self._token_lock:
             # Check cache first
             if company in self._token_cache:
@@ -173,36 +173,62 @@ class CredentialManagerSupabase:
             # Get credentials
             creds = self.get_credentials(company)
             if not creds:
+                logger.warning(f"No credentials found for {company}")
                 return None
             
-            # Authenticate and get token
+            # Authenticate and get token using /Auth endpoint (same as standalone scripts)
             try:
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                
                 session = requests.Session()
-                auth_url = f"{creds['base_url']}/api/auth/login"
-                response = session.post(auth_url, json={
-                    'username': creds['username'],
-                    'password': creds['password']
-                }, timeout=10)
+                base_url = creds['base_url'].rstrip('/')
+                auth_url = f"{base_url}/Auth"
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    token = data.get('access_token') or data.get('token')
-                    
-                    if token:
-                        # Cache token (assume 8 hour expiry)
-                        expires_at = datetime.now().replace(microsecond=0) + timedelta(hours=8)
-                        self._token_cache[company] = {
-                            'token': token,
-                            'expires_at': expires_at
-                        }
-                        logger.info(f"✅ Obtained token for {company}")
-                        return token
+                # Use the same payload format as standalone scripts
+                payload = {
+                    "userName": creds['username'],
+                    "password": creds['password'],
+                    "machineCookie": "",
+                    "clientPin": 0,
+                    "latt": "",
+                    "long": "",
+                    "ipLocation": ""
+                }
                 
-                logger.error(f"Failed to get token for {company}: {response.status_code}")
+                headers = {
+                    "Content-Type": "application/json"
+                }
+                
+                response = session.post(
+                    auth_url,
+                    json=payload,
+                    headers=headers,
+                    verify=False,
+                    timeout=15
+                )
+                
+                response.raise_for_status()
+                data = response.json()
+                token = data.get('token') or data.get('access_token')
+                
+                if token:
+                    # Cache token (assume 8 hour expiry)
+                    expires_at = datetime.now().replace(microsecond=0) + timedelta(hours=8)
+                    self._token_cache[company] = {
+                        'token': token,
+                        'expires_at': expires_at
+                    }
+                    logger.info(f"✅ Obtained token for {company}")
+                    return token
+                
+                logger.error(f"No token in response for {company}: {data}")
                 return None
                 
             except Exception as e:
                 logger.error(f"Error getting token for {company}: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
                 return None
     
     def get_session(self, company: str) -> Optional[requests.Session]:
