@@ -4,30 +4,10 @@ Stock View API Routes
 from fastapi import APIRouter, Depends, Query
 from typing import Optional
 from app.dependencies import get_current_user, get_db_manager
-import sys
-import os
 import logging
 
 # Set up logger first
 logger = logging.getLogger(__name__)
-
-# Try to import StockViewService - first from local web_app copy, then from parent ui folder
-try:
-    # First try: Import from web_app/app/services (for Render deployment)
-    from app.services.stock_view_service import StockViewService
-    logger.info("✅ Imported StockViewService from app.services")
-except ImportError:
-    try:
-        # Second try: Import from parent ui folder (for local development)
-        parent_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
-        if os.path.exists(parent_path):
-            sys.path.insert(0, parent_path)
-        from ui.stock_view_service import StockViewService
-        logger.info("✅ Imported StockViewService from parent ui folder")
-    except ImportError:
-        # Fallback: Service not available
-        logger.error("❌ Could not import StockViewService from any location - stock view will not work")
-        StockViewService = None
 
 router = APIRouter()
 
@@ -44,14 +24,6 @@ async def get_stock_view_data(
     import asyncio
     
     try:
-        if StockViewService is None:
-            return {
-                "success": False,
-                "error": "StockViewService not available - parent directory import failed",
-                "data": [],
-                "count": 0
-            }
-        
         logger.info(f"Stock view request: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
         
         # ALL data is in Supabase PostgreSQL
@@ -69,6 +41,7 @@ async def get_stock_view_data(
         try:
             from app.services.stock_view_service_postgres import StockViewServicePostgres
             stock_service = StockViewServicePostgres(db_manager)
+            logger.info("✅ StockViewServicePostgres initialized successfully")
             
             # Run query in executor to prevent blocking (with 4 minute timeout)
             loop = asyncio.get_event_loop()
