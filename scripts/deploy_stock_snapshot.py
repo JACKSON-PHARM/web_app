@@ -6,8 +6,9 @@ import sys
 import os
 import logging
 
-# Add app directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 
 from app.services.postgres_database_manager import PostgresDatabaseManager
 from app.dependencies import get_db_manager

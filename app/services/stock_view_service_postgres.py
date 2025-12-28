@@ -1,6 +1,6 @@
 """
 Stock View Service for PostgreSQL/Supabase
-Handles data queries and joins for stock view table using PostgreSQL
+NO MATERIALIZED VIEWS - Uses stock_snapshot() function only
 """
 import pandas as pd
 import logging
@@ -10,97 +10,19 @@ from psycopg2.extras import RealDictCursor
 logger = logging.getLogger(__name__)
 
 class StockViewServicePostgres:
-    """Service for querying stock view data with joins and lookups using PostgreSQL"""
+    """Service for querying stock view data - NO materialized views"""
     
     def __init__(self, db_manager):
         """Initialize with PostgreSQL database manager"""
         self.db_manager = db_manager
         self._inventory_analysis_cache = None
         
-        logger.info("StockViewServicePostgres initialized with PostgreSQL database manager")
-    
-    def load_inventory_analysis(self) -> pd.DataFrame:
-        """Load ABC class, AMC, and other analysis data from inventory_analysis_new table"""
-        if self._inventory_analysis_cache is not None:
-            logger.debug("Using cached inventory analysis")
-            return self._inventory_analysis_cache
-        
-        try:
-            logger.info("Loading inventory analysis from database...")
-            # Try to load from inventory_analysis_new table
-            # Use a fresh connection to avoid SSL issues
-            conn = self.db_manager.get_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            
-            # Set connection timeout to prevent hanging
-            cursor.execute("SET statement_timeout = '30s'")
-            
-            # Check which table exists
-            cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name IN ('inventory_analysis_new', 'inventory_analysis')
-                ORDER BY CASE WHEN table_name = 'inventory_analysis_new' THEN 1 ELSE 2 END
-                LIMIT 1
-            """)
-            result = cursor.fetchone()
-            table_name = result['table_name'] if result else None
-            
-            if table_name:
-                logger.info(f"Loading inventory analysis from {table_name} table")
-                # Get all columns from the table
-                cursor.execute(f"""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_schema = 'public' 
-                    AND table_name = %s
-                """, (table_name,))
-                columns = [row['column_name'] for row in cursor.fetchall()]
-                
-                # Build SELECT query - only get essential columns for performance
-                essential_cols = ['item_code', 'company_name', 'branch_name', 'abc_class', 
-                                 'adjusted_amc', 'base_amc', 'ideal_stock_pieces', 
-                                 'customer_appeal', 'stock_recommendation']
-                available_essential = [col for col in essential_cols if col in columns]
-                if not available_essential:
-                    # Fallback: get item_code and any other columns that exist
-                    select_cols = 'item_code'
-                    for col in ['company_name', 'branch_name', 'abc_class', 'adjusted_amc', 'base_amc']:
-                        if col in columns:
-                            select_cols += f', {col}'
-                else:
-                    select_cols = ', '.join(available_essential)
-                
-                # Limit rows to improve performance - filter by company if possible
-                query = f"SELECT {select_cols} FROM {table_name} LIMIT 100000"
-                logger.info(f"Executing inventory analysis query (limited to 100k rows, essential columns only)...")
-                cursor.execute(query)
-                results = cursor.fetchall()
-                
-                if results:
-                    df = pd.DataFrame(results)
-                    self._inventory_analysis_cache = df
-                    logger.info(f"✅ Loaded {len(df)} items from {table_name} table")
-                    cursor.close()
-                    self.db_manager.put_connection(conn)
-                    return df
-            
-            cursor.close()
-            self.db_manager.put_connection(conn)
-            
-            logger.warning("No inventory_analysis table found")
-            return pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Error loading inventory analysis: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return pd.DataFrame()
+        logger.info("StockViewServicePostgres initialized - NO materialized views")
     
     def get_stock_view_data(self, branch_name: str, branch_company: str, 
                            source_branch_name: str, source_branch_company: str) -> pd.DataFrame:
         """
-        Get stock view data with all joins and lookups using PostgreSQL
+        Get stock view data using stock_snapshot() function
         
         Args:
             branch_name: Name of the branch to view stock for
@@ -111,8 +33,6 @@ class StockViewServicePostgres:
         Returns:
             DataFrame with all stock view columns
         """
-        conn = None
-        cursor = None
         try:
             branch_name = branch_name.strip() if branch_name else ""
             branch_company = branch_company.strip() if branch_company else ""
@@ -121,581 +41,214 @@ class StockViewServicePostgres:
             
             logger.info(f"Querying stock view - Branch: '{branch_name}' ({branch_company}), Source: '{source_branch_name}' ({source_branch_company})")
             
-            conn = self.db_manager.get_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            # Use stock_snapshot_service (NO materialized views)
+            from app.services.stock_snapshot_service import StockSnapshotService
             
-            # First verify branch exists and has data
-            cursor.execute("""
-                SELECT COUNT(*) as count 
-                FROM current_stock 
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-            """, (branch_name, branch_company))
-            branch_check = cursor.fetchone()
-            branch_count = branch_check['count'] if branch_check else 0
-            logger.info(f"Branch '{branch_name}' ({branch_company}) has {branch_count} records in current_stock")
+            snapshot_service = StockSnapshotService(self.db_manager)
+            actual_source_branch = source_branch_name if source_branch_name else branch_name
+            actual_source_company = source_branch_company if source_branch_company else branch_company
             
-            if branch_count == 0:
+            logger.info(f"Using stock_snapshot: target={branch_name}, source={actual_source_branch}, company={branch_company}")
+            
+            # Get snapshot with computed fields
+            snapshot_results = snapshot_service.get_snapshot(branch_name, actual_source_branch, branch_company)
+            
+            if not snapshot_results:
                 logger.warning(f"No stock data found for branch '{branch_name}' ({branch_company})")
-                cursor.close()
-                self.db_manager.put_connection(conn)
                 return pd.DataFrame()
             
-            # Check if stock_snapshot function exists (preferred) or materialized view
-            use_stock_snapshot = False
-            has_materialized_view = False
+            # Convert to DataFrame with proper column mapping
+            df = pd.DataFrame(snapshot_results)
+            logger.info(f"Retrieved {len(df)} items from stock_snapshot()")
             
-            try:
-                # Check for stock_snapshot function first
-                check_conn = self.db_manager.get_connection()
-                check_cursor = check_conn.cursor()
-                check_cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM pg_proc p
-                        JOIN pg_namespace n ON p.pronamespace = n.oid
-                        WHERE n.nspname = 'public' 
-                        AND p.proname = 'stock_snapshot'
-                    )
-                """)
-                use_stock_snapshot = check_cursor.fetchone()[0]
-                
-                if not use_stock_snapshot:
-                    # Fallback to materialized view check
-                    check_cursor.execute("""
-                        SELECT EXISTS (
-                            SELECT FROM pg_matviews 
-                            WHERE schemaname = 'public' 
-                            AND matviewname = 'stock_view_materialized'
-                        )
-                    """)
-                    has_materialized_view = check_cursor.fetchone()[0]
-                
-                check_cursor.close()
-                self.db_manager.put_connection(check_conn)
-                
-                logger.info(f"📊 stock_snapshot function exists: {use_stock_snapshot}")
-                logger.info(f"📊 Materialized view exists: {has_materialized_view}")
-                
-                if use_stock_snapshot:
-                    logger.info("✅ Using stock_snapshot() function (PostgreSQL-first, handles source_branch)")
-                    # Use stock_snapshot function - properly handles source_branch
-                    actual_source_branch = source_branch_name if source_branch_name else branch_name
-                    actual_source_company = source_branch_company if source_branch_company else branch_company
-                    
-                    snapshot_query = """
-                        SELECT 
-                            item_code,
-                            item_name,
-                            branch_stock_pieces as branch_stock,
-                            source_branch_stock_pieces as supplier_stock,
-                            pack_size,
-                            adjusted_amc_pieces as amc,
-                            ideal_stock_pieces,
-                            abc_class,
-                            last_order_date,
-                            last_order_document as last_order_doc,
-                            last_order_quantity,
-                            last_invoice_date,
-                            last_invoice_document as last_invoice_doc,
-                            last_invoice_quantity,
-                            last_supplier_invoice_date as last_supply_date,
-                            last_supplier_invoice_document as last_supply_doc,
-                            last_supplier_invoice_quantity as last_supply_quantity,
-                            last_supplier_invoice_date as last_grn_date,
-                            last_supplier_invoice_quantity as last_grn_quantity,
-                            last_supplier_invoice_document as last_grn_doc,
-                            stock_level_vs_amc as stock_level_pct,
-                            priority_flag,
-                            '' as stock_comment
-                        FROM stock_snapshot(%s, %s, %s)
-                        ORDER BY item_code
-                    """
-                    snapshot_params = (branch_name, actual_source_branch, branch_company)
-                    logger.info(f"stock_snapshot params: target={branch_name}, source={actual_source_branch}, company={branch_company}")
-                    
-                    cursor.execute(snapshot_query, snapshot_params)
-                    results = cursor.fetchall()
-                    
-                    logger.info(f"stock_snapshot query executed successfully, fetched {len(results)} rows")
-                    
-                    if results:
-                        df = pd.DataFrame(results)
-                        logger.info(f"stock_snapshot returned {len(df)} rows")
-                        
-                        # Convert to numeric types
-                        df['branch_stock'] = pd.to_numeric(df['branch_stock'], errors='coerce').fillna(0)
-                        df['supplier_stock'] = pd.to_numeric(df['supplier_stock'], errors='coerce').fillna(0)
-                        df['pack_size'] = pd.to_numeric(df['pack_size'], errors='coerce').fillna(1)
-                        df['amc'] = pd.to_numeric(df['amc'], errors='coerce').fillna(0)
-                        df['stock_level_pct'] = pd.to_numeric(df['stock_level_pct'], errors='coerce').fillna(0)
-                        
-                        # Calculate packs from pieces (stock_snapshot returns pieces)
-                        df['amc_packs'] = df.apply(
-                            lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
-                            axis=1
-                        )
-                        df['branch_stock_packs'] = df.apply(
-                            lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                            axis=1
-                        )
-                        df['supplier_stock_packs'] = df.apply(
-                            lambda row: row['supplier_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                            axis=1
-                        )
-                        
-                        # Add missing columns for compatibility
-                        df['unit_price'] = 0.0
-                        df['stock_value'] = 0.0
-                        
-                        cursor.close()
-                        self.db_manager.put_connection(conn)
-                        logger.info(f"✅ Successfully retrieved {len(df)} items from stock_snapshot()")
-                        return df
-                    else:
-                        logger.warning(f"stock_snapshot returned no results, falling back")
-                        use_stock_snapshot = False
-                        
-                elif has_materialized_view:
-                    logger.info("✅ Using stock_view_materialized for faster query")
-                    # Use materialized view - much faster! All columns pre-computed
-                    # IMPORTANT: Use parameterized query with exactly 2 placeholders
-                    materialized_query = """
-                        SELECT 
-                            item_code,
-                            item_name,
-                            target_branch,
-                            target_company,
-                            supplier_stock,
-                            branch_stock,
-                            pack_size,
-                            unit_price,
-                            stock_value,
-                            last_order_date,
-                            last_order_doc,
-                            last_order_quantity,
-                            last_invoice_date,
-                            last_invoice_doc,
-                            last_invoice_quantity,
-                            last_supply_date,
-                            last_supply_doc,
-                            last_supply_quantity,
-                            last_grn_date,
-                            last_grn_quantity,
-                            last_grn_doc,
-                            abc_class,
-                            amc,
-                            stock_comment,
-                            stock_level_pct
-                        FROM stock_view_materialized
-                        WHERE UPPER(TRIM(target_branch)) = UPPER(TRIM(%s))
-                            AND UPPER(TRIM(target_company)) = UPPER(TRIM(%s))
-                        ORDER BY item_code
-                    """
-                    # Materialized view only needs 2 parameters: branch_name and branch_company
-                    materialized_params = (branch_name, branch_company)
-                    logger.info(f"Materialized view query params (2 params): branch={branch_name}, company={branch_company}")
-                    
-                    # Execute materialized view query immediately and return
-                    logger.info(f"Executing materialized view query with params: branch={branch_name}, company={branch_company}")
-                    cursor.execute(materialized_query, materialized_params)
-                    results = cursor.fetchall()
-                    
-                    logger.info(f"Materialized view query executed successfully, fetched {len(results)} rows")
-                    
-                    if results:
-                        df = pd.DataFrame(results)
-                        logger.info(f"Materialized view returned {len(df)} rows")
-                        
-                        # Materialized view already has all columns, just ensure proper types
-                        df['branch_stock'] = pd.to_numeric(df['branch_stock'], errors='coerce').fillna(0)
-                        df['supplier_stock'] = pd.to_numeric(df['supplier_stock'], errors='coerce').fillna(0)
-                        df['pack_size'] = pd.to_numeric(df['pack_size'], errors='coerce').fillna(1)
-                        df['unit_price'] = pd.to_numeric(df['unit_price'], errors='coerce').fillna(0)
-                        df['stock_value'] = pd.to_numeric(df['stock_value'], errors='coerce').fillna(0)
-                        df['amc'] = pd.to_numeric(df['amc'], errors='coerce').fillna(0)
-                        df['stock_level_pct'] = pd.to_numeric(df['stock_level_pct'], errors='coerce').fillna(0)
-                        
-                        # Calculate packs from pieces
-                        df['amc_packs'] = df.apply(
-                            lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
-                            axis=1
-                        )
-                        df['branch_stock_packs'] = df.apply(
-                            lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                            axis=1
-                        )
-                        df['supplier_stock_packs'] = df.apply(
-                            lambda row: row['supplier_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                            axis=1
-                        )
-                        
-                        # Close cursor and return early - materialized view has everything
-                        cursor.close()
-                        self.db_manager.put_connection(conn)
-                        logger.info(f"✅ Successfully retrieved {len(df)} items from stock_view_materialized")
-                        return df
-                    else:
-                        logger.warning(f"Materialized view returned no results for branch={branch_name}, company={branch_company}, falling back to regular query")
-                        materialized_view_has_data = False
-                else:
-                    logger.info("⚠️ Materialized view not found, using regular query")
-                    materialized_view_has_data = False
-            except Exception as e:
-                logger.warning(f"⚠️ Error checking for materialized view: {e}, using regular query")
-                import traceback
-                logger.debug(traceback.format_exc())
-                has_materialized_view = False
-                materialized_view_has_data = False
+            # Map columns for compatibility with existing frontend
+            column_mapping = {
+                'target_stock_display': 'branch_stock_string',
+                'source_stock_display': 'supplier_stock_string',
+                'last_order_qty_packs': 'last_order_quantity',
+                'last_invoice_qty_packs': 'last_invoice_quantity',
+                'last_supplier_invoice_qty_packs': 'last_supply_quantity',
+                'last_order_document': 'last_order_doc',
+                'last_invoice_document': 'last_invoice_doc',
+                'last_supplier_invoice_document': 'last_supply_doc',
+                'last_supplier_invoice_date': 'last_supply_date',
+            }
             
-            # Use regular query if stock_snapshot and materialized view don't exist or have no data
-            # CRITICAL: Always fallback if neither exists OR returns 0 rows OR query fails
-            if not use_stock_snapshot and (not has_materialized_view or not materialized_view_has_data):
-                # Fallback to regular query if materialized view doesn't exist
-                logger.info("Using regular query (materialized view not available)")
-                # Simplified query: Start with unique item codes, then left join all data
-                # Step 1: Get all unique item codes for the company
-                query = """
-            WITH unique_items AS (
-                SELECT DISTINCT 
-                    item_code,
-                    MAX(item_name) as item_name
-                FROM current_stock
-                WHERE UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                GROUP BY item_code
-            ),
-            target_branch_stock AS (
-                SELECT 
-                    item_code,
-                    item_name,
-                    stock_pieces as branch_stock,
-                    pack_size,
-                    unit_price,
-                    stock_value
-                FROM current_stock
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-            ),
-            source_branch_stock AS (
-                SELECT 
-                    item_code,
-                    stock_pieces as supplier_stock
-                FROM current_stock
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-            ),
-            last_order_info AS (
-                SELECT 
-                    item_code,
-                    MAX(document_date) as last_order_date
-                FROM (
-                    SELECT item_code, document_date, document_number, quantity
-                    FROM purchase_orders
-                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                    
-                    UNION ALL
-                    
-                    SELECT item_code, document_date, document_number, quantity
-                    FROM branch_orders
-                    WHERE UPPER(TRIM(destination_branch)) = UPPER(TRIM(%s)) 
-                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                    
-                    UNION ALL
-                    
-                    SELECT item_code, date as document_date, invoice_number as document_number, quantity
-                    FROM hq_invoices
-                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
-                ) all_orders
-                GROUP BY item_code
-            ),
-            last_order_details AS (
-                SELECT 
-                    ao.item_code,
-                    MAX(ao.document_number) as last_order_doc,
-                    SUM(ao.quantity) as last_order_quantity
-                FROM (
-                    SELECT item_code, document_date, document_number, quantity
-                    FROM purchase_orders
-                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                    
-                    UNION ALL
-                    
-                    SELECT item_code, document_date, document_number, quantity
-                    FROM branch_orders
-                    WHERE UPPER(TRIM(destination_branch)) = UPPER(TRIM(%s)) 
-                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                    
-                    UNION ALL
-                    
-                    SELECT item_code, date as document_date, invoice_number as document_number, quantity
-                    FROM hq_invoices
-                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
-                ) ao
-                INNER JOIN last_order_info loi ON ao.item_code = loi.item_code AND ao.document_date = loi.last_order_date
-                GROUP BY ao.item_code
-            ),
-            last_supply_info AS (
-                SELECT 
-                    item_code,
-                    MAX(document_date) as last_supply_date
-                FROM supplier_invoices
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                GROUP BY item_code
-            ),
-            last_supply_details AS (
-                SELECT 
-                    si.item_code,
-                    MAX(si.document_number) as last_supply_doc,
-                    SUM(si.units) as last_supply_quantity
-                FROM supplier_invoices si
-                INNER JOIN last_supply_info lsi ON si.item_code = lsi.item_code AND si.document_date = lsi.last_supply_date
-                WHERE UPPER(TRIM(si.branch)) = UPPER(TRIM(%s)) 
-                AND UPPER(TRIM(si.company)) = UPPER(TRIM(%s))
-                GROUP BY si.item_code
-            ),
-            last_invoice_info AS (
-                SELECT 
-                    item_code,
-                    MAX(date) as last_invoice_date
-                FROM hq_invoices
-                WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
-                GROUP BY item_code
-            ),
-            last_invoice_details AS (
-                SELECT 
-                    hi.item_code,
-                    MAX(hi.invoice_number) as last_invoice_doc,
-                    SUM(hi.quantity) as last_invoice_quantity
-                FROM hq_invoices hi
-                INNER JOIN last_invoice_info lii ON hi.item_code = lii.item_code AND hi.date = lii.last_invoice_date
-                WHERE UPPER(TRIM(hi.branch)) = UPPER(TRIM(%s))
-                GROUP BY hi.item_code
-            )
-            SELECT 
-                ui.item_code,
-                COALESCE(tbs.item_name, ui.item_name) as item_name,
-                COALESCE(sbs.supplier_stock, 0) as supplier_stock,
-                COALESCE(tbs.branch_stock, 0) as branch_stock,
-                COALESCE(tbs.pack_size, 1) as pack_size,
-                COALESCE(tbs.unit_price, 0) as unit_price,
-                COALESCE(tbs.stock_value, 0) as stock_value,
-                loi.last_order_date,
-                lod.last_order_doc,
-                lod.last_order_quantity,
-                lii.last_invoice_date,
-                lid.last_invoice_doc,
-                lid.last_invoice_quantity,
-                lsi.last_supply_date,
-                lsd.last_supply_doc,
-                lsd.last_supply_quantity
-            FROM unique_items ui
-            LEFT JOIN target_branch_stock tbs ON ui.item_code = tbs.item_code
-            LEFT JOIN source_branch_stock sbs ON ui.item_code = sbs.item_code
-            LEFT JOIN last_order_info loi ON ui.item_code = loi.item_code
-            LEFT JOIN last_order_details lod ON ui.item_code = lod.item_code
-            LEFT JOIN last_supply_info lsi ON ui.item_code = lsi.item_code
-            LEFT JOIN last_supply_details lsd ON ui.item_code = lsd.item_code
-            LEFT JOIN last_invoice_info lii ON ui.item_code = lii.item_code
-            LEFT JOIN last_invoice_details lid ON ui.item_code = lid.item_code
-            ORDER BY ui.item_code
-            """
+            # Rename columns (but keep adjusted_amc_packs for later conversion)
+            # CRITICAL: stock_level_pct is already calculated in StockSnapshotService - DO NOT modify it
+            for old_col, new_col in column_mapping.items():
+                if old_col in df.columns:
+                    df[new_col] = df[old_col]
             
-            params = (
-                branch_company,  # unique_items
-                branch_name, branch_company,  # target_branch_stock
-                source_branch_name, source_branch_company,  # source_branch_stock
-                branch_name, branch_company,  # purchase_orders (in last_order_info)
-                branch_name, branch_company,  # branch_orders (in last_order_info)
-                branch_name,  # hq_invoices (in last_order_info)
-                branch_name, branch_company,  # purchase_orders (in last_order_details)
-                branch_name, branch_company,  # branch_orders (in last_order_details)
-                branch_name,  # hq_invoices (in last_order_details)
-                branch_name, branch_company,  # last_supply_info
-                branch_name, branch_company,  # last_supply_details
-                branch_name,  # last_invoice_info
-                branch_name  # last_invoice_details
-            )
+            # Ensure stock_level_pct exists and is preserved (calculated in StockSnapshotService)
+            # DO NOT recompute - it's already correct: (branch_stock_pieces / amc_pieces) * 100
+            if 'stock_level_pct' not in df.columns:
+                logger.warning("⚠️ stock_level_pct not found - should be calculated in StockSnapshotService")
+                df['stock_level_pct'] = 0.0
             
-            logger.info(f"Executing stock view query with params: branch={branch_name}, company={branch_company}, source={source_branch_name}, source_company={source_branch_company}")
-            logger.info(f"Query params: {params[:4] if len(params) > 4 else params}... (showing first 4)")
+            # Add GRN columns (same as supplier invoice)
+            if 'last_supplier_invoice_date' in df.columns:
+                df['last_grn_date'] = df['last_supplier_invoice_date']
+                df['last_grn_quantity'] = df['last_supplier_invoice_qty_packs']
+                df['last_grn_doc'] = df['last_supplier_invoice_document']
             
-            cursor.execute(query, params)
-            results = cursor.fetchall()
+            # Convert pack_size to float first (PostgreSQL returns NUMERIC as decimal.Decimal)
+            # This must be done BEFORE parsing stock_string
+            if 'pack_size' in df.columns:
+                df['pack_size'] = pd.to_numeric(df['pack_size'], errors='coerce').fillna(1.0).astype(float)
             
-            logger.info(f"Query executed successfully, fetched {len(results)} rows")
-            
-            if results:
-                df = pd.DataFrame(results)
-                logger.info(f"Main query returned {len(df)} rows")
-                logger.info(f"Sample columns: {list(df.columns)[:5]}")
-                if len(df) > 0:
-                    logger.info(f"Sample row: {df.iloc[0].to_dict()}")
+            # CRITICAL: Preserve stock_string columns EXACTLY as stored in current_stock table
+            # These are DISPLAY ONLY and must NEVER be regenerated from numeric values
+            if 'branch_stock_string' in df.columns:
+                df['branch_stock_string'] = df['branch_stock_string'].astype(str)
+                df['branch_stock_string'] = df['branch_stock_string'].replace('nan', '0W0P').replace('None', '0W0P').replace('', '0W0P')
             else:
-                logger.warning("Main query returned no results - trying simplified query")
-                # Try a simpler query - just get items from branch_stock directly (fallback)
-                simple_query = """
-                    SELECT 
-                        item_code,
-                        item_name,
-                        stock_pieces as branch_stock,
-                        pack_size,
-                        unit_price,
-                        stock_value,
-                        0 as supplier_stock,
-                        NULL::date as last_order_date,
-                        NULL::text as last_order_doc,
-                        NULL::numeric as last_order_quantity,
-                        NULL::date as last_invoice_date,
-                        NULL::text as last_invoice_doc,
-                        NULL::numeric as last_invoice_quantity,
-                        NULL::date as last_supply_date,
-                        NULL::text as last_supply_doc,
-                        NULL::numeric as last_supply_quantity,
-                        NULL::date as last_grn_date,
-                        NULL::text as last_grn_doc,
-                        NULL::numeric as last_grn_quantity,
-                        0 as hq_stock
-                    FROM current_stock
-                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s)) 
-                    AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
-                    ORDER BY item_code
-                    LIMIT 1000
+                df['branch_stock_string'] = '0W0P'
+                
+            if 'supplier_stock_string' in df.columns:
+                df['supplier_stock_string'] = df['supplier_stock_string'].astype(str)
+                df['supplier_stock_string'] = df['supplier_stock_string'].replace('nan', '0W0P').replace('None', '0W0P').replace('', '0W0P')
+            else:
+                df['supplier_stock_string'] = '0W0P'
+            
+            # Parse stock_string to pieces (INTERNAL ONLY - for calculations, NOT for display)
+            def parse_stock_string_to_pieces(stock_string: str, pack_size: float) -> float:
                 """
-                cursor.execute(simple_query, (branch_name, branch_company))
-                simple_results = cursor.fetchall()
-                if simple_results:
-                    df = pd.DataFrame(simple_results)
-                    logger.info(f"✅ Simplified query returned {len(df)} rows")
-                else:
-                    logger.warning(f"Even simplified query returned no results for '{branch_name}' ({branch_company})")
-                    df = pd.DataFrame()
-            
-            cursor.close()
-            self.db_manager.put_connection(conn)
-            
-            # Skip inventory analysis loading if we used materialized view (it already has all data)
-            # Only load inventory analysis if we used regular query
-            inventory_df = pd.DataFrame()
-            if not has_materialized_view:
-                try:
-                    logger.info("Loading inventory analysis data...")
-                    inventory_df = self.load_inventory_analysis()
-                    logger.info(f"Inventory analysis loaded: {len(inventory_df)} rows")
-                except Exception as inv_error:
-                    logger.warning(f"Could not load inventory analysis (non-critical, continuing without it): {inv_error}")
-                    import traceback
-                    logger.debug(traceback.format_exc())
-                    inventory_df = pd.DataFrame()  # Continue without inventory analysis
-            else:
-                logger.info("✅ Skipping inventory analysis load - materialized view already has all data")
-            
-            if not inventory_df.empty and not df.empty:
-                # Filter inventory by branch if columns exist
-                branch_inventory = inventory_df.copy()
-                if 'branch_name' in branch_inventory.columns and 'company_name' in branch_inventory.columns:
-                    branch_inventory = branch_inventory[
-                        (branch_inventory['branch_name'] == branch_name) & 
-                        (branch_inventory['company_name'] == branch_company)
-                    ]
-                    if branch_inventory.empty:
-                        branch_inventory = inventory_df[
-                            inventory_df['company_name'] == branch_company
-                        ]
+                Parse stock_string to total pieces (INTERNAL USE ONLY)
                 
-                # Merge available columns
-                merge_cols = ['item_code']
-                for col in ['abc_class', 'ideal_stock_pieces', 'adjusted_amc', 'base_amc', 
-                           'customer_appeal', 'stock_recommendation']:
-                    if col in branch_inventory.columns:
-                        merge_cols.append(col)
+                Format: "XWYP" where:
+                - X = whole packs (before 'W')
+                - Y = loose pieces (before 'P')
                 
-                if len(merge_cols) > 1:
-                    df = df.merge(
-                        branch_inventory[merge_cols].drop_duplicates('item_code'),
-                        on='item_code',
-                        how='left'
-                    )
-                    
-                    # Rename columns for consistency
-                    if 'adjusted_amc' in df.columns:
-                        df['amc'] = df['adjusted_amc']
-                    elif 'base_amc' in df.columns:
-                        df['amc'] = df['base_amc']
-                    
-                    if 'stock_recommendation' in df.columns:
-                        df['stock_comment'] = df['stock_recommendation']
+                Returns: total_pieces = (whole_packs × pack_size) + loose_pieces
+                """
+                if not stock_string or not isinstance(stock_string, str) or stock_string in ['nan', 'None', '']:
+                    return 0.0
+                import re
+                whole_match = re.search(r'(\d+)W', stock_string)
+                whole_packs = int(whole_match.group(1)) if whole_match else 0
+                pieces_match = re.search(r'(\d+)P', stock_string)
+                loose_pieces = int(pieces_match.group(1)) if pieces_match else 0
+                
+                # Calculate total pieces: (whole_packs × pack_size) + loose_pieces
+                if pack_size <= 0:
+                    pack_size = 1.0
+                total_pieces = (float(whole_packs) * float(pack_size)) + float(loose_pieces)
+                return float(total_pieces)
             
-            # Initialize missing columns
-            for col in ['abc_class', 'ideal_stock_pieces', 'amc', 'customer_appeal', 'stock_comment',
-                       'last_order_date', 'last_supply_date', 'last_invoice_date',
-                       'last_order_quantity', 'last_supply_quantity', 'last_invoice_quantity',
-                       'last_order_doc', 'last_supply_doc', 'last_invoice_doc']:
-                if col not in df.columns:
-                    df[col] = None if 'date' in col or 'quantity' in col or 'doc' in col else ('' if 'class' in col or 'comment' in col else 0)
-            
-            # Fill NaN values
-            df['branch_stock'] = df['branch_stock'].fillna(0)
-            df['supplier_stock'] = df['supplier_stock'].fillna(0)
-            df['pack_size'] = df['pack_size'].fillna(1)
-            df['unit_price'] = df['unit_price'].fillna(0)
-            df['stock_value'] = df['stock_value'].fillna(0)
-            df['amc'] = df['amc'].fillna(0)
-            df['ideal_stock_pieces'] = df['ideal_stock_pieces'].fillna(0)
-            df['customer_appeal'] = df['customer_appeal'].fillna(1.0)
-            df['abc_class'] = df['abc_class'].fillna('')
-            df['stock_comment'] = df['stock_comment'].fillna('')
-            
-            # Calculate AMC in packs: adjusted_amc / pack_size (as user requested)
-            df['amc_packs'] = df.apply(
-                lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
-                axis=1
-            )
-            df['ideal_stock_packs'] = df.apply(
-                lambda row: row['ideal_stock_pieces'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                axis=1
-            )
-            df['branch_stock_packs'] = df.apply(
-                lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
-                axis=1
-            )
-            df['stock_level'] = df.apply(
-                lambda row: (
-                    0.0 if row['branch_stock_packs'] == 0
-                    else 0.0 if row['ideal_stock_packs'] < 0.1
-                    else min((row['branch_stock_packs'] / row['ideal_stock_packs']), 5.0)
+            # Calculate numeric values (INTERNAL ONLY - for sorting and calculations)
+            # These are NOT used for display - stock_string is displayed as-is
+            df['branch_stock'] = df.apply(
+                lambda row: parse_stock_string_to_pieces(
+                    str(row.get('branch_stock_string', '0W0P')),
+                    float(row.get('pack_size', 1))
                 ),
                 axis=1
             )
-            df['stock_level_pct'] = df['stock_level']
+            df['supplier_stock'] = df.apply(
+                lambda row: parse_stock_string_to_pieces(
+                    str(row.get('supplier_stock_string', '0W0P')),
+                    float(row.get('pack_size', 1))
+                ),
+                axis=1
+            )
             
-            # Format dates for display
-            date_columns = ['last_order_date', 'last_supply_date', 'last_invoice_date']
-            for col in date_columns:
+            # Calculate pack values (INTERNAL ONLY - for sorting)
+            df['branch_stock_packs'] = df.apply(
+                lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                axis=1
+            ).round(2)
+            df['supplier_stock_packs'] = df.apply(
+                lambda row: row['supplier_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                axis=1
+            ).round(2)
+            
+            # Add sort aliases (numeric values for sorting, but display uses stock_string)
+            df['branch_stock_sort'] = df['branch_stock_packs']  # Alias for numeric sorting
+            df['supplier_stock_sort'] = df['supplier_stock_packs']  # Alias for numeric sorting
+            
+            # GROUND TRUTH: inventory_analysis_new.adjusted_amc is AMC IN PIECES (REAL)
+            # SQL function returns it as "adjusted_amc_packs" but value is actually in pieces
+            # Expose amc_pieces = adjusted_amc (directly from SQL result)
+            # Convert to packs for DISPLAY ONLY: amc_packs = adjusted_amc / pack_size
+            if 'adjusted_amc_packs' in df.columns:
+                # adjusted_amc_packs column contains adjusted_amc value (in pieces)
+                df['amc_pieces'] = pd.to_numeric(df['adjusted_amc_packs'], errors='coerce').fillna(0.0).astype(float)
+                # Convert to packs for DISPLAY ONLY: amc_packs = amc_pieces / pack_size
+                df['amc'] = df.apply(
+                    lambda row: (row['amc_pieces'] / row['pack_size']) if row['pack_size'] > 0 else 0,
+                    axis=1
+                ).round(2)
+            elif 'amc_pieces' in df.columns:
+                # If amc_pieces already exists from StockSnapshotService, use it directly
+                df['amc_pieces'] = pd.to_numeric(df['amc_pieces'], errors='coerce').fillna(0.0).astype(float)
+                # Convert to packs for DISPLAY ONLY
+                df['amc'] = df.apply(
+                    lambda row: (row['amc_pieces'] / row['pack_size']) if row['pack_size'] > 0 else 0,
+                    axis=1
+                ).round(2)
+            else:
+                df['amc_pieces'] = 0.0
+                df['amc'] = 0.0
+            
+            df['amc_packs'] = df['amc']  # Alias for compatibility (DISPLAY ONLY)
+            
+            # Add missing columns for compatibility
+            df['unit_price'] = 0.0
+            df['stock_value'] = 0.0
+            df['stock_comment'] = df.get('stock_recommendation', '')
+            
+            # Ensure numeric types (pack_size already converted above)
+            # Include sort columns for numeric sorting
+            # CRITICAL: stock_level_pct is READ-ONLY - already calculated in StockSnapshotService
+            # DO NOT recompute or modify stock_level_pct here - it's (branch_stock_pieces / amc_pieces) * 100
+            for col in ['amc', 'amc_pieces', 'last_order_quantity', 
+                       'last_invoice_quantity', 'last_supply_quantity', 'ideal_stock_pieces',
+                       'branch_stock', 'supplier_stock', 'branch_stock_packs', 'supplier_stock_packs',
+                       'branch_stock_sort', 'supplier_stock_sort']:
                 if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors='coerce')
-                    df[col] = df[col].dt.strftime('%Y-%m-%d').replace('NaT', '').replace('nan', '')
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(float)
             
-            logger.info(f"✅ Successfully retrieved {len(df)} items for stock view")
+            # Ensure stock_level_pct is numeric but DO NOT recalculate
+            # It's already calculated correctly in StockSnapshotService: (branch_stock_pieces / amc_pieces) * 100
+            if 'stock_level_pct' in df.columns:
+                df['stock_level_pct'] = pd.to_numeric(df['stock_level_pct'], errors='coerce').fillna(0.0).astype(float)
+            
+            # CRITICAL: Ensure stock_string columns are preserved as strings (not converted to numeric)
+            # These are DISPLAY ONLY and must NEVER be regenerated
+            if 'branch_stock_string' in df.columns:
+                df['branch_stock_string'] = df['branch_stock_string'].astype(str).replace('nan', '0W0P').replace('None', '0W0P').replace('', '0W0P')
+            if 'supplier_stock_string' in df.columns:
+                df['supplier_stock_string'] = df['supplier_stock_string'].astype(str).replace('nan', '0W0P').replace('None', '0W0P').replace('', '0W0P')
+            
+            # Log sample data for debugging (verify stock_level_pct calculation)
             if len(df) > 0:
-                logger.info(f"Sample item codes: {df['item_code'].head(5).tolist()}")
+                sample = df.iloc[0]
+                logger.info(f"✅ Successfully processed {len(df)} items")
+                logger.info(f"   Sample: item_code={sample.get('item_code')}, "
+                           f"branch_stock_string={sample.get('branch_stock_string')}, "
+                           f"branch_stock={sample.get('branch_stock')} pieces, "
+                           f"branch_stock_packs={sample.get('branch_stock_packs')}, "
+                           f"amc_pieces={sample.get('amc_pieces')} pieces, "
+                           f"amc={sample.get('amc')} packs (display only), "
+                           f"stock_level_pct={sample.get('stock_level_pct')}% (READ-ONLY from StockSnapshotService)")
+                
+                # Verify calculation for debugging
+                branch_pieces = sample.get('branch_stock', 0)
+                amc_pieces = sample.get('amc_pieces', 0)
+                if amc_pieces > 0:
+                    expected_pct = (branch_pieces / amc_pieces) * 100
+                    actual_pct = sample.get('stock_level_pct', 0)
+                    if abs(expected_pct - actual_pct) > 0.01:
+                        logger.warning(f"   ⚠️ Stock level mismatch: expected={expected_pct:.2f}%, actual={actual_pct:.2f}%")
+            else:
+                logger.warning("⚠️ No data returned from stock_snapshot()")
+            
             return df
             
         except Exception as e:
             logger.error(f"❌ Error getting stock view data: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
-            if conn:
-                try:
-                    self.db_manager.put_connection(conn)
-                except:
-                    pass
-            # Return empty DataFrame - let API handle the error message
             return pd.DataFrame()
 

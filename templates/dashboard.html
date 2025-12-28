@@ -516,24 +516,11 @@
         color: #006600 !important;
     }
     
-    /* Table enhancements */
+    /* Table enhancements - Fixed alignment and sticky headers */
     .data-table {
-        border-collapse: separate;
-        border-spacing: 0;
+        border-collapse: collapse;
         width: 100%;
-    }
-    
-    .data-table th {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        user-select: none;
-        background: #f8f9fa !important;
-        border: 1px solid #dee2e6;
-        padding: 8px;
-        text-align: left;
-        font-weight: 600;
-        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+        table-layout: fixed;
     }
     
     /* Ensure table container has max height for scrolling */
@@ -546,45 +533,145 @@
         position: relative;
     }
     
-    /* Ensure thead stays in place when scrolling */
-    .table-container thead th {
+    /* Sticky header - works with proper table structure */
+    .data-table thead {
         position: sticky;
         top: 0;
-        z-index: 10;
+        z-index: 100;
+        background: #f8f9fa;
+    }
+    
+    .data-table th {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        user-select: none;
         background: #f8f9fa !important;
-    }
-    
-    /* Ensure table displays as block for sticky headers to work */
-    .data-table {
-        display: block;
-        width: 100%;
-    }
-    
-    .data-table thead {
-        display: block;
-        width: 100%;
-    }
-    
-    .data-table tbody {
-        display: block;
-        width: 100%;
-        max-height: 550px;
-        overflow-y: auto;
-    }
-    
-    .data-table tr {
-        display: table;
-        width: 100%;
-        table-layout: fixed;
+        border: 1px solid #dee2e6;
+        padding: 10px 8px;
+        text-align: left;
+        font-weight: 600;
+        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+        white-space: nowrap;
     }
     
     .data-table td {
         border: 1px solid #dee2e6;
         padding: 8px;
+        white-space: nowrap;
+        vertical-align: middle;
     }
     
     .data-table tbody tr:hover {
         background: #f8f9fa;
+    }
+    
+    /* Visual distinction for stock columns */
+    .data-table th:nth-child(4),
+    .data-table td:nth-child(4) {
+        background-color: #e3f2fd !important; /* HQ Stock column - light blue */
+        border-left: 3px solid #2196F3;
+        position: relative;
+    }
+    
+    .data-table th:nth-child(4)::before {
+        content: 'HQ';
+        position: absolute;
+        top: 2px;
+        right: 4px;
+        font-size: 9px;
+        font-weight: bold;
+        color: #1976D2;
+        background: rgba(255, 255, 255, 0.7);
+        padding: 2px 4px;
+        border-radius: 3px;
+    }
+    
+    .data-table th:nth-child(6),
+    .data-table td:nth-child(6) {
+        background-color: #fff3e0 !important; /* Branch Stock column - light orange */
+        border-left: 3px solid #ff9800;
+        position: relative;
+    }
+    
+    .data-table th:nth-child(6)::before {
+        content: 'BRANCH';
+        position: absolute;
+        top: 2px;
+        right: 4px;
+        font-size: 9px;
+        font-weight: bold;
+        color: #F57C00;
+        background: rgba(255, 255, 255, 0.7);
+        padding: 2px 4px;
+        border-radius: 3px;
+    }
+    
+    .data-table tbody tr:hover td:nth-child(4) {
+        background-color: #bbdefb !important; /* Darker on hover for HQ Stock */
+    }
+    
+    .data-table tbody tr:hover td:nth-child(6) {
+        background-color: #ffe0b2 !important; /* Darker on hover for Branch Stock */
+    }
+    
+    /* Order Qty column - fixed width */
+    .data-table th:nth-child(10),
+    .data-table td:nth-child(10) {
+        width: 100px !important;
+        min-width: 100px !important;
+        max-width: 100px !important;
+        text-align: center;
+    }
+    
+    /* Order Qty input field - resized */
+    .order-qty-input {
+        width: 80px !important;
+        min-width: 80px !important;
+        max-width: 80px !important;
+        padding: 4px 6px !important;
+        font-size: 13px !important;
+        text-align: center;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+    
+    .order-qty-input:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.25);
+    }
+    
+    /* Ensure proper alignment for all columns */
+    .data-table th,
+    .data-table td {
+        box-sizing: border-box;
+    }
+    
+    /* Center align checkbox column */
+    .data-table th:first-child,
+    .data-table td:first-child {
+        text-align: center;
+    }
+    
+    /* Center align numeric columns */
+    .data-table th:nth-child(4),
+    .data-table td:nth-child(4),
+    .data-table th:nth-child(6),
+    .data-table td:nth-child(6),
+    .data-table th:nth-child(8),
+    .data-table td:nth-child(8),
+    .data-table th:nth-child(9),
+    .data-table td:nth-child(9) {
+        text-align: right;
+        padding-right: 12px;
+    }
+    
+    /* Center align ABC Class */
+    .data-table th:nth-child(7),
+    .data-table td:nth-child(7) {
+        text-align: center;
     }
     
     .resizable-col {
@@ -722,17 +809,17 @@
             <table id="priorityTable" class="data-table" style="width: 100%; border-collapse: collapse;">
                 <thead>
                     <tr>
-                        <th style="width: 40px; min-width: 40px;"><input type="checkbox" id="selectAllPriority" onchange="toggleAllItems('priority', this.checked)"></th>
-                        <th style="min-width: 100px;" class="resizable-col" data-col="item_code">Item Code <span class="filter-icon" onclick="showFilter('priority', 'item_code', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 200px;" class="resizable-col" data-col="item_name">Item Name <span class="filter-icon" onclick="showFilter('priority', 'item_name', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 120px;" class="resizable-col" data-col="hq_stock">HQ Stock (Packs) <span class="filter-icon" onclick="showFilter('priority', 'hq_stock', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 100px;" class="resizable-col" data-col="branch">Branch <span class="filter-icon" onclick="showFilter('priority', 'branch', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 120px;" class="resizable-col" data-col="branch_stock">Branch Stock (Packs) <span class="filter-icon" onclick="showFilter('priority', 'branch_stock', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 100px;" class="resizable-col" data-col="abc_class">ABC Class <span class="filter-icon" onclick="showFilter('priority', 'abc_class', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 120px;" class="resizable-col" data-col="stock_level">Stock Level % <span class="filter-icon" onclick="showFilter('priority', 'stock_level', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 100px;" class="resizable-col" data-col="amc">AMC (Packs) <span class="filter-icon" onclick="showFilter('priority', 'amc', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 120px;" class="resizable-col" data-col="order_quantity">Order Qty (Packs) <span class="filter-icon" onclick="showFilter('priority', 'order_quantity', event)" style="cursor: pointer;">🔽</span></th>
-                        <th style="min-width: 120px;" class="resizable-col" data-col="last_order_date">Last Order Date <span class="filter-icon" onclick="showFilter('priority', 'last_order_date', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 40px; min-width: 40px; max-width: 40px;"><input type="checkbox" id="selectAllPriority" onchange="toggleAllItems('priority', this.checked)"></th>
+                        <th style="width: 110px; min-width: 110px;" class="resizable-col" data-col="item_code">Item Code <span class="filter-icon" onclick="showFilter('priority', 'item_code', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 250px; min-width: 200px;" class="resizable-col" data-col="item_name">Item Name <span class="filter-icon" onclick="showFilter('priority', 'item_name', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 130px; min-width: 120px;" class="resizable-col" data-col="hq_stock">HQ Stock (Packs) <span class="filter-icon" onclick="showFilter('priority', 'hq_stock', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 150px; min-width: 120px;" class="resizable-col" data-col="branch">Branch <span class="filter-icon" onclick="showFilter('priority', 'branch', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 150px; min-width: 130px;" class="resizable-col" data-col="branch_stock">Branch Stock (Packs) <span class="filter-icon" onclick="showFilter('priority', 'branch_stock', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 90px; min-width: 90px;" class="resizable-col" data-col="abc_class">ABC Class <span class="filter-icon" onclick="showFilter('priority', 'abc_class', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 120px; min-width: 110px;" class="resizable-col" data-col="stock_level">Stock Level % <span class="filter-icon" onclick="showFilter('priority', 'stock_level', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 110px; min-width: 100px;" class="resizable-col" data-col="amc">AMC (Packs) <span class="filter-icon" onclick="showFilter('priority', 'amc', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 100px; min-width: 100px; max-width: 100px;" class="resizable-col" data-col="order_quantity">Order Qty (Packs) <span class="filter-icon" onclick="showFilter('priority', 'order_quantity', event)" style="cursor: pointer;">🔽</span></th>
+                        <th style="width: 130px; min-width: 120px;" class="resizable-col" data-col="last_order_date">Last Order Date <span class="filter-icon" onclick="showFilter('priority', 'last_order_date', event)" style="cursor: pointer;">🔽</span></th>
                     </tr>
                 </thead>
                 <tbody id="priorityBody">

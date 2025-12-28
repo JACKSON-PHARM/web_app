@@ -122,16 +122,9 @@ async def get_stock_view_data(
                 stock_count_result = dashboard_service._execute_query("SELECT COUNT(*) as count FROM current_stock")
                 stock_count = stock_count_result[0]['count'] if stock_count_result else 0
                 
-                # Try stock_data table (might not exist)
-                try:
-                    stock_data_result = dashboard_service._execute_query("SELECT COUNT(*) as count FROM stock_data")
-                    stock_data_count = stock_data_result[0]['count'] if stock_data_result else 0
-                except:
-                    stock_data_count = 0
+                logger.info(f"📋 Database check: current_stock={stock_count} rows")
                 
-                logger.info(f"📋 Database check: current_stock={stock_count} rows, stock_data={stock_data_count} rows")
-                
-                if stock_count == 0 and stock_data_count == 0:
+                if stock_count == 0:
                     return {
                         "success": False,
                         "error": "Database is empty. Please refresh data first by clicking 'Refresh Now' button.",
@@ -141,7 +134,6 @@ async def get_stock_view_data(
                             "database_path": "Supabase PostgreSQL",
                             "database_exists": True,
                             "current_stock_rows": stock_count,
-                            "stock_data_rows": stock_data_count,
                             "message": "No stock data found. Please refresh data from APIs."
                         }
                     }

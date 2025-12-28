@@ -510,23 +510,13 @@ class DashboardService:
             
             # Use current_stock if available
             if source_stock_count > 0:
-                # Check if materialized view exists and use it for faster queries
-                has_materialized_view = False
+                # NO MATERIALIZED VIEWS - Use stock_snapshot function only
+                use_stock_snapshot = False
                 try:
                     conn_check = self.db_manager.get_connection()
                     cursor_check = conn_check.cursor()
-                    cursor_check.execute("""
-                        SELECT EXISTS (
-                            SELECT FROM pg_matviews 
-                            WHERE schemaname = 'public' 
-                            AND matviewname = 'stock_view_materialized'
-                        )
-                    """)
-                    has_materialized_view = cursor_check.fetchone()[0]
-                    cursor_check.close()
-                    self.db_manager.put_connection(conn_check)
                     
-                    # Check for stock_snapshot function first (preferred)
+                    # Check for stock_snapshot function (MANDATORY)
                     cursor_check.execute("""
                         SELECT EXISTS (
                             SELECT FROM pg_proc p
@@ -536,41 +526,73 @@ class DashboardService:
                         )
                     """)
                     use_stock_snapshot = cursor_check.fetchone()[0]
+                    cursor_check.close()
+                    self.db_manager.put_connection(conn_check)
                     
                     logger.info(f"📊 stock_snapshot function exists: {use_stock_snapshot}")
-                    logger.info(f"📊 Materialized view check: stock_view_materialized exists = {has_materialized_view}")
                     
                     if use_stock_snapshot:
-                        logger.info("✅ Using stock_snapshot() function for priority items (PostgreSQL-first)")
-                        # Use stock_snapshot function - properly handles source_branch
-                        query = """
-                            SELECT 
-                                item_code,
-                                item_name,
-                                %s as source_branch,
-                                %s as source_company,
-                                source_branch_stock_pieces as source_stock_pieces,
-                                branch_stock_pieces as target_stock_pieces,
-                                pack_size,
-                                abc_class,
-                                adjusted_amc_pieces as amc_pieces,
-                                stock_level_vs_amc as stock_level_pct,
-                                last_order_date,
-                                priority_flag
-                            FROM stock_snapshot(%s, %s, %s)
-                            WHERE priority_flag IN ('LOW', 'RECENT_ORDER', 'RECENT_INVOICE')
-                                AND source_branch_stock_pieces > 0
-                                AND (branch_stock_pieces IS NULL OR branch_stock_pieces <= 0 OR branch_stock_pieces < 1000)
-                            ORDER BY source_branch_stock_pieces DESC
-                            LIMIT %s
-                        """
-                        query = self._normalize_query(query)
-                        params = (
-                            source_branch, source_company,  # For SELECT aliases
-                            target_branch, source_branch, target_company,  # For stock_snapshot function
-                            limit
+                        logger.info("✅ Using stock_snapshot() function for priority items (NO materialized views)")
+                        # Use stock_snapshot_service for proper filtering
+                        from app.services.stock_snapshot_service import StockSnapshotService
+                        
+                        snapshot_service = StockSnapshotService(self.db_manager)
+                        priority_items = snapshot_service.get_priority_items(
+                            target_branch, source_branch, target_company,
+                            priority_only=True, days=7
                         )
-                    elif has_materialized_view:
+                        
+                        # Convert to DataFrame format expected by frontend
+                        if priority_items:
+                            df = pd.DataFrame(priority_items)
+                            # Map columns
+                            df = df.rename(columns={
+                                'source_branch_stock_pieces': 'source_stock_pieces',
+                                'branch_stock_pieces': 'target_stock_pieces',
+                                'adjusted_amc_packs': 'amc_pieces',
+                                'last_order_qty_packs': 'last_order_quantity',
+                            })
+                            # Add source/target branch info
+                            df['source_branch'] = source_branch
+                            df['source_company'] = source_company
+                            df['target_branch'] = target_branch
+                            df['target_company'] = target_company
+                            
+                            # Parse stock_string for display
+                            def parse_to_packs(stock_string: str, pack_size: float) -> float:
+                                import re
+                                if not stock_string: return 0.0
+                                whole = int(re.search(r'(\d+)W', stock_string).group(1)) if re.search(r'(\d+)W', stock_string) else 0
+                                pieces = int(re.search(r'(\d+)P', stock_string).group(1)) if re.search(r'(\d+)P', stock_string) else 0
+                                return float(whole) + (float(pieces) / pack_size if pack_size > 0 else 0)
+                            
+                            df['source_stock_packs'] = df.apply(
+                                lambda r: parse_to_packs(r.get('source_stock_display', '0W0P'), r.get('pack_size', 1)),
+                                axis=1
+                            )
+                            df['target_stock_packs'] = df.apply(
+                                lambda r: parse_to_packs(r.get('target_stock_display', '0W0P'), r.get('pack_size', 1)),
+                                axis=1
+                            )
+                            df['amc_packs'] = df['amc_pieces']  # Already in packs
+                            
+                            # Limit results
+                            df = df.head(limit)
+                            
+                            logger.info(f"✅ Retrieved {len(df)} priority items from stock_snapshot()")
+                            return df
+                        else:
+                            return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                                                        'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                                                        'pack_size', 'last_order_date'])
+                    else:
+                        logger.error("❌ stock_snapshot() function required. Run scripts/deploy_stock_snapshot.py")
+                        return pd.DataFrame(columns=['item_code', 'item_name', 'source_stock_packs', 'branch_name',
+                                                    'target_stock_packs', 'abc_class', 'stock_level_pct', 'amc_packs', 
+                                                    'pack_size', 'last_order_date'])
+                    
+                    # REMOVED: All materialized view code below
+                    if False:  # Never executed - materialized views removed
                         logger.info("✅ Using stock_view_materialized for faster query (unified with stock view)")
                         # Use stock_view_materialized - same view as stock view for consistency
                         # Priority items: items where target branch has low stock but source branch has stock
@@ -709,8 +731,8 @@ class DashboardService:
             
             logger.info(f"📊 Query returned {len(df)} rows before filtering")
             
-            # If using materialized view, skip complex processing - data is already complete
-            if using_materialized_view and not df.empty:
+            # NO MATERIALIZED VIEWS - All processing happens in stock_snapshot_service
+            if False:  # Never executed - materialized views removed
                 logger.info("✅ Using priority_items_materialized - data already includes ABC, AMC, and stock levels")
                 # Materialized view already has all columns, just ensure proper types and column names
                 # Map column names to expected format
