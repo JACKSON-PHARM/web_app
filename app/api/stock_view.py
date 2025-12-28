@@ -39,7 +39,9 @@ async def get_stock_view_data(
         
         # Use PostgreSQL-compatible stock view service
         try:
+            logger.info("Attempting to import StockViewServicePostgres...")
             from app.services.stock_view_service_postgres import StockViewServicePostgres
+            logger.info("✅ Successfully imported StockViewServicePostgres")
             stock_service = StockViewServicePostgres(db_manager)
             logger.info("✅ StockViewServicePostgres initialized successfully")
             

@@ -275,4 +275,14 @@ class UserServiceSupabase:
                 except:
                     pass
             return []
+    
+    def list_users(self) -> List[Dict]:
+        """List all users with subscription_valid field (for admin panel)"""
+        users = self.get_all_users()
+        
+        # Add subscription_valid field for frontend compatibility
+        for user in users:
+            user['subscription_valid'] = user.get('days_remaining', 0) > 0
+        
+        return users
 
