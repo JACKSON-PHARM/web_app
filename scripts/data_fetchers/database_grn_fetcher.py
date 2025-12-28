@@ -294,10 +294,30 @@ class DatabaseGRNFetcher(DatabaseBaseFetcher):
             self.logger.info(f"🔄 Starting GRN sync for companies: {companies}")
             total_grns = 0
             
-            for company in companies:
-                count = self.process_company(company)
-                total_grns += count
-                self.logger.info(f"✅ {company}: {count} GRNs processed")
+            # Process companies in parallel for faster execution
+            if len(companies) > 1:
+                self.logger.info(f"⚡ Processing {len(companies)} companies in parallel...")
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=min(len(companies), 2)) as executor:  # Max 2 companies in parallel
+                    futures = {
+                        executor.submit(self.process_company, company): company
+                        for company in companies
+                    }
+                    
+                    for future in as_completed(futures):
+                        company = futures[future]
+                        try:
+                            count = future.result()
+                            total_grns += count
+                            self.logger.info(f"✅ {company}: {count} GRNs processed")
+                        except Exception as e:
+                            self.logger.error(f"❌ Error processing {company}: {str(e)}")
+            else:
+                # Single company - process normally
+                for company in companies:
+                    count = self.process_company(company)
+                    total_grns += count
+                    self.logger.info(f"✅ {company}: {count} GRNs processed")
             
             self.logger.info(f"✅ GRN sync completed: {total_grns} total GRNs")
             return total_grns

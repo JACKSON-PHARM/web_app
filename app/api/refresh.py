@@ -268,7 +268,7 @@ async def run_refresh_task_with_fetchers(fetchers: Optional[List[str]] = None):
         
         # Run refresh with fetcher selection
         logger.info(f"🔄 Fetching data from APIs for fetchers: {fetcher_list}...")
-        logger.info("   This will download current stock, GRN reports, orders, and supplier invoices incrementally")
+        logger.info("   This will download current stock, orders, and supplier invoices incrementally")
         RefreshStatusService.update_progress(0.1, f"Connecting to database and starting fetchers: {fetcher_list}...")
         
         if fetchers:

@@ -141,28 +141,121 @@ class StockViewServicePostgres:
                 self.db_manager.put_connection(conn)
                 return pd.DataFrame()
             
-            # Check if materialized view exists and use it for faster queries
+            # Check if stock_snapshot function exists (preferred) or materialized view
+            use_stock_snapshot = False
             has_materialized_view = False
-            materialized_view_has_data = False
             
             try:
-                # Use a fresh connection for the check to avoid SSL issues
+                # Check for stock_snapshot function first
                 check_conn = self.db_manager.get_connection()
                 check_cursor = check_conn.cursor()
                 check_cursor.execute("""
                     SELECT EXISTS (
-                        SELECT FROM pg_matviews 
-                        WHERE schemaname = 'public' 
-                        AND matviewname = 'stock_view_materialized'
+                        SELECT FROM pg_proc p
+                        JOIN pg_namespace n ON p.pronamespace = n.oid
+                        WHERE n.nspname = 'public' 
+                        AND p.proname = 'stock_snapshot'
                     )
                 """)
-                has_materialized_view = check_cursor.fetchone()[0]
+                use_stock_snapshot = check_cursor.fetchone()[0]
+                
+                if not use_stock_snapshot:
+                    # Fallback to materialized view check
+                    check_cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM pg_matviews 
+                            WHERE schemaname = 'public' 
+                            AND matviewname = 'stock_view_materialized'
+                        )
+                    """)
+                    has_materialized_view = check_cursor.fetchone()[0]
+                
                 check_cursor.close()
                 self.db_manager.put_connection(check_conn)
                 
-                logger.info(f"📊 Materialized view check: stock_view_materialized exists = {has_materialized_view}")
+                logger.info(f"📊 stock_snapshot function exists: {use_stock_snapshot}")
+                logger.info(f"📊 Materialized view exists: {has_materialized_view}")
                 
-                if has_materialized_view:
+                if use_stock_snapshot:
+                    logger.info("✅ Using stock_snapshot() function (PostgreSQL-first, handles source_branch)")
+                    # Use stock_snapshot function - properly handles source_branch
+                    actual_source_branch = source_branch_name if source_branch_name else branch_name
+                    actual_source_company = source_branch_company if source_branch_company else branch_company
+                    
+                    snapshot_query = """
+                        SELECT 
+                            item_code,
+                            item_name,
+                            branch_stock_pieces as branch_stock,
+                            source_branch_stock_pieces as supplier_stock,
+                            pack_size,
+                            adjusted_amc_pieces as amc,
+                            ideal_stock_pieces,
+                            abc_class,
+                            last_order_date,
+                            last_order_document as last_order_doc,
+                            last_order_quantity,
+                            last_invoice_date,
+                            last_invoice_document as last_invoice_doc,
+                            last_invoice_quantity,
+                            last_supplier_invoice_date as last_supply_date,
+                            last_supplier_invoice_document as last_supply_doc,
+                            last_supplier_invoice_quantity as last_supply_quantity,
+                            last_supplier_invoice_date as last_grn_date,
+                            last_supplier_invoice_quantity as last_grn_quantity,
+                            last_supplier_invoice_document as last_grn_doc,
+                            stock_level_vs_amc as stock_level_pct,
+                            priority_flag,
+                            '' as stock_comment
+                        FROM stock_snapshot(%s, %s, %s)
+                        ORDER BY item_code
+                    """
+                    snapshot_params = (branch_name, actual_source_branch, branch_company)
+                    logger.info(f"stock_snapshot params: target={branch_name}, source={actual_source_branch}, company={branch_company}")
+                    
+                    cursor.execute(snapshot_query, snapshot_params)
+                    results = cursor.fetchall()
+                    
+                    logger.info(f"stock_snapshot query executed successfully, fetched {len(results)} rows")
+                    
+                    if results:
+                        df = pd.DataFrame(results)
+                        logger.info(f"stock_snapshot returned {len(df)} rows")
+                        
+                        # Convert to numeric types
+                        df['branch_stock'] = pd.to_numeric(df['branch_stock'], errors='coerce').fillna(0)
+                        df['supplier_stock'] = pd.to_numeric(df['supplier_stock'], errors='coerce').fillna(0)
+                        df['pack_size'] = pd.to_numeric(df['pack_size'], errors='coerce').fillna(1)
+                        df['amc'] = pd.to_numeric(df['amc'], errors='coerce').fillna(0)
+                        df['stock_level_pct'] = pd.to_numeric(df['stock_level_pct'], errors='coerce').fillna(0)
+                        
+                        # Calculate packs from pieces (stock_snapshot returns pieces)
+                        df['amc_packs'] = df.apply(
+                            lambda row: row['amc'] / row['pack_size'] if row['pack_size'] > 0 and row['amc'] > 0 else 0,
+                            axis=1
+                        )
+                        df['branch_stock_packs'] = df.apply(
+                            lambda row: row['branch_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                            axis=1
+                        )
+                        df['supplier_stock_packs'] = df.apply(
+                            lambda row: row['supplier_stock'] / row['pack_size'] if row['pack_size'] > 0 else 0,
+                            axis=1
+                        )
+                        
+                        # Add missing columns for compatibility
+                        df['unit_price'] = 0.0
+                        df['stock_value'] = 0.0
+                        
+                        cursor.close()
+                        self.db_manager.put_connection(conn)
+                        logger.info(f"✅ Successfully retrieved {len(df)} items from stock_snapshot()")
+                        return df
+                    else:
+                        logger.warning(f"stock_snapshot returned no results, falling back")
+                        use_stock_snapshot = False
+                        
+                elif has_materialized_view:
                     logger.info("✅ Using stock_view_materialized for faster query")
                     # Use materialized view - much faster! All columns pre-computed
                     # IMPORTANT: Use parameterized query with exactly 2 placeholders
@@ -254,9 +347,9 @@ class StockViewServicePostgres:
                 has_materialized_view = False
                 materialized_view_has_data = False
             
-            # Use regular query if materialized view doesn't exist or has no data
-            # CRITICAL: Always fallback if view doesn't exist OR returns 0 rows OR query fails
-            if not has_materialized_view or not materialized_view_has_data:
+            # Use regular query if stock_snapshot and materialized view don't exist or have no data
+            # CRITICAL: Always fallback if neither exists OR returns 0 rows OR query fails
+            if not use_stock_snapshot and (not has_materialized_view or not materialized_view_has_data):
                 # Fallback to regular query if materialized view doesn't exist
                 logger.info("Using regular query (materialized view not available)")
                 # Simplified query: Start with unique item codes, then left join all data

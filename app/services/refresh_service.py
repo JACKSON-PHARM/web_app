@@ -120,10 +120,11 @@ class RefreshService:
             
             orchestrator.set_progress_callback(progress_callback)
             
-            self.logger.info("🚀 Running all fetchers sequentially...")
+            self.logger.info("🚀 Running all fetchers in parallel for faster execution...")
             
-            # Run all fetchers sequentially (this ensures proper order and completion)
-            orchestrator_result = orchestrator.run_all_sequential()
+            # Run all fetchers in parallel to reduce total time
+            # Supabase free tier allows concurrent connections, so we can parallelize safely
+            orchestrator_result = orchestrator.run_all_parallel()
             
             # Restore original __init__ if we patched it
             if original_init:
@@ -139,15 +140,13 @@ class RefreshService:
                 
                 # Extract results from orchestrator
                 stock_records = summary.get('stock_records', 0)
-                grn_count = summary.get('grn_count', 0)
                 purchase_orders = summary.get('purchase_orders', 0)
                 branch_orders = summary.get('branch_orders', 0)
                 supplier_invoices = summary.get('supplier_invoices', 0)
                 
-                results['fetchers_run'] = ['stock', 'grn', 'orders', 'supplier_invoices']
+                results['fetchers_run'] = ['stock', 'orders', 'supplier_invoices']
                 results['messages'].extend([
                     f"✅ Stock: {stock_records:,} records updated",
-                    f"✅ GRN: {grn_count:,} GRNs processed",
                     f"✅ Purchase Orders: {purchase_orders:,} orders",
                     f"✅ Branch Orders: {branch_orders:,} orders",
                     f"✅ Supplier Invoices: {supplier_invoices:,} invoices"
@@ -160,7 +159,7 @@ class RefreshService:
                 
                 # Refresh materialized views after data refresh
                 self._refresh_materialized_views()
-                self.logger.info(f"📊 Summary: Stock={stock_records:,}, GRN={grn_count:,}, Orders={purchase_orders + branch_orders:,}, Invoices={supplier_invoices:,}")
+                self.logger.info(f"📊 Summary: Stock={stock_records:,}, Orders={purchase_orders + branch_orders:,}, Invoices={supplier_invoices:,}")
             else:
                 results['success'] = False
                 error_msg = orchestrator_result.get('message', 'Unknown error')
@@ -204,7 +203,7 @@ class RefreshService:
                 return results
             
             # Prioritize fast/urgent datasets
-            priority_order = ['stock', 'orders', 'supplier_invoices', 'grn']
+            priority_order = ['stock', 'orders', 'supplier_invoices']
             priority_fetchers = [f for f in priority_order if f in available_fetchers]
             
             if not priority_fetchers:
@@ -226,7 +225,7 @@ class RefreshService:
                         elif hasattr(fetcher, 'run'):
                             result = fetcher.run()
                             if isinstance(result, dict):
-                                record_count = result.get('total_updated', 0) or result.get('total_grns', 0) or result.get('total_orders', 0) or result.get('total_invoices', 0) or 0
+                                record_count = result.get('total_updated', 0) or result.get('total_orders', 0) or result.get('total_invoices', 0) or 0
                             else:
                                 record_count = result or 0
                         else:
@@ -329,8 +328,6 @@ class RefreshService:
                         count = 0
                         if fetcher_name == 'stock':
                             count = fetcher_result.get('total_updated', 0)
-                        elif fetcher_name == 'grn':
-                            count = fetcher_result.get('total_grns', 0)
                         elif fetcher_name == 'orders':
                             count = fetcher_result.get('total_orders', 0) or (
                                 fetcher_result.get('total_purchase_orders', 0) + 

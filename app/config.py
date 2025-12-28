@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     AUTO_REFRESH_ENABLED: bool = True
     
     # Server Configuration
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    HOST: str = "127.0.0.1"  # Use 127.0.0.1 for local development (0.0.0.0 for production)
+    PORT: int = 8001  # Changed to 8001 to avoid port conflict
     DEBUG: bool = True
     
     class Config:

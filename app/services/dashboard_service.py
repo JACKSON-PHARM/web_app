@@ -526,9 +526,51 @@ class DashboardService:
                     cursor_check.close()
                     self.db_manager.put_connection(conn_check)
                     
+                    # Check for stock_snapshot function first (preferred)
+                    cursor_check.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM pg_proc p
+                            JOIN pg_namespace n ON p.pronamespace = n.oid
+                            WHERE n.nspname = 'public' 
+                            AND p.proname = 'stock_snapshot'
+                        )
+                    """)
+                    use_stock_snapshot = cursor_check.fetchone()[0]
+                    
+                    logger.info(f"📊 stock_snapshot function exists: {use_stock_snapshot}")
                     logger.info(f"📊 Materialized view check: stock_view_materialized exists = {has_materialized_view}")
                     
-                    if has_materialized_view:
+                    if use_stock_snapshot:
+                        logger.info("✅ Using stock_snapshot() function for priority items (PostgreSQL-first)")
+                        # Use stock_snapshot function - properly handles source_branch
+                        query = """
+                            SELECT 
+                                item_code,
+                                item_name,
+                                %s as source_branch,
+                                %s as source_company,
+                                source_branch_stock_pieces as source_stock_pieces,
+                                branch_stock_pieces as target_stock_pieces,
+                                pack_size,
+                                abc_class,
+                                adjusted_amc_pieces as amc_pieces,
+                                stock_level_vs_amc as stock_level_pct,
+                                last_order_date,
+                                priority_flag
+                            FROM stock_snapshot(%s, %s, %s)
+                            WHERE priority_flag IN ('LOW', 'RECENT_ORDER', 'RECENT_INVOICE')
+                                AND source_branch_stock_pieces > 0
+                                AND (branch_stock_pieces IS NULL OR branch_stock_pieces <= 0 OR branch_stock_pieces < 1000)
+                            ORDER BY source_branch_stock_pieces DESC
+                            LIMIT %s
+                        """
+                        query = self._normalize_query(query)
+                        params = (
+                            source_branch, source_company,  # For SELECT aliases
+                            target_branch, source_branch, target_company,  # For stock_snapshot function
+                            limit
+                        )
+                    elif has_materialized_view:
                         logger.info("✅ Using stock_view_materialized for faster query (unified with stock view)")
                         # Use stock_view_materialized - same view as stock view for consistency
                         # Priority items: items where target branch has low stock but source branch has stock
@@ -537,13 +579,13 @@ class DashboardService:
                         # - target_branch matches the selected target (low stock)
                         # - supplier_stock > 0 (source has stock available)
                         # - branch_stock is low or zero (target needs stock)
-                        # Note: We use literal values for source_branch/source_company in SELECT since they're constants
-                        query = f"""
+                        # Use parameterized query for all values (no f-strings)
+                        query = """
                             SELECT 
                                 item_code,
                                 item_name,
-                                '{source_branch}' as source_branch,
-                                '{source_company}' as source_company,
+                                %s as source_branch,
+                                %s as source_company,
                                 supplier_stock as source_stock_pieces,
                                 target_branch,
                                 target_company,
@@ -566,8 +608,9 @@ class DashboardService:
                             LIMIT %s
                         """
                         query = self._normalize_query(query)
-                        # Params: target_branch, target_company (for WHERE), limit
+                        # Params: source_branch, source_company (for SELECT), target_branch, target_company (for WHERE), limit
                         params = (
+                            source_branch, source_company,  # For SELECT aliases
                             target_branch, target_company,  # For WHERE clause
                             limit
                         )

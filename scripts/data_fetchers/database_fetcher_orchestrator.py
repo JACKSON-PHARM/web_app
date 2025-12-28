@@ -16,7 +16,6 @@ sys.path.insert(0, app_root)
 
 from scripts.data_fetchers.database_base_fetcher import DatabaseBaseFetcher
 from scripts.data_fetchers.database_stock_fetcher import DatabaseStockFetcher
-from scripts.data_fetchers.database_grn_fetcher import DatabaseGRNFetcher
 from scripts.data_fetchers.database_orders_fetcher import DatabaseOrdersFetcher
 from scripts.data_fetchers.database_supplier_invoices_fetcher import DatabaseSupplierInvoicesFetcher
 
@@ -69,23 +68,6 @@ class DatabaseFetcherOrchestrator:
         except Exception as e:
             error_result = {"success": False, "message": str(e)}
             self.results['stock'] = error_result
-            return error_result
-    
-    def run_grn_fetcher(self) -> Dict:
-        """Run GRN fetcher"""
-        self._update_progress("Starting GRN Download...", 0.2)
-        try:
-            fetcher = DatabaseGRNFetcher(
-                self.app_root,
-                db_manager=self.base_fetcher.db_manager,
-                credential_manager=self.base_fetcher.cred_manager
-            )
-            result = fetcher.run()
-            self.results['grn'] = result
-            return result
-        except Exception as e:
-            error_result = {"success": False, "message": str(e)}
-            self.results['grn'] = error_result
             return error_result
     
     def run_orders_fetcher(self) -> Dict:
@@ -216,13 +198,10 @@ class DatabaseFetcherOrchestrator:
             
             # Run all fetchers in sequence
             stock_result = self.run_stock_fetcher()
-            self._update_progress(f"✅ Stock: {stock_result.get('total_updated', 0)} records", 0.25)
-            
-            grn_result = self.run_grn_fetcher()
-            self._update_progress(f"✅ GRN: {grn_result.get('total_grns', 0)} GRNs", 0.5)
+            self._update_progress(f"✅ Stock: {stock_result.get('total_updated', 0)} records", 0.33)
             
             orders_result = self.run_orders_fetcher()
-            self._update_progress(f"✅ Orders: {orders_result.get('total_orders', 0)} orders", 0.75)
+            self._update_progress(f"✅ Orders: {orders_result.get('total_orders', 0)} orders", 0.66)
             
             supplier_result = self.run_supplier_invoices_fetcher()
             self._update_progress(f"✅ Supplier Invoices: {supplier_result.get('total_invoices', 0)} invoices", 0.85)
@@ -248,7 +227,6 @@ class DatabaseFetcherOrchestrator:
                 "end_time": end_time.isoformat(),
                 "results": {
                     "stock": stock_result,
-                    "grn": grn_result,
                     "orders": orders_result,
                     "supplier_invoices": supplier_result,
                     "hq_invoices": hq_invoices_result,
@@ -256,7 +234,6 @@ class DatabaseFetcherOrchestrator:
                 },
                 "summary": {
                     "stock_records": stock_result.get('total_updated', 0),
-                    "grn_count": grn_result.get('total_grns', 0),
                     "purchase_orders": orders_result.get('total_purchase_orders', 0),
                     "branch_orders": orders_result.get('total_branch_orders', 0),
                     "supplier_invoices": supplier_result.get('total_invoices', 0)
@@ -285,8 +262,9 @@ class DatabaseFetcherOrchestrator:
     
     def run_all_parallel(self) -> Dict:
         """
-        Run all fetchers in parallel (where possible)
-        Note: Some fetchers may need to run sequentially due to API rate limits
+        Run all fetchers in parallel for faster execution
+        Supabase free tier allows concurrent connections, so we can parallelize safely
+        This significantly reduces total refresh time
         """
         if self.is_running:
             return {"success": False, "message": "Orchestrator is already running"}
@@ -299,6 +277,7 @@ class DatabaseFetcherOrchestrator:
             self._update_progress("=" * 70)
             self._update_progress("🚀 DATABASE FETCHER ORCHESTRATOR - PARALLEL MODE")
             self._update_progress("=" * 70)
+            self._update_progress("⚡ Running all fetchers in parallel for maximum speed...", 0.0)
             
             # Validate prerequisites
             if not self.base_fetcher.validate_prerequisites():
@@ -307,28 +286,51 @@ class DatabaseFetcherOrchestrator:
             # Run fetchers in parallel using threads
             threads = []
             results = {}
+            results_lock = threading.Lock()
             
             def run_with_result(fetcher_name, fetcher_func):
                 try:
+                    self._update_progress(f"🔄 Starting {fetcher_name} fetcher...")
                     result = fetcher_func()
-                    results[fetcher_name] = result
+                    with results_lock:
+                        results[fetcher_name] = result
+                    if result.get('success'):
+                        self._update_progress(f"✅ {fetcher_name} completed successfully")
+                    else:
+                        self._update_progress(f"⚠️ {fetcher_name} completed with errors: {result.get('message', 'Unknown error')}")
                 except Exception as e:
-                    results[fetcher_name] = {"success": False, "message": str(e)}
+                    with results_lock:
+                        results[fetcher_name] = {"success": False, "message": str(e)}
+                    self._update_progress(f"❌ {fetcher_name} failed: {str(e)}")
             
-            # Start all fetchers
-            t1 = threading.Thread(target=run_with_result, args=("stock", self.run_stock_fetcher))
-            t2 = threading.Thread(target=run_with_result, args=("grn", self.run_grn_fetcher))
-            t3 = threading.Thread(target=run_with_result, args=("orders", self.run_orders_fetcher))
-            t4 = threading.Thread(target=run_with_result, args=("supplier_invoices", self.run_supplier_invoices_fetcher))
+            # Start all main fetchers in parallel
+            t1 = threading.Thread(target=run_with_result, args=("stock", self.run_stock_fetcher), daemon=False)
+            t2 = threading.Thread(target=run_with_result, args=("orders", self.run_orders_fetcher), daemon=False)
+            t3 = threading.Thread(target=run_with_result, args=("supplier_invoices", self.run_supplier_invoices_fetcher), daemon=False)
             
-            threads = [t1, t2, t3, t4]
+            threads = [t1, t2, t3]
             
+            # Start all threads
+            self._update_progress("🚀 Starting all fetchers in parallel...", 0.1)
             for t in threads:
                 t.start()
             
-            # Wait for all to complete
+            # Wait for all main fetchers to complete
             for t in threads:
                 t.join()
+            
+            # Run HQ invoices fetcher (can run after main fetchers, or in parallel if needed)
+            if HQ_INVOICES_AVAILABLE:
+                self._update_progress("🔄 Starting HQ Invoices fetcher...", 0.85)
+                hq_result = self.run_hq_invoices_fetcher()
+                results['hq_invoices'] = hq_result
+            
+            # Run cleanup after all data is fetched (must be sequential)
+            self._update_progress("🧹 Cleaning up old data (older than 30 days)...", 0.95)
+            cleanup_result = self.run_cleanup()
+            results['cleanup'] = cleanup_result
+            if cleanup_result.get('success'):
+                self._update_progress(f"✅ Cleanup: {cleanup_result.get('total_deleted', 0):,} records deleted", 0.98)
             
             self.results = results
             
@@ -344,10 +346,10 @@ class DatabaseFetcherOrchestrator:
                 "results": results,
                 "summary": {
                     "stock_records": results.get("stock", {}).get('total_updated', 0),
-                    "grn_count": results.get("grn", {}).get('total_grns', 0),
                     "purchase_orders": results.get("orders", {}).get('total_purchase_orders', 0),
                     "branch_orders": results.get("orders", {}).get('total_branch_orders', 0),
-                    "supplier_invoices": results.get("supplier_invoices", {}).get('total_invoices', 0)
+                    "supplier_invoices": results.get("supplier_invoices", {}).get('total_invoices', 0),
+                    "hq_invoices": results.get("hq_invoices", {}).get('records_processed', 0)
                 }
             }
             
@@ -355,12 +357,21 @@ class DatabaseFetcherOrchestrator:
             self._update_progress("🎉 ALL FETCHERS COMPLETED!")
             self._update_progress("=" * 70)
             self._update_progress(f"⏱️  Total Time: {duration}", 1.0)
+            self._update_progress(f"📊 Stock Records: {summary['summary']['stock_records']:,}")
+            self._update_progress(f"📊 Purchase Orders: {summary['summary']['purchase_orders']:,}")
+            self._update_progress(f"📊 Branch Orders: {summary['summary']['branch_orders']:,}")
+            self._update_progress(f"📊 Supplier Invoices: {summary['summary']['supplier_invoices']:,}")
+            if summary['summary'].get('hq_invoices', 0) > 0:
+                self._update_progress(f"📊 HQ Invoices: {summary['summary']['hq_invoices']:,}")
+            self._update_progress("=" * 70)
             
             return summary
             
         except Exception as e:
             error_msg = f"Orchestrator error: {str(e)}"
             self._update_progress(f"❌ {error_msg}")
+            import traceback
+            self.base_fetcher.logger.error(traceback.format_exc())
             return {"success": False, "message": error_msg}
         finally:
             self.is_running = False
@@ -380,7 +391,6 @@ class DatabaseFetcherOrchestrator:
         try:
             fetcher_map = {
                 'stock': self.run_stock_fetcher,
-                'grn': self.run_grn_fetcher,
                 'orders': self.run_orders_fetcher,
                 'supplier_invoices': self.run_supplier_invoices_fetcher
             }
@@ -412,7 +422,7 @@ def main():
     parser.add_argument('--mode', choices=['sequential', 'parallel'], 
                        default='sequential', help='Execution mode')
     parser.add_argument('--fetchers', nargs='+', 
-                       choices=['stock', 'grn', 'orders', 'supplier_invoices'],
+                       choices=['stock', 'orders', 'supplier_invoices'],
                        help='Run only selected fetchers')
     
     args = parser.parse_args()

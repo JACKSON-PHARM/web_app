@@ -236,18 +236,22 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
         self.logger.info(f"🏢 Processing {branch_name} ({branch_code}, branch_num={branch_num}) [SUPPLIER INVOICES]")
         
         try:
-            # Get date range (from start of 2025 to today - same as standalone scripts)
-            start_date, end_date = self.get_full_year_date_range(START_YEAR)
+            # Get date range (last 30 days for incremental updates)
+            start_date, end_date = self.get_retention_date_range(30)
             
-            self.logger.info(f"📅 {branch_name} (branch_num={branch_num}): Fetching supplier invoices from {start_date} to {end_date} (full year {START_YEAR})")
+            self.logger.info(f"📅 {branch_name} (branch_num={branch_num}): Fetching supplier invoices from {start_date} to {end_date} (last 30 days)")
             
             # Get all supplier invoices from API
             self.logger.info(f"🔍 Fetching supplier invoices for {branch_name} (branch_num={branch_num}) from {start_date} to {end_date}")
             all_invoices = self.get_supplier_invoices(session, token, branch_num, start_date, end_date)
             
+            if all_invoices is None:
+                self.logger.error(f"❌ API request failed for {branch_name} supplier invoices - check API response above")
+                return 0
+            
             if not all_invoices:
                 self.logger.warning(f"⚠️ No supplier invoices returned from API for {branch_name} (branch_num={branch_num}). This could mean:")
-                self.logger.warning(f"   1. No invoices exist for this branch in the date range")
+                self.logger.warning(f"   1. No invoices exist for this branch in the date range ({start_date} to {end_date})")
                 self.logger.warning(f"   2. API returned an error (check logs above)")
                 self.logger.warning(f"   3. Authentication token might be invalid")
                 return 0
@@ -386,10 +390,30 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
             self.logger.info(f"🔄 Starting supplier invoices sync for companies: {companies}")
             total_invoices = 0
             
-            for company in companies:
-                count = self.process_company_supplier_invoices(company)
-                total_invoices += count
-                self.logger.info(f"✅ {company}: {count} supplier invoices processed")
+            # Process companies in parallel for faster execution
+            if len(companies) > 1:
+                self.logger.info(f"⚡ Processing {len(companies)} companies in parallel...")
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=min(len(companies), 2)) as executor:  # Max 2 companies in parallel
+                    futures = {
+                        executor.submit(self.process_company_supplier_invoices, company): company
+                        for company in companies
+                    }
+                    
+                    for future in as_completed(futures):
+                        company = futures[future]
+                        try:
+                            count = future.result()
+                            total_invoices += count
+                            self.logger.info(f"✅ {company}: {count} supplier invoices processed")
+                        except Exception as e:
+                            self.logger.error(f"❌ Error processing {company}: {str(e)}")
+            else:
+                # Single company - process normally
+                for company in companies:
+                    count = self.process_company_supplier_invoices(company)
+                    total_invoices += count
+                    self.logger.info(f"✅ {company}: {count} supplier invoices processed")
             
             self.logger.info(f"✅ Supplier invoices sync completed: {total_invoices} total invoices")
             return total_invoices

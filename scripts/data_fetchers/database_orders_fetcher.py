@@ -221,17 +221,24 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
         self.logger.info(f"🏢 Processing {branch_name} [{order_type.upper()}]")
         
         try:
-            # Get date range (from start of 2025 to today - same as standalone scripts)
-            start_date, end_date = self.get_full_year_date_range(START_YEAR)
+            # Get date range (last 30 days for incremental updates)
+            start_date, end_date = self.get_retention_date_range(30)
             
-            self.logger.info(f"📅 {branch_name}: Fetching {order_type} orders from {start_date} to {end_date} (full year {START_YEAR})")
+            self.logger.info(f"📅 {branch_name}: Fetching {order_type} orders from {start_date} to {end_date} (last 30 days)")
             
             # Get all orders from API
             all_orders = self.get_orders(session, token, order_type, 
                                         branch_info["branch_num"], start_date, end_date)
             
+            if all_orders is None:
+                self.logger.error(f"❌ API request failed for {branch_name} {order_type} orders - check API response above")
+                return 0
+            
             if not all_orders:
-                self.logger.info(f"ℹ️ No {order_type} orders found for {branch_name}")
+                self.logger.warning(f"⚠️ No {order_type} orders returned from API for {branch_name}. This could mean:")
+                self.logger.warning(f"   1. No orders exist for this branch in the date range ({start_date} to {end_date})")
+                self.logger.warning(f"   2. API returned an error (check logs above)")
+                self.logger.warning(f"   3. Authentication token might be invalid")
                 return 0
             
             # Filter out already processed orders
@@ -366,13 +373,38 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
             self.logger.info(f"🔄 Starting orders sync for companies: {companies}")
             total_orders = 0
             
-            # Process purchase orders and branch orders for each company
-            for company in companies:
-                purchase_count = self.process_company("purchase", company)
-                branch_count = self.process_company("branch", company)
-                company_total = purchase_count + branch_count
-                total_orders += company_total
-                self.logger.info(f"✅ {company}: {purchase_count} purchase + {branch_count} branch = {company_total} orders")
+            # Process companies in parallel for faster execution
+            if len(companies) > 1:
+                self.logger.info(f"⚡ Processing {len(companies)} companies in parallel...")
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                def process_company_orders(company):
+                    purchase_count = self.process_company("purchase", company)
+                    branch_count = self.process_company("branch", company)
+                    return company, purchase_count, branch_count
+                
+                with ThreadPoolExecutor(max_workers=min(len(companies), 2)) as executor:  # Max 2 companies in parallel
+                    futures = {
+                        executor.submit(process_company_orders, company): company
+                        for company in companies
+                    }
+                    
+                    for future in as_completed(futures):
+                        company = futures[future]
+                        try:
+                            comp, purchase_count, branch_count = future.result()
+                            company_total = purchase_count + branch_count
+                            total_orders += company_total
+                            self.logger.info(f"✅ {comp}: {purchase_count} purchase + {branch_count} branch = {company_total} orders")
+                        except Exception as e:
+                            self.logger.error(f"❌ Error processing {company}: {str(e)}")
+            else:
+                # Single company - process normally
+                for company in companies:
+                    purchase_count = self.process_company("purchase", company)
+                    branch_count = self.process_company("branch", company)
+                    company_total = purchase_count + branch_count
+                    total_orders += company_total
+                    self.logger.info(f"✅ {company}: {purchase_count} purchase + {branch_count} branch = {company_total} orders")
             
             self.logger.info(f"✅ Orders sync completed: {total_orders} total orders")
             return total_orders

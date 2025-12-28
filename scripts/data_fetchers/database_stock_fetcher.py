@@ -190,10 +190,30 @@ class DatabaseStockFetcher(DatabaseBaseFetcher):
             self.logger.info(f"🔄 Starting stock sync for companies: {companies}")
             total_updated = 0
             
-            for company in companies:
-                updated = self.process_company_stock(company)
-                total_updated += updated
-                self.logger.info(f"✅ {company}: {updated} stock records updated")
+            # Process companies in parallel for faster execution
+            # Each company processes its branches in parallel, and companies can run in parallel too
+            if len(companies) > 1:
+                self.logger.info(f"⚡ Processing {len(companies)} companies in parallel...")
+                with ThreadPoolExecutor(max_workers=min(len(companies), 2)) as executor:  # Max 2 companies in parallel to avoid overwhelming Supabase
+                    futures = {
+                        executor.submit(self.process_company_stock, company): company
+                        for company in companies
+                    }
+                    
+                    for future in as_completed(futures):
+                        company = futures[future]
+                        try:
+                            updated = future.result()
+                            total_updated += updated
+                            self.logger.info(f"✅ {company}: {updated} stock records updated")
+                        except Exception as e:
+                            self.logger.error(f"❌ Error processing {company}: {str(e)}")
+            else:
+                # Single company - process normally
+                for company in companies:
+                    updated = self.process_company_stock(company)
+                    total_updated += updated
+                    self.logger.info(f"✅ {company}: {updated} stock records updated")
             
             self.logger.info(f"✅ Stock sync completed: {total_updated} total records")
             return total_updated

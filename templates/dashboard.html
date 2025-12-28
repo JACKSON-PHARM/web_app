@@ -12,14 +12,19 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(0, 0, 0, 0.7);
+        background: rgba(0, 0, 0, 0.5);
         z-index: 10000;
         justify-content: center;
         align-items: center;
+        pointer-events: none; /* Allow clicks through backdrop */
     }
     
     .progress-modal.show {
         display: flex;
+    }
+    
+    .progress-modal.show .progress-content {
+        pointer-events: auto; /* Re-enable clicks on modal content */
     }
     
     .progress-content {
@@ -39,6 +44,21 @@
         display: flex;
         align-items: center;
         gap: 10px;
+    }
+    
+    .progress-header button {
+        background: none;
+        border: none;
+        font-size: 28px;
+        cursor: pointer;
+        color: #666;
+        margin-left: auto;
+        padding: 0 10px;
+        line-height: 1;
+    }
+    
+    .progress-header button:hover {
+        color: #333;
     }
     
     .progress-bar-container {
@@ -613,6 +633,7 @@
         <div class="progress-header">
             <span id="progressIcon">🔄</span>
             <span>Refreshing Data</span>
+            <button onclick="hideProgressModal()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666; margin-left: auto; padding: 0 10px;" title="Close (refresh continues in background)">×</button>
         </div>
         <div class="progress-bar-container">
             <div id="progressBar" class="progress-bar" style="width: 0%">0%</div>
@@ -968,8 +989,11 @@
             console.error('❌ Error in DOMContentLoaded handler:', e);
         }
         
-        // Check refresh status once on page load (don't poll continuously)
-        // Only check if user manually triggers refresh
+        // Check refresh status once on page load - ONLY to show existing refresh progress
+        // This does NOT trigger a new refresh - it only checks if one is already running
+        // Refresh should ONLY be triggered by:
+        // 1. User clicking "Refresh Data Now" button (manualRefreshData)
+        // 2. Scheduled refresh (scheduler)
         checkRefreshStatus();
         
         // Note: Event listeners for branch changes are added in loadBranches()
@@ -1014,8 +1038,10 @@
         // Load fresh data from database
         await loadPriorityItems();
         
-        // Check if refresh is needed in background (don't block UI)
-        checkRefreshStatus();
+        // Note: Don't check refresh status here - it's already checked on page load
+        // Refresh should ONLY be triggered by:
+        // 1. User clicking "Refresh Data Now" button
+        // 2. Scheduled refresh (scheduler)
     }
     
     function displayPriorityItems(items) {
@@ -1153,12 +1179,14 @@
             }
             
             if (data.success && data.data && Array.isArray(data.data) && data.data.length > 0) {
-                console.log(`✅ Found ${data.data.length} branches`);
+                console.log(`✅ Found ${data.data.length} branches from API`);
+                console.log('📋 Branch data:', data.data);
                 
-                // Clear and populate both selects
+                // Clear and populate both selects - ensure ALL branches are added
                 [targetSelect, sourceSelect].forEach(select => {
                     select.innerHTML = '<option value="">Select branch...</option>';
-                    data.data.forEach(branch => {
+                    let addedCount = 0;
+                    data.data.forEach((branch, index) => {
                         const option = document.createElement('option');
                         const branchName = branch.branch_name || branch.branch || 'Unknown';
                         const branchCompany = branch.company || 'Unknown';
@@ -1167,27 +1195,42 @@
                         option.value = value;
                         option.textContent = branchName; // Display only branch name, no company in brackets
                         select.appendChild(option);
+                        addedCount++;
                     });
+                    console.log(`✅ Added ${addedCount} branches to ${select.id} dropdown (total options: ${select.options.length})`);
                 });
                 
-                // Set defaults - find "BABA DOGO HQ" branch (with any company)
-                const defaultBranchName = 'BABA DOGO HQ';
-                const defaultOption = Array.from(targetSelect.options).find(opt => {
+                // Set defaults - Source should be HQ (BABA DOGO HQ), Target should be a different branch
+                // Priority items show items available at source that are needed at target
+                const hqBranchName = 'BABA DOGO HQ';
+                const hqOption = Array.from(sourceSelect.options).find(opt => {
                     const [branchName] = opt.value.split('|');
-                    return branchName === defaultBranchName;
+                    return branchName === hqBranchName;
                 });
                 
-                if (defaultOption) {
-                    targetSelect.value = defaultOption.value;
-                    sourceSelect.value = defaultOption.value;
-                    console.log('✅ Set default branch:', defaultOption.value);
+                // Set source to HQ (where stock is available)
+                if (hqOption) {
+                    sourceSelect.value = hqOption.value;
+                    console.log('✅ Set source branch (HQ):', hqOption.value);
+                } else if (sourceSelect.options.length > 1) {
+                    sourceSelect.value = sourceSelect.options[1].value;
+                    console.log('✅ Set first branch as source:', sourceSelect.options[1].value);
+                }
+                
+                // Set target to a different branch (preferably retail, not HQ)
+                // Find a branch that's NOT the same as source
+                const sourceValue = sourceSelect.value;
+                const targetOption = Array.from(targetSelect.options).find(opt => {
+                    return opt.value && opt.value !== sourceValue && opt.value !== '';
+                });
+                
+                if (targetOption) {
+                    targetSelect.value = targetOption.value;
+                    console.log('✅ Set target branch (different from source):', targetOption.value);
                 } else {
-                    // Use first branch if BABA DOGO HQ not found
-                    if (targetSelect.options.length > 1) {
-                        targetSelect.value = targetSelect.options[1].value;
-                        sourceSelect.value = sourceSelect.options[1].value;
-                        console.log('✅ Set first branch as default:', targetSelect.options[1].value);
-                    }
+                    // If no different branch found, use source (will show warning message)
+                    targetSelect.value = sourceValue;
+                    console.log('⚠️ No different branch found, using same as source (priority items will be empty)');
                 }
                 
                 // Add change event listeners to reload priority items when branches change
@@ -1435,7 +1478,12 @@
             // Handle both error and empty data cases
             if (data.count === 0 && (!data.data || data.data.length === 0)) {
                 const isRefreshing = data.is_refreshing || false;
-                const message = data.message || (data.error || 'No data available');
+                let message = data.message || (data.error || 'No data available');
+                
+                // Check if source and target are the same
+                if (targetBranchName === sourceBranchName && targetCompany === sourceCompany) {
+                    message = `⚠️ Source and target branches are the same (${sourceBranchName}). Priority items show items available at the source branch that are needed at a different target branch. Please select different branches.`;
+                }
                 
                 // Show helpful message
                 if (isRefreshing) {
@@ -1837,8 +1885,12 @@
                     // Update UI - reload data silently (no blocking alert)
                     setTimeout(() => {
                         hideProgressModal();
-                        loadDashboardData(); // Reload to show updated data
-                        checkRefreshStatus();
+                        loadPriorityItems(); // Reload priority items to show updated data
+                        // Update last refresh time directly (don't call checkRefreshStatus to avoid triggering anything)
+                        const lastRefreshEl = document.getElementById('lastRefresh');
+                        if (lastRefreshEl && lastRefresh) {
+                            lastRefreshEl.textContent = `Last refresh: ${new Date(lastRefresh).toLocaleString()}`;
+                        }
                         // Show subtle notification instead of blocking alert
                         const refreshStatus = document.getElementById('refreshStatus');
                         if (refreshStatus) {
@@ -1856,6 +1908,10 @@
     }
     
     async function checkRefreshStatus() {
+        // IMPORTANT: This function ONLY checks status - it does NOT trigger a refresh
+        // Refresh is ONLY triggered by:
+        // 1. User clicking "Refresh Data Now" button (manualRefreshData function)
+        // 2. Scheduled refresh (scheduler in main.py)
         try {
             const status = await apiRequest('/api/refresh/status');
             if (status) {
@@ -1865,11 +1921,25 @@
                 }
                 
                 // If refresh is in progress, show modal and start polling
+                // This only happens if a refresh was already started (by button click or scheduler)
                 if (status.is_refreshing) {
+                    console.log('📊 Refresh is already in progress - showing progress modal');
                     const modal = document.getElementById('progressModal');
                     if (modal && !modal.classList.contains('show')) {
                         showProgressModal();
                         startProgressPolling();
+                    }
+                } else {
+                    // Refresh is not in progress - make sure modal is hidden
+                    const modal = document.getElementById('progressModal');
+                    if (modal && modal.classList.contains('show')) {
+                        console.log('📊 No refresh in progress - hiding progress modal');
+                        hideProgressModal();
+                        // Clear any polling intervals
+                        if (progressPollingInterval) {
+                            clearInterval(progressPollingInterval);
+                            progressPollingInterval = null;
+                        }
                     }
                 }
             }
@@ -1883,10 +1953,11 @@
         }
     }
     
-    // Only check refresh status once on page load
-    // Don't poll continuously - only check when user manually triggers refresh
-    // This prevents unnecessary API calls and authentication errors
-    checkRefreshStatus();
+    // REMOVED: Duplicate checkRefreshStatus() call - it's already called in DOMContentLoaded above
+    // checkRefreshStatus() only checks if a refresh is already in progress and shows the modal
+    // It does NOT trigger a new refresh - refresh is ONLY triggered by:
+    // 1. User clicking "Refresh Data Now" button (manualRefreshData function)
+    // 2. Scheduled refresh (scheduler in main.py)
     
     // Check sync status and credentials
     async function checkSyncStatus() {
