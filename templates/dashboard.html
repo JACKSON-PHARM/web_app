@@ -814,6 +814,79 @@
 </div>
 
 <script>
+    // Ensure apiRequest is available (from base.html, but add fallback if needed)
+    // Define globally to ensure it's accessible everywhere
+    if (typeof apiRequest === 'undefined') {
+        console.warn('⚠️ apiRequest not found in base.html, defining fallback...');
+        window.apiRequest = async function apiRequest(url, options = {}) {
+            const token = localStorage.getItem('access_token');
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+            
+            // Add timeout to prevent hanging
+            const controller = new AbortController();
+            const isLargeQuery = url.includes('/stock/data') || url.includes('/dashboard/priority-items') || url.includes('/dashboard/new-arrivals');
+            const isStockView = url.includes('/stock/data');
+            const timeout = isStockView ? 300000 : (isLargeQuery ? 120000 : 30000);
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers,
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                // Handle authentication errors
+                if (response.status === 401 || response.status === 403) {
+                    console.warn('Authentication error:', response.status, url);
+                    const errorData = await response.json().catch(() => ({ detail: 'Authentication required' }));
+                    if (window.location.pathname.includes('/admin')) {
+                        throw new Error(errorData.detail || `Authentication error: ${response.status}`);
+                    }
+                    if (token) {
+                        // logout function should be in base.html
+                        if (typeof logout === 'function') {
+                            logout();
+                        } else {
+                            window.location.href = '/';
+                        }
+                    }
+                    return null;
+                }
+                
+                // Handle other errors
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    console.error('API error:', response.status, errorData);
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                clearTimeout(timeoutId);
+                if (error.name === 'AbortError') {
+                    console.error('Request timeout:', url);
+                    throw new Error('Request timed out. Please try again.');
+                }
+                throw error;
+            }
+        };
+    }
+    
+    // Ensure apiRequest is globally accessible
+    if (typeof apiRequest !== 'undefined' && typeof window.apiRequest === 'undefined') {
+        window.apiRequest = apiRequest;
+    }
+    
     let refreshInProgress = false;
     
     // Date formatting function
@@ -899,26 +972,19 @@
         // Only check if user manually triggers refresh
         checkRefreshStatus();
         
-        // Add event listeners for branch changes
-        const targetBranch = document.getElementById('targetBranch');
-        const sourceBranch = document.getElementById('sourceBranch');
-        
-        if (targetBranch) {
-            targetBranch.addEventListener('change', () => {
-                loadDashboardData();
-            });
-        }
-        
-        if (sourceBranch) {
-            sourceBranch.addEventListener('change', () => {
-                loadPriorityItems();
-            });
-        }
+        // Note: Event listeners for branch changes are added in loadBranches()
+        // to avoid duplicates and ensure branches are loaded first
         
         // Initialize priority limit change handler
         const priorityLimitInput = document.getElementById('priorityLimit');
         if (priorityLimitInput) {
             priorityLimitInput.addEventListener('change', loadPriorityItems);
+        }
+        
+        // Initialize search handler
+        const prioritySearch = document.getElementById('prioritySearch');
+        if (prioritySearch) {
+            prioritySearch.addEventListener('keyup', filterPriorityTable);
         }
     });
     
@@ -1125,11 +1191,24 @@
                 }
                 
                 // Add change event listeners to reload priority items when branches change
-                targetSelect.addEventListener('change', () => {
+                // Use once: true to prevent duplicate listeners, or remove and re-add
+                const savedTargetValue = targetSelect.value;
+                const savedSourceValue = sourceSelect.value;
+                
+                // Remove old listeners by cloning
+                const newTargetSelect = targetSelect.cloneNode(true);
+                const newSourceSelect = sourceSelect.cloneNode(true);
+                newTargetSelect.value = savedTargetValue;
+                newSourceSelect.value = savedSourceValue;
+                targetSelect.parentNode.replaceChild(newTargetSelect, targetSelect);
+                sourceSelect.parentNode.replaceChild(newSourceSelect, sourceSelect);
+                
+                // Add new event listeners
+                newTargetSelect.addEventListener('change', () => {
                     console.log('Target branch changed, reloading priority items...');
                     loadPriorityItems();
                 });
-                sourceSelect.addEventListener('change', () => {
+                newSourceSelect.addEventListener('change', () => {
                     console.log('Source branch changed, reloading priority items...');
                     loadPriorityItems();
                 });
@@ -1146,10 +1225,38 @@
                 
                 console.log('✅ Branches loaded successfully');
             } else {
-                console.warn('⚠️ Branches API returned no data:', data);
-                const errorMsg = data?.message || data?.error || 'No branches found in database';
-                targetSelect.innerHTML = `<option value="">${errorMsg}</option>`;
-                sourceSelect.innerHTML = `<option value="">${errorMsg}</option>`;
+                // Error loading branches - try fallback
+                const errorMsg = data && data.error ? data.error : (data?.message || 'No branches found');
+                console.error('Failed to load branches:', errorMsg, data);
+                if (targetSelect) targetSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+                if (sourceSelect) sourceSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+                
+                // Try fallback: hardcoded branches
+                console.log('Attempting fallback with hardcoded branches...');
+                const fallbackBranches = [
+                    { branch_name: 'BABA DOGO HQ', company: 'NILA' },
+                    { branch_name: 'DAIMA MERU WHOLESALE', company: 'DAIMA' },
+                    { branch_name: 'DAIMA MERU RETAIL', company: 'DAIMA' }
+                ];
+                [targetSelect, sourceSelect].forEach(select => {
+                    if (select) {
+                        select.innerHTML = '<option value="">Select branch...</option>';
+                        fallbackBranches.forEach(branch => {
+                            const option = document.createElement('option');
+                            const value = `${branch.branch_name}|${branch.company}`;
+                            option.value = value;
+                            option.textContent = branch.branch_name;
+                            select.appendChild(option);
+                        });
+                    }
+                });
+                if (targetSelect && targetSelect.options.length > 1) {
+                    targetSelect.selectedIndex = 1;
+                }
+                if (sourceSelect && sourceSelect.options.length > 1) {
+                    sourceSelect.selectedIndex = 1;
+                }
+                
                 if (data?.message && data.message.includes('empty')) {
                     console.log('💡 Tip: Database is empty. Click "Refresh Data Now" to load branches.');
                 }
@@ -1157,13 +1264,40 @@
         } catch (error) {
             console.error('❌ Error loading branches:', error);
             console.error('Error stack:', error.stack);
-            const errorMsg = error.message || 'Unknown error';
-            targetSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
-            sourceSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+            const errorMsg = error.message || 'Failed to load';
+            if (targetSelect) targetSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+            if (sourceSelect) sourceSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+            
+            // Try fallback on error too
+            console.log('Attempting fallback with hardcoded branches after error...');
+            const fallbackBranches = [
+                { branch_name: 'BABA DOGO HQ', company: 'NILA' },
+                { branch_name: 'DAIMA MERU WHOLESALE', company: 'DAIMA' },
+                { branch_name: 'DAIMA MERU RETAIL', company: 'DAIMA' }
+            ];
+            [targetSelect, sourceSelect].forEach(select => {
+                if (select) {
+                    select.innerHTML = '<option value="">Select branch...</option>';
+                    fallbackBranches.forEach(branch => {
+                        const option = document.createElement('option');
+                        const value = `${branch.branch_name}|${branch.company}`;
+                        option.value = value;
+                        option.textContent = branch.branch_name;
+                        select.appendChild(option);
+                    });
+                }
+            });
+            if (targetSelect && targetSelect.options.length > 1) {
+                targetSelect.selectedIndex = 1;
+            }
+            if (sourceSelect && sourceSelect.options.length > 1) {
+                sourceSelect.selectedIndex = 1;
+            }
         }
     }
     
-    async function manualRefreshData() {
+    // Make manualRefreshData globally accessible
+    window.manualRefreshData = async function manualRefreshData() {
         const btn = document.getElementById('manualRefreshBtn');
         if (!btn) {
             console.error('Refresh button not found');
@@ -1240,7 +1374,7 @@
                 btn.innerHTML = originalText;
             }, 2000);
         }
-    }
+    };
     
     async function loadPriorityItems() {
         // Check token before making request
@@ -1562,6 +1696,17 @@
         }
     }
     
+    function updateProgress(percent, message, details) {
+        // Wrapper function for updateProgressBar that also handles details
+        updateProgressBar(percent, message);
+        if (details) {
+            const progressDetails = document.getElementById('progressDetails');
+            if (progressDetails) {
+                progressDetails.textContent = details;
+            }
+        }
+    }
+    
     function updateProgressBar(percent, message) {
         const progressBar = document.getElementById('progressBar');
         const progressMessage = document.getElementById('progressMessage');
@@ -1714,9 +1859,9 @@
         try {
             const status = await apiRequest('/api/refresh/status');
             if (status) {
-                if (status.last_refresh) {
-                document.getElementById('lastRefresh').textContent = 
-                    `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
+                const lastRefreshEl = document.getElementById('lastRefresh');
+                if (lastRefreshEl && status.last_refresh) {
+                    lastRefreshEl.textContent = `Last refresh: ${new Date(status.last_refresh).toLocaleString()}`;
                 }
                 
                 // If refresh is in progress, show modal and start polling
@@ -1730,6 +1875,11 @@
             }
         } catch (error) {
             console.error('Error checking refresh status:', error);
+            // Don't break the page if refresh status check fails
+            const lastRefreshEl = document.getElementById('lastRefresh');
+            if (lastRefreshEl) {
+                lastRefreshEl.textContent = 'Last refresh: Unable to check';
+            }
         }
     }
     
@@ -1873,9 +2023,10 @@
         modal.style.display = 'block';
     }
     
-    function closeProcurementModal() {
+    // Make closeProcurementModal globally accessible
+    window.closeProcurementModal = function closeProcurementModal() {
         document.getElementById('procurementModal').style.display = 'none';
-    }
+    };
     
     function toggleProcurementOptions() {
         const orderMode = document.querySelector('input[name="orderMode"]:checked').value;
@@ -2023,7 +2174,8 @@
         }
     }
     
-    async function runProcurementBot(type) {
+    // Make runProcurementBot globally accessible
+    window.runProcurementBot = async function runProcurementBot(type) {
         const token = localStorage.getItem('access_token');
         if (!token) {
             alert('Please login first');
@@ -2071,7 +2223,8 @@
         document.getElementById('procurementModal').dataset.selectedItems = JSON.stringify(selectedItems);
     }
     
-    async function confirmProcurementOrder() {
+    // Make confirmProcurementOrder globally accessible
+    window.confirmProcurementOrder = async function confirmProcurementOrder() {
         const modal = document.getElementById('procurementModal');
         const branch = modal.dataset.branch;
         const company = modal.dataset.company;
@@ -2127,7 +2280,7 @@
             // Batch items if more than 20
             await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order', null, null, procurementCompany, procurementUsername, procurementPassword);
         }
-    }
+    };
     
     async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null, procurementCompany = null, procurementUsername = null, procurementPassword = null) {
         const BATCH_SIZE = 20;
@@ -2220,7 +2373,8 @@
     // Store current sort state for dashboard tables
     let dashboardSort = { priority: { column: null, direction: null } };
     
-    function showFilter(tableType, column, event) {
+    // Make showFilter globally accessible
+    window.showFilter = function showFilter(tableType, column, event) {
         if (event) {
             event.stopPropagation();
         }
@@ -2292,9 +2446,10 @@
             };
             document.addEventListener('click', closeMenu);
         }, 100);
-    }
+    };
     
-    function sortDashboardTable(tableType, column, direction) {
+    // Make sortDashboardTable globally accessible
+    window.sortDashboardTable = function sortDashboardTable(tableType, column, direction) {
         let tbody, dataArray, dataKey;
         
         if (tableType === 'priority') {
@@ -2541,9 +2696,11 @@
                 </tr>
             `;
         }
+    }
     
     // Search functionality for priority table
-    function filterPriorityTable() {
+    // Make filterPriorityTable globally accessible
+    window.filterPriorityTable = function filterPriorityTable() {
         const searchTerm = document.getElementById('prioritySearch')?.value.toLowerCase() || '';
         const tbody = document.getElementById('priorityBody');
         if (!tbody) return;
@@ -2575,7 +2732,7 @@
         } catch (e) {
             console.warn('Could not save search term:', e);
         }
-    }
+    };
     
     // State persistence functions
     function savePriorityState() {
