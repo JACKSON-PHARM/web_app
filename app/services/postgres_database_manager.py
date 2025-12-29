@@ -615,144 +615,85 @@ class PostgresDatabaseManager:
                 self.logger.info(f"✅ Inserted {total_inserted:,} records into {table_name} using COPY")
                 return total_inserted
             except Exception as copy_error:
-                # If COPY fails, use temp table approach for better performance with duplicates
+                # If COPY fails, use execute_values with ON CONFLICT (more reliable than temp table)
                 conn.rollback()
-                self.logger.warning(f"⚠️ COPY failed for {table_name}, using temp table approach: {copy_error}")
+                self.logger.warning(f"⚠️ COPY failed for {table_name}, using execute_values: {copy_error}")
                 
-                # Strategy: COPY to temp table, then INSERT ... ON CONFLICT from temp table
-                # This is still much faster than individual inserts
-                temp_table = f"{table_name}_temp_{int(datetime.now().timestamp())}"
+                # Get unique constraints for ON CONFLICT handling
+                cursor.execute("""
+                    SELECT 
+                        kcu.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu 
+                        ON tc.constraint_name = kcu.constraint_name
+                    WHERE tc.table_name = %s 
+                        AND tc.table_schema = 'public'
+                        AND tc.constraint_type IN ('UNIQUE', 'PRIMARY KEY')
+                    ORDER BY kcu.ordinal_position
+                """, (table_name,))
                 
-                try:
-                    # Create temp table with ONLY the columns we're inserting (no excluded columns)
-                    # This avoids issues with NOT NULL columns that have no defaults (like id)
-                    excluded_cols_set = set(excluded_auto_columns)
+                unique_cols = [row[0] for row in cursor.fetchall()]
+                # Only use unique columns that are in our insert columns (not excluded like 'id')
+                conflict_cols = [col for col in unique_cols if col in columns]
+                
+                # Prepare all values
+                all_values = []
+                for record in data:
+                    values = [record.get(col) for col in columns]
+                    # Handle None, empty strings, and NaN
+                    values = [
+                        None if v == '' or (isinstance(v, float) and (v != v)) else v 
+                        for v in values
+                    ]
+                    all_values.append(tuple(values))
+                
+                # Build INSERT statement with ON CONFLICT if we have unique constraints
+                # execute_values uses %s as placeholder for VALUES
+                if conflict_cols:
+                    conflict_cols_str = ', '.join([f'"{col}"' for col in conflict_cols])
+                    insert_template = f"""
+                        INSERT INTO "{table_name}" ({column_names}) 
+                        VALUES %s
+                        ON CONFLICT ({conflict_cols_str}) DO NOTHING
+                    """
+                else:
+                    insert_template = f'INSERT INTO "{table_name}" ({column_names}) VALUES %s'
+                
+                # Use execute_values for bulk insert (faster than executemany, more reliable than COPY)
+                # Insert in chunks to avoid memory issues
+                chunk_size = 5000  # Smaller chunks for better reliability
+                total_inserted = 0
+                failed_count = 0
+                
+                for chunk_start in range(0, len(all_values), chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, len(all_values))
+                    chunk = all_values[chunk_start:chunk_end]
                     
-                    # Build column definitions for temp table using only valid columns
-                    if excluded_cols_set:
-                        # Get column definitions for only the columns we're inserting
-                        placeholders = ', '.join([f"'{col}'" for col in columns])
-                        cursor.execute(f"""
-                            SELECT column_name, data_type, is_nullable, column_default
-                            FROM information_schema.columns
-                            WHERE table_name = '{table_name}'
-                            AND table_schema = 'public'
-                            AND column_name IN ({placeholders})
-                            ORDER BY ordinal_position
-                        """)
-                    else:
-                        # No excluded columns, get all columns
-                        cursor.execute(f"""
-                            SELECT column_name, data_type, is_nullable, column_default
-                            FROM information_schema.columns
-                            WHERE table_name = '{table_name}'
-                            AND table_schema = 'public'
-                            ORDER BY ordinal_position
-                        """)
-                    
-                    col_defs = []
-                    for row in cursor.fetchall():
-                        col_name, data_type, is_nullable, col_default = row
-                        # Only include columns that are in our valid columns list
-                        if col_name in columns:
-                            # Make all columns nullable in temp table to avoid NOT NULL issues
-                            # We'll let the main table handle constraints
-                            default = f' DEFAULT {col_default}' if col_default else ''
-                            col_defs.append(f'"{col_name}" {data_type}{default}')
-                    
-                    if not col_defs:
-                        raise Exception(f"No valid columns to create temp table for {table_name}")
-                    
-                    cursor.execute(f"""
-                        CREATE TEMP TABLE {temp_table} ({', '.join(col_defs)})
-                    """)
-                    
-                    # COPY to temp table (should always work now)
-                    output.seek(0)
-                    copy_sql_temp = f'COPY {temp_table} ({column_names}) FROM STDIN WITH (FORMAT csv)'
-                    cursor.copy_expert(copy_sql_temp, output)
-                    temp_count = cursor.rowcount
-                    
-                    # Check for unique constraints to use ON CONFLICT
-                    # Get unique columns that are actually in our data (not excluded)
-                    cursor.execute("""
-                        SELECT 
-                            kcu.column_name
-                        FROM information_schema.table_constraints tc
-                        JOIN information_schema.key_column_usage kcu 
-                            ON tc.constraint_name = kcu.constraint_name
-                        WHERE tc.table_name = %s 
-                            AND tc.table_schema = 'public'
-                            AND tc.constraint_type IN ('UNIQUE', 'PRIMARY KEY')
-                        ORDER BY kcu.ordinal_position
-                    """, (table_name,))
-                    
-                    unique_cols = [row[0] for row in cursor.fetchall()]
-                    # Only use unique columns that are in our insert columns (not excluded)
-                    conflict_cols = [col for col in unique_cols if col in columns]
-                    
-                    if conflict_cols:
-                        # Use ON CONFLICT DO NOTHING
-                        conflict_cols_str = ', '.join([f'"{col}"' for col in conflict_cols])
-                        insert_sql = f"""
-                            INSERT INTO "{table_name}" ({column_names})
-                            SELECT {column_names} FROM {temp_table}
-                            ON CONFLICT ({conflict_cols_str}) DO NOTHING
-                        """
-                    else:
-                        # No unique constraint, just insert all
-                        insert_sql = f"""
-                            INSERT INTO "{table_name}" ({column_names})
-                            SELECT {column_names} FROM {temp_table}
-                        """
-                    
-                    cursor.execute(insert_sql)
-                    total_inserted = cursor.rowcount
-                    conn.commit()
-                    self.logger.info(f"✅ Inserted {total_inserted:,} records into {table_name} using temp table (from {temp_count:,} in temp)")
-                    return total_inserted
-                    
-                except Exception as temp_error:
-                    # If temp table approach fails, fall back to simple executemany
-                    conn.rollback()
-                    self.logger.warning(f"⚠️ Temp table approach failed, using executemany: {temp_error}")
-                    
-                    # Build simple INSERT (no ON CONFLICT)
-                    placeholders = ', '.join(['%s'] * len(columns))
-                    insert_sql = f'INSERT INTO "{table_name}" ({column_names}) VALUES ({placeholders})'
-                    
-                    # Use executemany in large chunks
-                    all_values = []
-                    for record in data:
-                        values = [record.get(col) for col in columns]
-                        values = [None if v == '' or (isinstance(v, float) and (v != v)) else v for v in values]
-                        all_values.append(values)
-                    
-                    # Insert in large chunks (10k at a time)
-                    chunk_size = 10000
-                    total_inserted = 0
-                    failed_count = 0
-                    
-                    for chunk_start in range(0, len(all_values), chunk_size):
-                        chunk_end = min(chunk_start + chunk_size, len(all_values))
-                        chunk = all_values[chunk_start:chunk_end]
-                        
-                        try:
-                            cursor.executemany(insert_sql, chunk)
-                            total_inserted += len(chunk)
-                            if chunk_start % 50000 == 0:
-                                self.logger.info(f"  Inserted {total_inserted:,} records into {table_name}...")
-                        except Exception as chunk_error:
-                            self.logger.warning(f"⚠️ Chunk {chunk_start}-{chunk_end} failed: {chunk_error}")
-                            # Skip failed chunks for now (duplicates or other issues)
-                            failed_count += len(chunk)
-                    
-                    conn.commit()
-                    if failed_count > 0:
-                        self.logger.warning(f"⚠️ Inserted {total_inserted:,} records into {table_name}, {failed_count} skipped")
-                    else:
-                        self.logger.info(f"✅ Inserted {total_inserted:,} records into {table_name}")
-                    return total_inserted
+                    try:
+                        execute_values(cursor, insert_template, chunk, page_size=chunk_size)
+                        total_inserted += len(chunk)
+                        if chunk_start % 50000 == 0 or chunk_end >= len(all_values):
+                            self.logger.info(f"  Inserted {total_inserted:,}/{len(all_values):,} records into {table_name}...")
+                    except Exception as chunk_error:
+                        self.logger.warning(f"⚠️ Chunk {chunk_start}-{chunk_end} failed: {chunk_error}")
+                        # Try individual inserts for this chunk to identify problematic records
+                        placeholders = ', '.join(['%s'] * len(columns))
+                        single_insert_sql = insert_template.replace('VALUES %s', f'VALUES ({placeholders})')
+                        for idx, values in enumerate(chunk):
+                            try:
+                                cursor.execute(single_insert_sql, values)
+                                total_inserted += 1
+                            except Exception as record_error:
+                                failed_count += 1
+                                if failed_count <= 5:  # Only log first few failures
+                                    self.logger.debug(f"Failed to insert record {chunk_start + idx}: {record_error}")
+                
+                conn.commit()
+                if failed_count > 0:
+                    self.logger.warning(f"⚠️ Inserted {total_inserted:,} records into {table_name}, {failed_count} skipped")
+                else:
+                    self.logger.info(f"✅ Inserted {total_inserted:,} records into {table_name} using execute_values")
+                return total_inserted
             
         except Exception as e:
             self.logger.error(f"❌ Failed to insert data into {table_name}: {e}")

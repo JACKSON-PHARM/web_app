@@ -17,7 +17,7 @@ from scripts.data_fetchers.database_base_fetcher import DatabaseBaseFetcher
 from scripts.data_fetchers.branch_config import ALL_BRANCHES, get_branches_for_company
 
 # Configuration
-MAX_BRANCH_WORKERS = 10
+MAX_BRANCH_WORKERS = 15  # Increased for faster stock sync (most critical data)
 
 
 class DatabaseStockFetcher(DatabaseBaseFetcher):
