@@ -229,6 +229,7 @@ class PostgresDatabaseManager:
         """
         Acquire a refresh lock to prevent concurrent refreshes.
         Returns True if lock acquired, False if already locked.
+        Raises exception if lock functions don't exist (caller should handle gracefully).
         
         Args:
             lock_type: Type of lock ('global', 'stock', 'orders', etc.)
@@ -238,6 +239,21 @@ class PostgresDatabaseManager:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
+            
+            # Check if function exists first
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM pg_proc p
+                    JOIN pg_namespace n ON p.pronamespace = n.oid
+                    WHERE n.nspname = 'public' 
+                    AND p.proname = 'acquire_refresh_lock'
+                )
+            """)
+            function_exists = cursor.fetchone()[0]
+            
+            if not function_exists:
+                # Function doesn't exist - raise a specific exception
+                raise ValueError("acquire_refresh_lock function does not exist in database")
             
             # Use PostgreSQL function to acquire lock
             import socket
@@ -256,7 +272,18 @@ class PostgresDatabaseManager:
                 self.logger.warning(f"⚠️ Refresh lock already held: {lock_type}")
             
             return acquired
+        except ValueError as ve:
+            # Function doesn't exist - re-raise so caller knows
+            if conn:
+                conn.rollback()
+            raise
         except Exception as e:
+            error_msg = str(e).lower()
+            if 'does not exist' in error_msg or 'function' in error_msg:
+                # Function doesn't exist - raise ValueError
+                if conn:
+                    conn.rollback()
+                raise ValueError("acquire_refresh_lock function does not exist in database") from e
             self.logger.error(f"❌ Failed to acquire refresh lock: {e}")
             if conn:
                 conn.rollback()
@@ -303,6 +330,7 @@ class PostgresDatabaseManager:
         """
         Check if a refresh lock is currently active.
         Returns True if locked, False if available.
+        Raises ValueError if lock functions don't exist.
         
         Args:
             lock_type: Type of lock to check
@@ -312,11 +340,33 @@ class PostgresDatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Check if function exists first
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM pg_proc p
+                    JOIN pg_namespace n ON p.pronamespace = n.oid
+                    WHERE n.nspname = 'public' 
+                    AND p.proname = 'is_refresh_locked'
+                )
+            """)
+            function_exists = cursor.fetchone()[0]
+            
+            if not function_exists:
+                # Function doesn't exist - raise a specific exception
+                raise ValueError("is_refresh_locked function does not exist in database")
+            
             cursor.execute("SELECT is_refresh_locked(%s)", (lock_type,))
             is_locked = cursor.fetchone()[0]
             
             return is_locked
+        except ValueError as ve:
+            # Function doesn't exist - re-raise so caller knows
+            raise
         except Exception as e:
+            error_msg = str(e).lower()
+            if 'does not exist' in error_msg or 'function' in error_msg:
+                # Function doesn't exist - raise ValueError
+                raise ValueError("is_refresh_locked function does not exist in database") from e
             self.logger.error(f"❌ Failed to check refresh lock: {e}")
             return False
         finally:
@@ -667,15 +717,71 @@ class PostgresDatabaseManager:
             valid_columns = []
             excluded_auto_columns = []
             
+            # Auto-fix id column FIRST if it's a PRIMARY KEY without a working default
+            # This must happen before we build the column exclusion list
+            if 'id' in schema_columns:
+                id_default = column_defaults.get('id')
+                id_is_pk = column_is_pk.get('id', False)
+                # Check if default is None or doesn't contain 'nextval' (not a working sequence default)
+                needs_fix = id_is_pk and (id_default is None or 'nextval' not in str(id_default).lower())
+                
+                if needs_fix:
+                    self.logger.info(f"🔧 Auto-fixing {table_name}.id column (PRIMARY KEY without working default)...")
+                    self.logger.info(f"   Current default: {id_default}")
+                    try:
+                        seq_name = f"{table_name}_id_seq"
+                        self.logger.info(f"   Creating sequence {seq_name} for {table_name}.id column...")
+                        cursor.execute(f"""
+                            CREATE SEQUENCE IF NOT EXISTS {seq_name};
+                            ALTER TABLE {table_name} 
+                            ALTER COLUMN id SET DEFAULT nextval('{seq_name}');
+                            SELECT setval('{seq_name}', COALESCE((SELECT MAX(id) FROM {table_name}), 1), true);
+                        """)
+                        conn.commit()
+                        self.logger.info(f"✅ Fixed {table_name}.id column - now has auto-increment default")
+                        # Verify the default was actually set
+                        cursor.execute("""
+                            SELECT column_default 
+                            FROM information_schema.columns 
+                            WHERE table_name = %s AND column_name = 'id' AND table_schema = 'public'
+                        """, (table_name,))
+                        verified_default = cursor.fetchone()
+                        if verified_default and verified_default[0]:
+                            self.logger.info(f"   Verified default is set: {verified_default[0]}")
+                        else:
+                            self.logger.warning(f"   ⚠️ Warning: Default may not have been set correctly")
+                        # Update column_defaults to reflect the fix
+                        column_defaults['id'] = f"nextval('{seq_name}'::regclass)"
+                    except Exception as fix_error:
+                        self.logger.error(f"   Failed to fix {table_name}.id column: {fix_error}")
+                        import traceback
+                        self.logger.error(traceback.format_exc())
+                        conn.rollback()
+                        self.logger.error(f"   Please run this SQL manually to fix the schema:")
+                        self.logger.error(f"   CREATE SEQUENCE IF NOT EXISTS {table_name}_id_seq;")
+                        self.logger.error(f"   ALTER TABLE {table_name} ALTER COLUMN id SET DEFAULT nextval('{table_name}_id_seq');")
+                        # Don't fail completely - try to continue without the fix
+                        self.logger.warning(f"   Continuing without auto-fix - inserts may fail")
+            
+            # CRITICAL: Always exclude 'id' column if it exists in schema and is a PRIMARY KEY
+            # This prevents it from being included even if it's in the data dictionary
+            if 'id' in schema_columns and column_is_pk.get('id', False):
+                excluded_auto_columns.append('id')
+                self.logger.debug(f"Excluding 'id' column (PRIMARY KEY) from {table_name} inserts")
+            
             # First, identify all auto-generated columns (PK, SERIAL, or have defaults)
             for col in schema_columns.keys():
+                # Skip 'id' as we already handled it above
+                if col == 'id':
+                    continue
+                    
                 data_type = schema_columns.get(col, '').upper()
-                default = column_defaults.get(col)
+                default = column_defaults.get(col)  # This will now have the fixed default if we just fixed it
                 is_pk = column_is_pk.get(col, False)
                 nullable = column_nullable.get(col, 'NO')
                 
                 # Always exclude if:
-                # - Is PRIMARY KEY (like id)
+                # - Is PRIMARY KEY (like id) - will use default
                 # - Is SERIAL/BIGSERIAL type
                 # - Has a default value
                 if is_pk or 'SERIAL' in data_type or default is not None:
@@ -689,13 +795,30 @@ class PostgresDatabaseManager:
             # Now include only columns that are:
             # 1. In the data
             # 2. In the table schema
-            # 3. NOT in excluded_auto_columns
+            # 3. NOT in excluded_auto_columns (including 'id' which we explicitly excluded)
             for col in data_columns:
+                # Double-check: never include 'id' even if it's in data
+                if col == 'id':
+                    self.logger.debug(f"Skipping 'id' column from data (will be auto-generated)")
+                    continue
                 if col in schema_columns and col not in excluded_auto_columns:
                     valid_columns.append(col)
             
             if not valid_columns:
                 raise ValueError(f"No valid columns found for {table_name} after filtering")
+            
+            # Final check for problematic columns (NOT NULL, no default, not in data, not excluded)
+            problematic_columns = []
+            for col in schema_columns.keys():
+                if col not in data_columns and col not in excluded_auto_columns:
+                    default = column_defaults.get(col)
+                    nullable = column_nullable.get(col, 'NO')
+                    if nullable == 'NO' and default is None:
+                        problematic_columns.append(col)
+                        self.logger.warning(f"⚠️ Column {col} is NOT NULL with no default but not in data")
+            
+            if problematic_columns:
+                raise ValueError(f"Cannot insert into {table_name}: columns {problematic_columns} are NOT NULL with no default. Fix the database schema first.")
             
             if excluded_auto_columns:
                 self.logger.info(f"ℹ️ Excluding auto-generated columns from {table_name}: {excluded_auto_columns}")
@@ -730,6 +853,21 @@ class PostgresDatabaseManager:
                 writer.writerow(values)
             
             output.seek(0)
+            
+            # Before attempting COPY, verify that id column has a working default if it's excluded
+            if 'id' in excluded_auto_columns and 'id' in schema_columns:
+                # Double-check that id has a default before attempting COPY
+                cursor.execute("""
+                    SELECT column_default 
+                    FROM information_schema.columns 
+                    WHERE table_name = %s AND column_name = 'id' AND table_schema = 'public'
+                """, (table_name,))
+                id_default_check = cursor.fetchone()
+                if not id_default_check or not id_default_check[0] or 'nextval' not in str(id_default_check[0]).lower():
+                    self.logger.warning(f"⚠️ {table_name}.id column doesn't have a working default, skipping COPY and using execute_values")
+                    # Skip COPY and go straight to execute_values
+                    copy_error = "id column missing default"
+                    raise Exception(copy_error)
             
             # Use COPY FROM for bulk insert (fastest method)
             copy_sql = f'COPY "{table_name}" ({column_names}) FROM STDIN WITH (FORMAT csv)'

@@ -37,22 +37,53 @@ class RefreshService:
         }
         
         # Check if refresh is already running (database-level lock)
-        if hasattr(self.db_manager, 'is_refresh_locked'):
-            if self.db_manager.is_refresh_locked('global'):
-                self.logger.warning("⚠️ Refresh already in progress - skipping duplicate request")
-                results['success'] = False
-                results['messages'].append("⚠️ Refresh already in progress. Please wait for the current refresh to complete.")
-                return results
+        # Gracefully handle if lock functions don't exist
+        lock_functions_available = True
+        try:
+            if hasattr(self.db_manager, 'is_refresh_locked'):
+                try:
+                    if self.db_manager.is_refresh_locked('global'):
+                        self.logger.warning("⚠️ Refresh already in progress - skipping duplicate request")
+                        results['success'] = False
+                        results['messages'].append("⚠️ Refresh already in progress. Please wait for the current refresh to complete.")
+                        return results
+                except ValueError as ve:
+                    # Lock functions don't exist - continue without lock
+                    lock_functions_available = False
+                    self.logger.info("ℹ️ Lock functions not available - continuing refresh without lock check")
+                except Exception as lock_check_error:
+                    # Other error - log and continue
+                    self.logger.debug(f"⚠️ Could not check refresh lock: {lock_check_error}")
+        except Exception as e:
+            self.logger.debug(f"⚠️ Refresh lock check not available: {e}")
         
         # Acquire refresh lock (database-level, prevents concurrent refreshes)
-        lock_acquired = False
-        if hasattr(self.db_manager, 'acquire_refresh_lock'):
-            lock_acquired = self.db_manager.acquire_refresh_lock('global', timeout_seconds=7200)  # 2 hour timeout
-            if not lock_acquired:
-                self.logger.warning("⚠️ Could not acquire refresh lock - another refresh is running")
-                results['success'] = False
-                results['messages'].append("⚠️ Another refresh is currently running. Please wait for it to complete.")
-                return results
+        # Gracefully handle if lock functions don't exist
+        lock_acquired = True  # Default to True if lock functions don't exist
+        try:
+            if hasattr(self.db_manager, 'acquire_refresh_lock') and lock_functions_available:
+                try:
+                    lock_acquired = self.db_manager.acquire_refresh_lock('global', timeout_seconds=7200)  # 2 hour timeout
+                    if not lock_acquired:
+                        # Lock is already held by another process
+                        self.logger.warning("⚠️ Could not acquire refresh lock - another refresh is running")
+                        results['success'] = False
+                        results['messages'].append("⚠️ Another refresh is currently running. Please wait for it to complete.")
+                        return results
+                except ValueError as ve:
+                    # Lock functions don't exist - continue without lock
+                    lock_functions_available = False
+                    lock_acquired = True
+                    self.logger.info("ℹ️ Lock functions not available - continuing refresh without lock")
+                except Exception as lock_acquire_error:
+                    # Some other error - log and continue
+                    self.logger.warning(f"⚠️ Could not acquire refresh lock: {lock_acquire_error}")
+                    self.logger.info("ℹ️ Continuing refresh without lock")
+                    lock_acquired = True
+        except Exception as e:
+            self.logger.debug(f"⚠️ Refresh lock acquisition not available: {e}")
+            self.logger.info("ℹ️ Continuing refresh without lock")
+            lock_functions_available = False
         
         try:
             # Use DatabaseFetcherOrchestrator to run all fetchers properly
@@ -178,8 +209,8 @@ class RefreshService:
                 
                 self.logger.info(f"✅ Refresh completed successfully in {orchestrator_result.get('duration', 'Unknown')}")
                 
-                # Refresh materialized views after data refresh
-                self._refresh_materialized_views()
+                # Materialized views removed - no refresh needed
+                # Data is always fresh via stock_snapshot() function
                 self.logger.info(f"📊 Summary: Stock={stock_records:,}, Orders={purchase_orders + branch_orders:,}, Invoices={supplier_invoices:,}")
             else:
                 results['success'] = False
@@ -204,6 +235,14 @@ class RefreshService:
             
             # Fallback to individual fetcher calls
             return self._fallback_refresh(companies)
+        finally:
+            # Release refresh lock if we acquired it and functions are available
+            if lock_acquired and lock_functions_available and hasattr(self.db_manager, 'release_refresh_lock'):
+                try:
+                    self.db_manager.release_refresh_lock('global')
+                    self.logger.debug("🔓 Released refresh lock")
+                except Exception as release_error:
+                    self.logger.debug(f"⚠️ Could not release refresh lock: {release_error}")
     
     def _fallback_refresh(self, companies: Optional[List[str]] = None) -> Dict:
         """Fallback method if orchestrator is not available"""
@@ -271,8 +310,8 @@ class RefreshService:
             else:
                 results['messages'].append("✅ All fetchers completed successfully")
             
-            # Refresh materialized views after data refresh
-            self._refresh_materialized_views()
+            # Materialized views removed - no refresh needed
+            # Data is always fresh via stock_snapshot() function
             
             return results
             
@@ -368,8 +407,8 @@ class RefreshService:
                 
                 self.logger.info(f"✅ Selected fetchers completed in {orchestrator_result.get('duration', 'Unknown')}")
                 
-                # Refresh materialized views after data refresh
-                self._refresh_materialized_views()
+                # Materialized views removed - no refresh needed
+                # Data is always fresh via stock_snapshot() function
             else:
                 results['success'] = False
                 error_msg = orchestrator_result.get('message', 'Unknown error')
@@ -394,57 +433,11 @@ class RefreshService:
             results['messages'].append(f"Error: {str(e)}")
             return results
 
+    # Materialized views have been removed - no refresh needed
+    # Data is always fresh via stock_snapshot() function
+    # This method is kept for backward compatibility but does nothing
     def _refresh_materialized_views(self):
-        """Refresh materialized views after data refresh"""
-        try:
-            conn = self.db_manager.get_connection()
-            cursor = conn.cursor()
-            
-            self.logger.info("🔄 Refreshing materialized views...")
-            
-            # Try to use PostgreSQL function first (if it exists)
-            try:
-                cursor.execute("SELECT refresh_materialized_views()")
-                result = cursor.fetchone()[0]
-                conn.commit()
-                cursor.close()
-                self.db_manager.put_connection(conn)
-                self.logger.info(f"✅ Refreshed materialized views via function: {result}")
-                return
-            except Exception as func_error:
-                # Function doesn't exist, use direct refresh
-                self.logger.debug(f"Refresh function not available, using direct refresh: {func_error}")
-                conn.rollback()
-            
-            # Refresh stock view materialized view
-            try:
-                cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY stock_view_materialized")
-                self.logger.info("✅ Refreshed stock_view_materialized")
-            except Exception as e:
-                # Try without CONCURRENTLY if it fails (requires unique index)
-                try:
-                    cursor.execute("REFRESH MATERIALIZED VIEW stock_view_materialized")
-                    self.logger.info("✅ Refreshed stock_view_materialized (without CONCURRENTLY)")
-                except Exception as e2:
-                    self.logger.warning(f"⚠️ Could not refresh stock_view_materialized: {e2}")
-            
-            # Refresh priority items materialized view
-            try:
-                cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY priority_items_materialized")
-                self.logger.info("✅ Refreshed priority_items_materialized")
-            except Exception as e:
-                # Try without CONCURRENTLY if it fails
-                try:
-                    cursor.execute("REFRESH MATERIALIZED VIEW priority_items_materialized")
-                    self.logger.info("✅ Refreshed priority_items_materialized (without CONCURRENTLY)")
-                except Exception as e2:
-                    self.logger.warning(f"⚠️ Could not refresh priority_items_materialized: {e2}")
-            
-            conn.commit()
-            cursor.close()
-            self.db_manager.put_connection(conn)
-            
-        except Exception as e:
-            self.logger.warning(f"⚠️ Error refreshing materialized views: {e}")
-            # Don't fail the refresh if materialized views can't be refreshed
+        """Materialized views removed - no refresh needed"""
+        self.logger.debug("ℹ️ Materialized views removed - using stock_snapshot() function for fresh data")
+        pass
 
