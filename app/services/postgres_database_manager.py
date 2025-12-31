@@ -650,6 +650,14 @@ class PostgresDatabaseManager:
             output.seek(0)
             
             # Use COPY FROM for bulk insert (fastest method - can insert 200k+ records in seconds)
+            # Set a longer statement timeout for large COPY operations (30 minutes)
+            # Supabase free tier has a default 10 second timeout, which is too short for large inserts
+            try:
+                cursor.execute("SET statement_timeout = '30min'")
+                self.logger.info("⏱️ Set statement timeout to 30 minutes for COPY operation")
+            except Exception as timeout_error:
+                self.logger.warning(f"⚠️ Could not set statement timeout: {timeout_error} - continuing anyway")
+            
             copy_sql = f'COPY {target_table} ({column_names}) FROM STDIN WITH (FORMAT csv)'
             
             try:
@@ -658,10 +666,41 @@ class PostgresDatabaseManager:
                 
                 # If using staging table, atomically swap it with main table
                 if replace_all and target_table == "current_stock_staging":
-                    # Atomic swap: staging -> main (transaction ensures atomicity)
-                    # Exclude 'id' column - it will be auto-generated in main table
-                    self.logger.info(f"🔄 Swapping staging table to main (atomic operation)...")
-                    cursor.execute("TRUNCATE TABLE current_stock")
+                    # CRITICAL FIX: Only replace stock for the company(ies) in the current batch
+                    # This prevents one company from wiping another company's data during parallel processing
+                    # Extract unique companies from the data being inserted
+                    # Normalize company names to uppercase for consistency
+                    companies_in_batch = set()
+                    for record in stock_data:
+                        company = record.get('company')
+                        if company:
+                            # Normalize to uppercase and trim for consistency
+                            company_normalized = str(company).upper().strip()
+                            if company_normalized:
+                                companies_in_batch.add(company_normalized)
+                    
+                    if companies_in_batch:
+                        # Delete only records for companies in this batch (preserve other companies' data)
+                        # Use case-insensitive comparison to handle "NILA" vs "nila" etc.
+                        companies_list = list(companies_in_batch)
+                        self.logger.info(f"🔍 Companies in batch: {companies_list}")
+                        # Use UPPER() for case-insensitive comparison
+                        placeholders = ','.join(['%s'] * len(companies_list))
+                        delete_query = f"DELETE FROM current_stock WHERE UPPER(TRIM(company)) IN ({placeholders})"
+                        # Convert to uppercase for comparison
+                        companies_upper = [c.upper().strip() if c else '' for c in companies_list]
+                        cursor.execute(delete_query, companies_upper)
+                        deleted_count = cursor.rowcount
+                        self.logger.info(f"🧹 Deleted {deleted_count:,} existing records for companies: {companies_list} (preserving other companies)")
+                    else:
+                        # Fallback: if no company info, log warning but continue
+                        self.logger.warning("⚠️ No company information in stock data - cannot selectively delete")
+                        # Log sample of stock_data to debug
+                        if stock_data:
+                            sample = stock_data[0]
+                            self.logger.warning(f"   Sample record keys: {list(sample.keys())}")
+                            self.logger.warning(f"   Sample record company field: {sample.get('company', 'MISSING')}")
+                    
                     # Get all columns from staging except 'id'
                     cursor.execute("""
                         SELECT column_name 
@@ -679,7 +718,13 @@ class PostgresDatabaseManager:
                         # Fallback: use SELECT * if no columns found (shouldn't happen)
                         cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
                     swap_count = cursor.rowcount
-                    self.logger.info(f"✅ Atomically swapped {swap_count:,} records from staging to main table")
+                    self.logger.info(f"✅ Inserted {swap_count:,} new records for companies: {companies_list if companies_in_batch else 'unknown'}")
+                
+                # Reset timeout to default after successful COPY
+                try:
+                    cursor.execute("RESET statement_timeout")
+                except:
+                    pass
                 
                 conn.commit()
                 self.logger.info(f"✅ Inserted {count:,} stock records using COPY (fastest method)")
@@ -687,6 +732,11 @@ class PostgresDatabaseManager:
             except Exception as copy_error:
                 # If COPY fails, fall back to executemany
                 conn.rollback()
+                # Reset timeout before trying fallback
+                try:
+                    cursor.execute("RESET statement_timeout")
+                except:
+                    pass
                 self.logger.warning(f"⚠️ COPY failed for current_stock, trying executemany: {copy_error}")
                 
                 # Prepare all values for batch insert
@@ -697,6 +747,13 @@ class PostgresDatabaseManager:
                     all_values.append(values)
                 
                 # Use executemany in large chunks (10k at a time for better performance)
+                # Set timeout for executemany fallback as well
+                try:
+                    cursor.execute("SET statement_timeout = '30min'")
+                    self.logger.info("⏱️ Set statement timeout to 30 minutes for executemany fallback")
+                except Exception as timeout_error:
+                    self.logger.warning(f"⚠️ Could not set statement timeout: {timeout_error} - continuing anyway")
+                
                 chunk_size = 10000
                 count = 0
                 failed_count = 0
@@ -724,10 +781,40 @@ class PostgresDatabaseManager:
                 
                 # If using staging table, atomically swap it with main table
                 if replace_all and target_table == "current_stock_staging":
-                    # Atomic swap: staging -> main (transaction ensures atomicity)
-                    # Exclude 'id' column - it will be auto-generated in main table
-                    self.logger.info(f"🔄 Swapping staging table to main (atomic operation)...")
-                    cursor.execute("TRUNCATE TABLE current_stock")
+                    # CRITICAL FIX: Only replace stock for the company(ies) in the current batch
+                    # Extract unique companies from the data being inserted
+                    # Normalize company names to uppercase for consistency
+                    companies_in_batch = set()
+                    for record in stock_data:
+                        company = record.get('company')
+                        if company:
+                            # Normalize to uppercase and trim for consistency
+                            company_normalized = str(company).upper().strip()
+                            if company_normalized:
+                                companies_in_batch.add(company_normalized)
+                    
+                    if companies_in_batch:
+                        # Delete only records for companies in this batch (preserve other companies' data)
+                        # Use case-insensitive comparison to handle "NILA" vs "nila" etc.
+                        companies_list = list(companies_in_batch)
+                        self.logger.info(f"🔍 Companies in batch: {companies_list}")
+                        # Use UPPER() for case-insensitive comparison
+                        placeholders = ','.join(['%s'] * len(companies_list))
+                        delete_query = f"DELETE FROM current_stock WHERE UPPER(TRIM(company)) IN ({placeholders})"
+                        # Convert to uppercase for comparison
+                        companies_upper = [c.upper().strip() if c else '' for c in companies_list]
+                        cursor.execute(delete_query, companies_upper)
+                        deleted_count = cursor.rowcount
+                        self.logger.info(f"🧹 Deleted {deleted_count:,} existing records for companies: {companies_list} (preserving other companies)")
+                    else:
+                        # Fallback: if no company info, log warning but continue
+                        self.logger.warning("⚠️ No company information in stock data - cannot selectively delete")
+                        # Log sample of stock_data to debug
+                        if stock_data:
+                            sample = stock_data[0]
+                            self.logger.warning(f"   Sample record keys: {list(sample.keys())}")
+                            self.logger.warning(f"   Sample record company field: {sample.get('company', 'MISSING')}")
+                    
                     # Get all columns from staging except 'id'
                     cursor.execute("""
                         SELECT column_name 
@@ -745,7 +832,13 @@ class PostgresDatabaseManager:
                         # Fallback: use SELECT * if no columns found (shouldn't happen)
                         cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
                     swap_count = cursor.rowcount
-                    self.logger.info(f"✅ Atomically swapped {swap_count:,} records from staging to main table")
+                    self.logger.info(f"✅ Inserted {swap_count:,} new records for companies: {companies_list if companies_in_batch else 'unknown'}")
+                
+                # Reset timeout after executemany
+                try:
+                    cursor.execute("RESET statement_timeout")
+                except:
+                    pass
                 
                 conn.commit()
                 if failed_count > 0:
@@ -996,17 +1089,34 @@ class PostgresDatabaseManager:
                     raise Exception(copy_error)
             
             # Use COPY FROM for bulk insert (fastest method)
+            # Set a longer statement timeout for large COPY operations (30 minutes)
+            try:
+                cursor.execute("SET statement_timeout = '30min'")
+                self.logger.info("⏱️ Set statement timeout to 30 minutes for COPY operation")
+            except Exception as timeout_error:
+                self.logger.warning(f"⚠️ Could not set statement timeout: {timeout_error} - continuing anyway")
+            
             copy_sql = f'COPY "{table_name}" ({column_names}) FROM STDIN WITH (FORMAT csv)'
             
             try:
                 cursor.copy_expert(copy_sql, output)
                 total_inserted = cursor.rowcount
+                # Reset timeout to default after successful COPY
+                try:
+                    cursor.execute("RESET statement_timeout")
+                except:
+                    pass
                 conn.commit()
                 self.logger.info(f"✅ Inserted {total_inserted:,} records into {table_name} using COPY")
                 return total_inserted
             except Exception as copy_error:
                 # If COPY fails, use execute_values with ON CONFLICT (more reliable than temp table)
                 conn.rollback()
+                # Reset timeout before trying fallback
+                try:
+                    cursor.execute("RESET statement_timeout")
+                except:
+                    pass
                 self.logger.warning(f"⚠️ COPY failed for {table_name}, using execute_values: {copy_error}")
                 
                 # Get unique constraints for ON CONFLICT handling

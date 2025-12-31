@@ -73,6 +73,12 @@ class DatabaseStockFetcher(DatabaseBaseFetcher):
         """Format stock data for database insertion"""
         formatted = []
         
+        # Ensure company is uppercase and trimmed for consistency
+        company = (company or "").upper().strip()
+        if not company:
+            self.logger.error(f"⚠️ Company is empty for branch {branch_name} - cannot format stock data")
+            return []
+        
         for item in stock_items:
             try:
                 # Calculate stock value
@@ -82,12 +88,12 @@ class DatabaseStockFetcher(DatabaseBaseFetcher):
                 stock_value = unit_price * quantity
                 
                 formatted.append({
-                    "branch": branch_name,
+                    "branch": branch_name.strip() if branch_name else "",
                     "item_code": item.get("inV_CODE", ""),
                     "item_name": item.get("description", ""),
                     "stock_string": item.get("calcpw", "0W0P"),
                     "stock_pieces": int(quantity),
-                    "company": company,
+                    "company": company,  # Always uppercase and trimmed
                     "pack_size": pack_size,
                     "unit_price": unit_price,
                     "stock_value": stock_value,

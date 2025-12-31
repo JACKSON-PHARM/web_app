@@ -745,11 +745,14 @@ async def get_branches(
         
         # Query current_stock directly like desktop version does
         # Desktop version: SELECT DISTINCT branch, company FROM current_stock ORDER BY company, branch
+        # Use case-insensitive comparison and ensure we get all branches regardless of company case
         if company:
             query = """
                 SELECT DISTINCT branch, company 
                 FROM current_stock 
                 WHERE UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                AND branch IS NOT NULL 
+                AND TRIM(branch) != ''
                 ORDER BY company, branch
             """
             params = (company,)
@@ -757,6 +760,10 @@ async def get_branches(
             query = """
                 SELECT DISTINCT branch, company 
                 FROM current_stock 
+                WHERE branch IS NOT NULL 
+                AND TRIM(branch) != ''
+                AND company IS NOT NULL
+                AND TRIM(company) != ''
                 ORDER BY company, branch
             """
             params = None
@@ -781,6 +788,21 @@ async def get_branches(
         
         logger.info(f"Found {len(branches)} unique branches")
         
+        # Diagnostic: Check what companies and branches are actually in the database
+        try:
+            diagnostic_query = """
+                SELECT company, COUNT(DISTINCT branch) as branch_count, COUNT(*) as total_records
+                FROM current_stock
+                GROUP BY company
+                ORDER BY company
+            """
+            diagnostic_result = db_manager.execute_query(diagnostic_query)
+            logger.info(f"📊 Database diagnostic - Companies in current_stock:")
+            for row in diagnostic_result:
+                logger.info(f"   {row.get('company', 'Unknown')}: {row.get('branch_count', 0)} branches, {row.get('total_records', 0):,} records")
+        except Exception as diag_error:
+            logger.warning(f"Could not run diagnostic query: {diag_error}")
+        
         if not branches:
             logger.warning("No branches found in current_stock table")
             # Check if we have data at all
@@ -790,6 +812,14 @@ async def get_branches(
                 logger.info(f"Database has {stock_count} stock records but no distinct branches found")
                 if stock_count > 0:
                     logger.warning("⚠️ current_stock has data but no distinct branches - check branch/company columns")
+                    # Try to see what columns exist
+                    try:
+                        sample_query = "SELECT * FROM current_stock LIMIT 1"
+                        sample = db_manager.execute_query(sample_query)
+                        if sample:
+                            logger.info(f"Sample record columns: {list(sample[0].keys())}")
+                    except:
+                        pass
             except Exception as check_error:
                 logger.error(f"Error checking stock count: {check_error}")
         
