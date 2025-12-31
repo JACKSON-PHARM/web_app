@@ -874,6 +874,84 @@ class PostgresDatabaseManager:
         """Insert supplier invoices"""
         return self._insert_data("supplier_invoices", invoice_data, replace=False)
     
+    def delete_branch_stock(self, branch_name: str, company: str, refresh_started: Optional[str] = None) -> int:
+        """
+        Delete old stock data for a specific branch.
+        Only deletes rows that are older than refresh_started (if provided).
+        
+        ⚠️ SAFETY: This should only be called AFTER sanity checks pass.
+        Never delete stock if sanity fails.
+        
+        Args:
+            branch_name: Branch name
+            company: Company name
+            refresh_started: ISO timestamp - only delete rows with source_updated < refresh_started
+        
+        Returns:
+            Number of rows deleted
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if refresh_started:
+                # Only delete rows older than refresh_started
+                try:
+                    refresh_dt = datetime.fromisoformat(refresh_started.replace('Z', '+00:00'))
+                    refresh_str = refresh_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    delete_query = """
+                        DELETE FROM current_stock
+                        WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
+                          AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                          AND source_updated < %s
+                    """
+                    cursor.execute(delete_query, (branch_name, company, refresh_str))
+                    deleted_count = cursor.rowcount
+                    conn.commit()
+                    
+                    if deleted_count > 0:
+                        self.logger.info(f"🧹 Deleted {deleted_count:,} old stock rows for {branch_name} ({company})")
+                    else:
+                        self.logger.info(f"ℹ️ No old stock rows to delete for {branch_name} ({company})")
+                    
+                    return deleted_count
+                except Exception as e:
+                    self.logger.error(f"❌ Error parsing refresh_started timestamp: {e}")
+                    conn.rollback()
+                    return 0
+            else:
+                # Delete all stock for this branch (less safe - prefer refresh_started)
+                delete_query = """
+                    DELETE FROM current_stock
+                    WHERE UPPER(TRIM(branch)) = UPPER(TRIM(%s))
+                      AND UPPER(TRIM(company)) = UPPER(TRIM(%s))
+                """
+                cursor.execute(delete_query, (branch_name, company))
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                if deleted_count > 0:
+                    self.logger.info(f"🧹 Deleted {deleted_count:,} stock rows for {branch_name} ({company})")
+                else:
+                    self.logger.info(f"ℹ️ No stock rows to delete for {branch_name} ({company})")
+                
+                return deleted_count
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error deleting branch stock for {branch_name} ({company}): {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            return 0
+        finally:
+            if conn:
+                cursor.close()
+                self.put_connection(conn)
+    
     def insert_goods_received_notes(self, grn_data: List[Dict]) -> int:
         """Insert goods received notes (GRNs)"""
         return self._insert_data("grns", grn_data, replace=False)

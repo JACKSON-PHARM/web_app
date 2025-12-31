@@ -6,6 +6,7 @@ import logging
 import sys
 import os
 from typing import Dict, List, Optional
+from datetime import datetime
 from app.services.fetcher_manager import FetcherManager
 # CredentialManager can be either local or Supabase - passed as parameter
 
@@ -172,11 +173,18 @@ class RefreshService:
             
             orchestrator.set_progress_callback(progress_callback)
             
+            # Get refresh_started timestamp (set when refresh started)
+            refresh_started = RefreshStatusService.get_status().get("refresh_started")
+            if not refresh_started:
+                refresh_started = datetime.now().isoformat()
+                self.logger.warning("⚠️ refresh_started not found in status - using current time")
+            
             self.logger.info("🚀 Running all fetchers in parallel for faster execution...")
+            self.logger.info(f"📅 Refresh started at: {refresh_started}")
             
             # Run all fetchers in parallel to reduce total time
             # Supabase free tier allows concurrent connections, so we can parallelize safely
-            orchestrator_result = orchestrator.run_all_parallel()
+            orchestrator_result = orchestrator.run_all_parallel(refresh_started=refresh_started)
             
             # Restore original __init__ if we patched it
             if original_init:
@@ -186,6 +194,54 @@ class RefreshService:
                     self.logger.info("✅ Restored original DatabaseBaseFetcher.__init__")
                 except Exception as e:
                     self.logger.warning(f"⚠️ Could not restore original __init__: {e}")
+            
+            # Run sanity checks after fetchers complete
+            self.logger.info("🔍 Running sanity checks...")
+            from app.services.sanity_checks import SanityCheckService
+            from scripts.data_fetchers.branch_config import ALL_BRANCHES
+            
+            sanity_service = SanityCheckService(self.db_manager)
+            sanity_results = sanity_service.check_all_branches_sanity(ALL_BRANCHES, refresh_started)
+            
+            # Delete old branch stock ONLY for branches that passed sanity
+            self.logger.info("🧹 Cleaning up old branch stock (only for branches that passed sanity)...")
+            for branch_name, branch_status in sanity_results["branches"].items():
+                if branch_status["status"] == "success":
+                    # Find branch info to get company
+                    branch_info = next((b for b in ALL_BRANCHES if b["branch_name"] == branch_name), None)
+                    if branch_info:
+                        company = branch_info.get("company")
+                        if company:
+                            deleted = self.db_manager.delete_branch_stock(branch_name, company, refresh_started)
+                            if deleted > 0:
+                                self.logger.info(f"✅ Deleted {deleted:,} old stock rows for {branch_name}")
+                else:
+                    self.logger.warning(f"⚠️ Skipping stock deletion for {branch_name} - sanity check failed: {branch_status.get('reason')}")
+            
+            # Determine overall refresh outcome
+            all_branches_success = all(
+                status["status"] == "success" 
+                for status in sanity_results["branches"].values()
+            )
+            any_branch_success = any(
+                status["status"] == "success" 
+                for status in sanity_results["branches"].values()
+            )
+            
+            if all_branches_success:
+                refresh_outcome = "success"
+            elif any_branch_success:
+                refresh_outcome = "partial"
+            else:
+                refresh_outcome = "failed"
+            
+            # ⚠️ HARD CONSTRAINT: Never mark success unless all sanity checks pass
+            if refresh_outcome != "success":
+                results['success'] = False
+                self.logger.warning(f"⚠️ Refresh outcome is {refresh_outcome} - NOT marking as successful")
+            else:
+                results['success'] = True
+                self.logger.info("✅ All sanity checks passed - refresh is successful")
             
             if orchestrator_result.get('success'):
                 summary = orchestrator_result.get('summary', {})
@@ -204,19 +260,37 @@ class RefreshService:
                     f"✅ Supplier Invoices: {supplier_invoices:,} invoices"
                 ])
                 
+                # Add sanity check results to messages
+                if refresh_outcome == "partial":
+                    failed_branches = [
+                        name for name, status in sanity_results["branches"].items()
+                        if status["status"] == "failed"
+                    ]
+                    results['messages'].append(f"⚠️ Partial refresh: {len(failed_branches)} branch(es) failed sanity checks")
+                elif refresh_outcome == "failed":
+                    results['messages'].append("❌ Refresh failed: All branches failed sanity checks")
+                
                 results['summary'] = summary
                 results['duration'] = orchestrator_result.get('duration', 'Unknown')
+                results['refresh_outcome'] = refresh_outcome
+                results['sanity_results'] = sanity_results
                 
-                self.logger.info(f"✅ Refresh completed successfully in {orchestrator_result.get('duration', 'Unknown')}")
-                
-                # Materialized views removed - no refresh needed
-                # Data is always fresh via stock_snapshot() function
+                self.logger.info(f"📊 Refresh outcome: {refresh_outcome}")
                 self.logger.info(f"📊 Summary: Stock={stock_records:,}, Orders={purchase_orders + branch_orders:,}, Invoices={supplier_invoices:,}")
             else:
                 results['success'] = False
                 error_msg = orchestrator_result.get('message', 'Unknown error')
                 results['messages'].append(f"❌ Refresh failed: {error_msg}")
+                results['refresh_outcome'] = "failed"
                 self.logger.error(f"❌ Refresh failed: {error_msg}")
+            
+            # Update refresh status with outcome and branch/report status
+            RefreshStatusService.set_refresh_complete(
+                success=(refresh_outcome == "success"),
+                refresh_outcome=refresh_outcome,
+                branches=sanity_results["branches"],
+                reports=sanity_results["reports"]
+            )
             
             return results
             

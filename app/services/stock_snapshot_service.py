@@ -142,19 +142,21 @@ class StockSnapshotService:
                 
                 target_total_pieces = self.parse_stock_string(target_stock_string, pack_size)
                 
-                # Get AMC in pieces (adjusted_amc from inventory_analysis_new is in PIECES)
-                # SQL function returns it as "adjusted_amc_packs" but value is actually in pieces
-                # GROUND TRUTH: inventory_analysis_new.adjusted_amc is AMC IN PIECES (REAL)
-                adjusted_amc_raw = row_dict.get('adjusted_amc_packs', 0)
+                # Get AMC in packs (adjusted_amc from inventory_analysis_new is stored in PACKS)
+                # Convert to pieces exactly once for stock calculations
+                adjusted_amc_packs_raw = row_dict.get('adjusted_amc_packs', 0)
                 # Handle Decimal type from PostgreSQL
-                if hasattr(adjusted_amc_raw, '__float__'):
-                    amc_pieces = float(adjusted_amc_raw)
+                if hasattr(adjusted_amc_packs_raw, '__float__'):
+                    adjusted_amc_packs = float(adjusted_amc_packs_raw)
                 else:
-                    amc_pieces = float(adjusted_amc_raw) if adjusted_amc_raw else 0.0
+                    adjusted_amc_packs = float(adjusted_amc_packs_raw) if adjusted_amc_packs_raw else 0.0
+                
+                # Convert AMC from packs to pieces for stock percentage calculation
+                amc_pieces = adjusted_amc_packs * pack_size
                 
                 # CRITICAL: Calculate stock_level_pct ONCE here - this is the ONLY place it's calculated
-                # Formula: stock_level_pct = (branch_stock_pieces / adjusted_amc) * 100
-                # adjusted_amc is already in PIECES - do NOT divide by pack_size
+                # Formula: stock_level_pct = (target_total_pieces / amc_pieces) * 100
+                # Both values must be in PIECES for correct calculation
                 if amc_pieces <= 0:
                     stock_level_pct = 0.0
                 else:
@@ -168,8 +170,8 @@ class StockSnapshotService:
                 if len(processed_results) < 3:
                     logger.info(f"Stock level calc: item={row_dict.get('item_code')}, "
                                f"stock_string={target_stock_string}, pack_size={pack_size}, "
-                               f"target_pieces={target_total_pieces}, amc_pieces={amc_pieces}, "
-                               f"stock_level_pct={stock_level_pct}%")
+                               f"target_pieces={target_total_pieces}, adjusted_amc_packs={adjusted_amc_packs}, "
+                               f"amc_pieces={amc_pieces}, stock_level_pct={stock_level_pct}%")
                     # Verify calculation
                     expected = (target_total_pieces / amc_pieces) * 100 if amc_pieces > 0 else 0.0
                     logger.info(f"   Verification: ({target_total_pieces} pieces / {amc_pieces} pieces) * 100 = {expected:.2f}%")
@@ -183,8 +185,8 @@ class StockSnapshotService:
                 
                 # Add computed fields for compatibility
                 row_dict['target_total_pieces'] = target_total_pieces
-                row_dict['amc_pieces'] = amc_pieces  # adjusted_amc is already in pieces
-                # Do NOT convert AMC to packs here - that's DISPLAY ONLY in StockViewServicePostgres
+                row_dict['amc_pieces'] = amc_pieces  # AMC in pieces (converted from packs)
+                row_dict['adjusted_amc_packs'] = adjusted_amc_packs  # Store original packs value for display
                 
                 processed_results.append(row_dict)
             

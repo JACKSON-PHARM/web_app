@@ -52,7 +52,7 @@ class DatabaseFetcherOrchestrator:
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
     
-    def run_stock_fetcher(self) -> Dict:
+    def run_stock_fetcher(self, refresh_started: Optional[str] = None) -> Dict:
         """Run stock position fetcher"""
         self._update_progress("Starting Stock Position Sync...", 0.0)
         try:
@@ -62,7 +62,12 @@ class DatabaseFetcherOrchestrator:
                 db_manager=self.base_fetcher.db_manager,
                 credential_manager=self.base_fetcher.cred_manager
             )
-            result = fetcher.run()
+            # Use fetch_data instead of run() to get branch-level results
+            if refresh_started:
+                result = fetcher.fetch_data(refresh_started=refresh_started)
+            else:
+                # Fallback to run() for standalone mode
+                result = fetcher.run()
             self.results['stock'] = result
             return result
         except Exception as e:
@@ -260,11 +265,14 @@ class DatabaseFetcherOrchestrator:
         finally:
             self.is_running = False
     
-    def run_all_parallel(self) -> Dict:
+    def run_all_parallel(self, refresh_started: Optional[str] = None) -> Dict:
         """
         Run all fetchers in parallel for faster execution
         Supabase free tier allows concurrent connections, so we can parallelize safely
         This significantly reduces total refresh time
+        
+        Args:
+            refresh_started: ISO timestamp when refresh started (for sanity checks)
         """
         if self.is_running:
             return {"success": False, "message": "Orchestrator is already running"}
@@ -272,6 +280,15 @@ class DatabaseFetcherOrchestrator:
         self.is_running = True
         self.results = {}
         start_time = datetime.now()
+        
+        # Get refresh_started from RefreshStatusService if not provided
+        if not refresh_started:
+            try:
+                from app.services.refresh_status import RefreshStatusService
+                status = RefreshStatusService.get_status()
+                refresh_started = status.get("refresh_started")
+            except Exception as e:
+                self.base_fetcher.logger.warning(f"Could not get refresh_started from RefreshStatusService: {e}")
         
         try:
             self._update_progress("=" * 70)
@@ -303,8 +320,8 @@ class DatabaseFetcherOrchestrator:
                         results[fetcher_name] = {"success": False, "message": str(e)}
                     self._update_progress(f"❌ {fetcher_name} failed: {str(e)}")
             
-            # Start all main fetchers in parallel
-            t1 = threading.Thread(target=run_with_result, args=("stock", self.run_stock_fetcher), daemon=False)
+            # Start all main fetchers in parallel (pass refresh_started to stock fetcher)
+            t1 = threading.Thread(target=run_with_result, args=("stock", lambda: self.run_stock_fetcher(refresh_started)), daemon=False)
             t2 = threading.Thread(target=run_with_result, args=("orders", self.run_orders_fetcher), daemon=False)
             t3 = threading.Thread(target=run_with_result, args=("supplier_invoices", self.run_supplier_invoices_fetcher), daemon=False)
             

@@ -35,7 +35,10 @@ class RefreshStatusService:
             "is_uploading": False,
             "upload_progress": None,
             "upload_message": None,
-            "upload_size_mb": None
+            "upload_size_mb": None,
+            "refresh_outcome": None,  # "success" | "partial" | "failed"
+            "branches": {},  # {"BranchName": {"status": "success|failed", "reason": "..."}}
+            "reports": {}  # {"stock": "success|partial|failed", "orders": "success|partial|failed", ...}
         }
     
     @staticmethod
@@ -54,16 +57,54 @@ class RefreshStatusService:
         RefreshStatusService._save_status(status)
     
     @staticmethod
-    def set_refresh_complete(success: bool = True, message: Optional[str] = None):
-        """Mark refresh as complete"""
+    def set_refresh_complete(success: bool = True, message: Optional[str] = None,
+                            refresh_outcome: Optional[str] = None,
+                            branches: Optional[Dict] = None,
+                            reports: Optional[Dict] = None):
+        """
+        Mark refresh as complete
+        
+        ⚠️ HARD CONSTRAINT: Never call set_refresh_complete(success=True) unless all sanity checks pass.
+        Fetch success ≠ data correctness. Sanity validation is mandatory before marking success.
+        
+        Args:
+            success: Whether refresh completed (deprecated - use refresh_outcome instead)
+            message: Optional message
+            refresh_outcome: "success" | "partial" | "failed"
+            branches: Branch-level status {"BranchName": {"status": "success|failed", "reason": "..."}}
+            reports: Report-level status {"stock": "success|partial|failed", "orders": "success|partial|failed", ...}
+        """
         status = RefreshStatusService.get_status()
         status["is_refreshing"] = False
         # Keep refresh_started for a bit to check if DB was modified
         # It will be cleared on next refresh start
         status["refresh_message"] = None
         
-        if success:
+        # Set refresh outcome (mandatory for sanity-aware refresh)
+        if refresh_outcome:
+            status["refresh_outcome"] = refresh_outcome
+        elif success:
+            # Legacy mode: if no refresh_outcome provided, infer from success
+            # But warn that this should not be used for sanity-aware refresh
+            status["refresh_outcome"] = "success"
+            logger.warning("⚠️ set_refresh_complete called with success=True but no refresh_outcome - using legacy mode")
+        else:
+            status["refresh_outcome"] = "failed"
+        
+        # Set branch-level status
+        if branches:
+            status["branches"] = branches
+        
+        # Set report-level status
+        if reports:
+            status["reports"] = reports
+        
+        # Only update last_refresh if refresh was successful (all sanity checks passed)
+        if status["refresh_outcome"] == "success":
             status["last_refresh"] = datetime.now().isoformat()
+        else:
+            # Don't update last_refresh on partial/failed - data is not trustworthy
+            logger.warning(f"⚠️ Refresh outcome is {status['refresh_outcome']} - not updating last_refresh timestamp")
         
         RefreshStatusService._save_status(status)
     

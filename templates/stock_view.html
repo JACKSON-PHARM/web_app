@@ -1500,25 +1500,73 @@
             }
             
             // Auto-select items that need ordering
-            // Criteria: low stock level (< 50%), has AMC, has ABC class, supplier has stock
+            // Criteria: 
+            // 1. Stock level below threshold (A=50%, B=30%, C=25%)
+            // 2. Has valid ABC class (A, B, or C only)
+            // 3. Has AMC > 0
+            // 4. Source branch has enough stock (supplier_stock >= order quantity)
+            // 5. Not ordered in past 14 days
             const autoSelectedItems = window.stockViewData.filter(item => {
-                // stock_level_pct is already a percentage (0-100), NOT a decimal (0-1)
+                // Get basic item data
                 const stockLevel = parseFloat(item.stock_level_pct) || 0;
-                const amc = parseFloat(item.amc) || 0;
-                const abcClass = (item.abc_class || '').trim();
+                const amcPieces = parseFloat(item.amc) || 0;
+                const abcClass = (item.abc_class || '').trim().toUpperCase();
                 const supplierStock = parseFloat(item.supplier_stock) || 0;
                 const packSize = parseFloat(item.pack_size) || 1;
+                
+                // Convert AMC from pieces to packs (order quantity will be AMC in packs)
+                const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
                 const supplierStockPacks = packSize > 0 ? supplierStock / packSize : 0;
                 
-                // Auto-select if:
-                // 1. Stock level is low (< 50% of ideal)
-                // 2. Has valid ABC class
-                // 3. Has AMC > 0
-                // 4. Supplier has stock available
-                return stockLevel < 50 && 
-                       ['A', 'B', 'C'].includes(abcClass) && 
-                       amc > 0 && 
-                       supplierStockPacks > 0;
+                // 1. Check ABC class - must be A, B, or C
+                if (!['A', 'B', 'C'].includes(abcClass)) {
+                    return false;
+                }
+                
+                // 2. Check AMC > 0
+                if (amcPacks <= 0) {
+                    return false;
+                }
+                
+                // 3. Check stock level threshold based on ABC class
+                let threshold = 0;
+                if (abcClass === 'A') {
+                    threshold = 50;
+                } else if (abcClass === 'B') {
+                    threshold = 30;
+                } else if (abcClass === 'C') {
+                    threshold = 25;
+                }
+                
+                if (stockLevel >= threshold) {
+                    return false; // Stock level is above threshold, don't select
+                }
+                
+                // 4. Check if source branch has enough stock (must be >= order quantity/AMC)
+                // The order quantity will be approximately AMC in packs, so source must have at least that much
+                if (supplierStockPacks < amcPacks) {
+                    return false; // Not enough stock in source branch
+                }
+                
+                // 5. Check if item was ordered in the past 14 days
+                const lastOrderDateStr = item.last_order_date;
+                if (lastOrderDateStr) {
+                    try {
+                        const lastOrderDate = new Date(lastOrderDateStr);
+                        const today = new Date();
+                        const daysSinceOrder = Math.floor((today - lastOrderDate) / (1000 * 60 * 60 * 24));
+                        
+                        if (daysSinceOrder < 14) {
+                            return false; // Ordered within last 14 days, don't select
+                        }
+                    } catch (e) {
+                        // If date parsing fails, continue (don't filter out)
+                        console.warn('Could not parse last_order_date for item:', item.item_code, lastOrderDateStr);
+                    }
+                }
+                
+                // All criteria passed
+                return true;
             });
             
             if (autoSelectedItems.length === 0) {
@@ -1529,7 +1577,12 @@
             // Show confirmation dialog
             const confirmed = confirm(
                 `Auto-selected ${autoSelectedItems.length} items based on stock levels.\n\n` +
-                `Criteria: Stock level < 50%, has ABC class, has AMC, supplier has stock.\n\n` +
+                `Criteria:\n` +
+                `- Stock level below threshold (Class A: <50%, Class B: <30%, Class C: <25%)\n` +
+                `- ABC Class: A, B, or C only\n` +
+                `- Has AMC > 0\n` +
+                `- Source branch has sufficient stock (>= order quantity)\n` +
+                `- Not ordered in past 14 days\n\n` +
                 `Proceed with procurement bot?`
             );
             
