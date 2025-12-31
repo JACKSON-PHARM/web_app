@@ -158,16 +158,39 @@ class DatabaseBaseFetcher:
             return creds["base_url"].rstrip("/")
         return "https://corebasebackendnila.co.ke:5019"
 
+    def get_existing_document_numbers(self, company: str, document_type: str) -> set:
+        """
+        Get all existing document numbers for a company and document type.
+        Uses document_number ONLY (not date) for comparison.
+        This is the preferred method for bulk checks before fetching details.
+        
+        Args:
+            company: Company name
+            document_type: Type of document (GRN, PURCHASE, BRANCH, SUPPLIER_INVOICE)
+        
+        Returns:
+            Set of existing document numbers (as strings)
+        """
+        if hasattr(self.db_manager, 'get_existing_document_numbers'):
+            return self.db_manager.get_existing_document_numbers(company, document_type)
+        else:
+            # Fallback: return empty set if method not available
+            self.logger.warning(f"get_existing_document_numbers not available, returning empty set")
+            return set()
+    
     def is_document_processed(self, company: str, document_type: str, 
                             document_number: str, document_date: str) -> bool:
-        """Check if a document is already processed"""
+        """
+        Check if a document is already processed.
+        NOTE: For bulk checks, prefer get_existing_document_numbers() for better performance.
+        """
         return self.db_manager.is_document_processed(
             self.script_name, company, document_type, document_number, document_date
         )
 
     def mark_document_processed(self, company: str, document_type: str,
                                document_number: str, document_date: str) -> bool:
-        """Mark a document as processed"""
+        """Mark a document as processed (compatibility method - no-op for PostgreSQL)"""
         return self.db_manager.mark_document_processed(
             self.script_name, company, document_type, document_number, document_date
         )

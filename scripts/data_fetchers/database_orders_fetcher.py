@@ -164,7 +164,10 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
         return formatted
 
     def process_single_order(self, args) -> Optional[Dict]:
-        """Process a single order"""
+        """
+        Process a single order.
+        NOTE: This is called only for orders that are NOT in the database (pre-filtered).
+        """
         order_type, branch_info, session, token, order = args
         
         try:
@@ -174,14 +177,7 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
                 
             order_date = self.safe_date_parse(order.get("docDate"))
             
-            # Check if already processed
-            if self.is_document_processed(
-                branch_info["company"], order_type.upper(), doc_num, 
-                self.format_date_for_db(order_date)
-            ):
-                return None
-            
-            # Get order details
+            # Get order details (LAYER 2: DETAIL FETCH - only for new documents)
             order_number = doc_num if order_type == "purchase" else order.get("bordeR_num")
             if not order_number:
                 return None
@@ -226,7 +222,7 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
             
             self.logger.info(f"📅 {branch_name}: Fetching {order_type} orders from {start_date} to {end_date} (last 30 days)")
             
-            # Get all orders from API
+            # LAYER 1: DISCOVERY - Get all orders from API (list only, no details)
             all_orders = self.get_orders(session, token, order_type, 
                                         branch_info["branch_num"], start_date, end_date)
             
@@ -241,25 +237,27 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
                 self.logger.warning(f"   3. Authentication token might be invalid")
                 return 0
             
-            # Filter out already processed orders
-            unprocessed_orders = []
+            # Extract document numbers from discovered orders
+            discovered_doc_numbers = set()
             for order in all_orders:
                 doc_num = str(order.get("docNumber", "")).strip()
-                if not doc_num:
-                    continue
-                    
-                order_date = self.safe_date_parse(order.get("docDate"))
-                
-                if not self.is_document_processed(
-                    company, order_type.upper(), doc_num, 
-                    self.format_date_for_db(order_date)
-                ):
-                    unprocessed_orders.append(order)
+                if doc_num:
+                    discovered_doc_numbers.add(doc_num)
+            
+            self.logger.info(f"📋 {branch_name}: Discovered {len(discovered_doc_numbers)} unique document numbers")
+            
+            # LAYER 2: BULK CHECK - Get existing document numbers (document_number only, not date)
+            existing_doc_numbers = self.get_existing_document_numbers(company, order_type.upper())
+            
+            # Filter to only new documents (not in database)
+            new_doc_numbers = discovered_doc_numbers - existing_doc_numbers
+            unprocessed_orders = [order for order in all_orders 
+                                if str(order.get("docNumber", "")).strip() in new_doc_numbers]
             
             total_orders = len(all_orders)
             unprocessed_count = len(unprocessed_orders)
             
-            self.logger.info(f"📊 {branch_name}: {total_orders} total orders, {unprocessed_count} new orders to process")
+            self.logger.info(f"📊 {branch_name}: {total_orders} total orders, {len(existing_doc_numbers)} already exist, {unprocessed_count} new orders to process")
             
             if unprocessed_count == 0:
                 self.logger.info(f"🎯 {branch_name}: All {total_orders} orders already processed")
@@ -285,11 +283,8 @@ class DatabaseOrdersFetcher(DatabaseBaseFetcher):
                                 saved_count = self.db_manager.insert_branch_orders(result['order_data'])
                             
                             if saved_count > 0:
-                                # Mark as processed
-                                self.mark_document_processed(
-                                    result['company'], result['order_type'].upper(), 
-                                    result['doc_num'], self.format_date_for_db(result['order_date'])
-                                )
+                                # Document is automatically tracked by presence in database
+                                # No need to mark separately (idempotent insert handles duplicates)
                                 total_processed += 1
                                 self.logger.info(f"💾 Saved order {result['doc_num']} ({saved_count} lines)")
                                 

@@ -170,7 +170,7 @@ async def trigger_manual_refresh(
 ):
     """
     Trigger manual refresh - can run specific fetchers or all fetchers
-    Runs in background and refreshes materialized views after completion
+    Runs in background and updates database with fresh data
     If empty body {} is sent, all fields will be None and all fetchers will run
     """
     try:

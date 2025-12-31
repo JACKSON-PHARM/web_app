@@ -165,7 +165,10 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
         return formatted
 
     def process_single_supplier_invoice(self, args) -> Optional[Dict]:
-        """Process single supplier invoice"""
+        """
+        Process single supplier invoice.
+        NOTE: This is called only for invoices that are NOT in the database (pre-filtered).
+        """
         branch_info, session, token, invoice = args
         
         try:
@@ -174,13 +177,6 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
                 return None
                 
             invoice_date = self.safe_date_parse(invoice.get("docDate"))
-            
-            # Check if already processed
-            if self.is_document_processed(
-                branch_info["company"], "SUPPLIER_INVOICE", doc_num, 
-                self.format_date_for_db(invoice_date)
-            ):
-                return None
             
             # Extract invoice number from document number (like standalone script)
             invoice_num_str = self.extract_invoice_number(doc_num)
@@ -204,7 +200,7 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
                     self.logger.warning(f"Could not extract invoice number from {doc_num}")
                     return None
             
-            # Get invoice details using invoice number
+            # LAYER 2: DETAIL FETCH - Get invoice details (only for new documents)
             details = self.get_supplier_invoice_details(session, token, 
                                                        branch_info["branch_num"], invoice_num)
             
@@ -258,30 +254,27 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
             
             self.logger.info(f"📥 Retrieved {len(all_invoices)} invoices from API for {branch_name} (branch_num={branch_num})")
             
-            # Log sample invoice if available
-            if len(all_invoices) > 0:
-                sample = all_invoices[0]
-                self.logger.debug(f"Sample invoice: docNumber={sample.get('docNumber')}, docDate={sample.get('docDate')}")
-            
-            # Filter out already processed invoices
-            unprocessed_invoices = []
+            # Extract document numbers from discovered invoices
+            discovered_doc_numbers = set()
             for invoice in all_invoices:
                 doc_num = str(invoice.get("docNumber", "")).strip()
-                if not doc_num:
-                    continue
-                    
-                invoice_date = self.safe_date_parse(invoice.get("docDate"))
-                
-                if not self.is_document_processed(
-                    company, "SUPPLIER_INVOICE", doc_num, 
-                    self.format_date_for_db(invoice_date)
-                ):
-                    unprocessed_invoices.append(invoice)
+                if doc_num:
+                    discovered_doc_numbers.add(doc_num)
+            
+            self.logger.info(f"📋 {branch_name}: Discovered {len(discovered_doc_numbers)} unique document numbers")
+            
+            # LAYER 2: BULK CHECK - Get existing document numbers (document_number only, not date)
+            existing_doc_numbers = self.get_existing_document_numbers(company, "SUPPLIER_INVOICE")
+            
+            # Filter to only new documents (not in database)
+            new_doc_numbers = discovered_doc_numbers - existing_doc_numbers
+            unprocessed_invoices = [invoice for invoice in all_invoices 
+                                  if str(invoice.get("docNumber", "")).strip() in new_doc_numbers]
             
             total_invoices = len(all_invoices)
             unprocessed_count = len(unprocessed_invoices)
             
-            self.logger.info(f"📊 {branch_name}: {total_invoices} total invoices, {unprocessed_count} new invoices to process")
+            self.logger.info(f"📊 {branch_name}: {total_invoices} total invoices, {len(existing_doc_numbers)} already exist, {unprocessed_count} new invoices to process")
             
             if unprocessed_count == 0:
                 self.logger.info(f"🎯 {branch_name}: All {total_invoices} invoices already processed")
@@ -306,12 +299,8 @@ class DatabaseSupplierInvoicesFetcher(DatabaseBaseFetcher):
                             saved_count = self.db_manager.insert_supplier_invoices(result['invoice_data'])
                             
                             if saved_count > 0:
-                                # Mark as processed
-                                self.mark_document_processed(
-                                    result['company'], "SUPPLIER_INVOICE", 
-                                    result['doc_num'], 
-                                    self.format_date_for_db(result['invoice_date'])
-                                )
+                                # Document is automatically tracked by presence in database
+                                # No need to mark separately (idempotent insert handles duplicates)
                                 total_processed += 1
                                 self.logger.info(f"💾 Saved supplier invoice {result['doc_num']} ({saved_count} lines)")
                                 

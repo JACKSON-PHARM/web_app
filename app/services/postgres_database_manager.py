@@ -399,9 +399,98 @@ class PostgresDatabaseManager:
             
             # Use staging table for atomic replacement
             if replace_all:
-                # Step 1: Clear staging table
-                cursor.execute("TRUNCATE TABLE current_stock_staging")
-                self.logger.info("🧹 Cleared staging table for atomic stock refresh")
+                # Step 1: Ensure staging table exists (create if it doesn't)
+                # Handle race condition: multiple processes might try to create it simultaneously
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'current_stock_staging'
+                    )
+                """)
+                staging_exists = cursor.fetchone()[0]
+                
+                if not staging_exists:
+                    self.logger.info("🔧 Creating current_stock_staging table (doesn't exist)...")
+                    try:
+                        # Get the structure of current_stock and create staging table with same structure
+                        # Note: We don't copy PRIMARY KEY constraints - staging table is temporary for bulk inserts
+                        cursor.execute("""
+                            SELECT column_name, data_type, column_default, is_nullable
+                            FROM information_schema.columns 
+                            WHERE table_name = 'current_stock' 
+                            AND table_schema = 'public'
+                            ORDER BY ordinal_position
+                        """)
+                        current_stock_columns = cursor.fetchall()
+                        
+                        if not current_stock_columns:
+                            raise ValueError("current_stock table doesn't exist - cannot create staging table")
+                        
+                        # Build CREATE TABLE statement (without PRIMARY KEY - staging table doesn't need it)
+                        col_defs = []
+                        for col_name, data_type, col_default, is_nullable in current_stock_columns:
+                            col_def = f'"{col_name}" {data_type}'
+                            if is_nullable == 'NO' and col_name != 'id':  # id can be nullable in staging (will be generated)
+                                col_def += ' NOT NULL'
+                            elif col_name == 'id':
+                                # For id column, make it nullable in staging (will be auto-generated when copying to main)
+                                col_def += ' NULL'
+                            if col_default and col_name != 'id':  # Don't copy id default to staging
+                                col_def += f' DEFAULT {col_default}'
+                            col_defs.append(col_def)
+                        
+                        create_staging_sql = f"""
+                            CREATE TABLE current_stock_staging (
+                                {', '.join(col_defs)}
+                            )
+                        """
+                        cursor.execute(create_staging_sql)
+                        conn.commit()
+                        self.logger.info("✅ Created current_stock_staging table with same structure as current_stock")
+                    except Exception as create_error:
+                        # Handle race condition: another process might have created it
+                        error_msg = str(create_error).lower()
+                        if 'already exists' in error_msg or 'duplicate key' in error_msg or 'pg_type_typname_nsp_index' in error_msg:
+                            self.logger.info("ℹ️ Staging table was created by another process (race condition) - continuing...")
+                            conn.rollback()
+                            # Verify it exists now
+                            cursor.execute("""
+                                SELECT EXISTS (
+                                    SELECT FROM information_schema.tables 
+                                    WHERE table_schema = 'public' 
+                                    AND table_name = 'current_stock_staging'
+                                )
+                            """)
+                            if cursor.fetchone()[0]:
+                                self.logger.info("✅ Staging table exists - proceeding with insert")
+                            else:
+                                raise ValueError("Staging table creation failed and table doesn't exist")
+                        else:
+                            # Some other error - re-raise it
+                            conn.rollback()
+                            raise
+                
+                # Step 2: Clear staging table (whether we just created it or it already existed)
+                try:
+                    cursor.execute("TRUNCATE TABLE current_stock_staging")
+                    self.logger.info("🧹 Cleared staging table for atomic stock refresh")
+                except Exception as truncate_error:
+                    # If truncate fails, the table might not exist or might be locked
+                    self.logger.warning(f"⚠️ Could not truncate staging table: {truncate_error}")
+                    # Try to verify table exists
+                    cursor.execute("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = 'public' 
+                            AND table_name = 'current_stock_staging'
+                        )
+                    """)
+                    if not cursor.fetchone()[0]:
+                        raise ValueError("Staging table does not exist and could not be created")
+                    # If it exists, continue anyway - might have data from previous run
+                    self.logger.info("ℹ️ Staging table exists - proceeding (may contain old data)")
+                
                 target_table = "current_stock_staging"
             else:
                 # Append mode - insert directly into main table
@@ -570,9 +659,25 @@ class PostgresDatabaseManager:
                 # If using staging table, atomically swap it with main table
                 if replace_all and target_table == "current_stock_staging":
                     # Atomic swap: staging -> main (transaction ensures atomicity)
+                    # Exclude 'id' column - it will be auto-generated in main table
                     self.logger.info(f"🔄 Swapping staging table to main (atomic operation)...")
                     cursor.execute("TRUNCATE TABLE current_stock")
-                    cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
+                    # Get all columns from staging except 'id'
+                    cursor.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'current_stock_staging' 
+                        AND table_schema = 'public'
+                        AND column_name != 'id'
+                        ORDER BY ordinal_position
+                    """)
+                    staging_columns = [row[0] for row in cursor.fetchall()]
+                    if staging_columns:
+                        columns_str = ', '.join([f'"{col}"' for col in staging_columns])
+                        cursor.execute(f"INSERT INTO current_stock ({columns_str}) SELECT {columns_str} FROM current_stock_staging")
+                    else:
+                        # Fallback: use SELECT * if no columns found (shouldn't happen)
+                        cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
                     swap_count = cursor.rowcount
                     self.logger.info(f"✅ Atomically swapped {swap_count:,} records from staging to main table")
                 
@@ -620,9 +725,25 @@ class PostgresDatabaseManager:
                 # If using staging table, atomically swap it with main table
                 if replace_all and target_table == "current_stock_staging":
                     # Atomic swap: staging -> main (transaction ensures atomicity)
+                    # Exclude 'id' column - it will be auto-generated in main table
                     self.logger.info(f"🔄 Swapping staging table to main (atomic operation)...")
                     cursor.execute("TRUNCATE TABLE current_stock")
-                    cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
+                    # Get all columns from staging except 'id'
+                    cursor.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'current_stock_staging' 
+                        AND table_schema = 'public'
+                        AND column_name != 'id'
+                        ORDER BY ordinal_position
+                    """)
+                    staging_columns = [row[0] for row in cursor.fetchall()]
+                    if staging_columns:
+                        columns_str = ', '.join([f'"{col}"' for col in staging_columns])
+                        cursor.execute(f"INSERT INTO current_stock ({columns_str}) SELECT {columns_str} FROM current_stock_staging")
+                    else:
+                        # Fallback: use SELECT * if no columns found (shouldn't happen)
+                        cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
                     swap_count = cursor.rowcount
                     self.logger.info(f"✅ Atomically swapped {swap_count:,} records from staging to main table")
                 
@@ -635,8 +756,13 @@ class PostgresDatabaseManager:
             
         except Exception as e:
             self.logger.error(f"❌ Failed to insert current_stock: {e}")
+            import traceback
+            self.logger.error(f"   Traceback: {traceback.format_exc()}")
             if conn:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except:
+                    pass
             return 0
         finally:
             if conn:
@@ -992,17 +1118,69 @@ class PostgresDatabaseManager:
         }
         return unique_constraints.get(table_name, [])
     
+    def get_existing_document_numbers(self, company: str, document_type: str) -> set:
+        """
+        Get all existing document numbers for a company and document type.
+        Uses document_number ONLY (not date) for comparison.
+        
+        Args:
+            company: Company name
+            document_type: Type of document (GRN, PURCHASE, BRANCH, SUPPLIER_INVOICE)
+        
+        Returns:
+            Set of existing document numbers (as strings)
+        """
+        # Map document types to table names
+        table_mapping = {
+            'GRN': 'grns',
+            'PURCHASE': 'purchase_orders',
+            'BRANCH': 'branch_orders',
+            'SUPPLIER_INVOICE': 'supplier_invoices',
+        }
+        
+        table_name = table_mapping.get(document_type.upper())
+        if not table_name:
+            self.logger.warning(f"⚠️ Unknown document type: {document_type}")
+            return set()
+        
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Get all document numbers for this company and type (document_number only, no date)
+            query = f"""
+                SELECT DISTINCT document_number 
+                FROM {table_name} 
+                WHERE company = %s
+            """
+            
+            cursor.execute(query, (company,))
+            results = cursor.fetchall()
+            # Return set of document numbers (as strings, stripped)
+            return {str(row[0]).strip() for row in results if row[0]}
+            
+        except Exception as e:
+            # If table doesn't exist or query fails, return empty set
+            self.logger.debug(f"Error getting existing document numbers: {e}")
+            return set()
+        finally:
+            if conn:
+                cursor.close()
+                self.put_connection(conn)
+    
     def is_document_processed(self, script_name: str, company: str, document_type: str,
                              document_number: str, document_date: str) -> bool:
         """
         Check if a document is already processed in the database
+        NOTE: For performance, prefer get_existing_document_numbers() for bulk checks
         
         Args:
             script_name: Name of the script/fetcher (not used, kept for compatibility)
             company: Company name
             document_type: Type of document (GRN, PURCHASE, BRANCH, SUPPLIER_INVOICE)
             document_number: Document number
-            document_date: Document date (YYYY-MM-DD format)
+            document_date: Document date (YYYY-MM-DD format) - kept for compatibility but not used in comparison
         
         Returns:
             True if document exists, False otherwise
@@ -1025,39 +1203,14 @@ class PostgresDatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Check if document exists based on table structure
-            if table_name == 'grns':
-                # GRNs table: check by company, document_number, and document_date
-                query = """
-                    SELECT 1 FROM grns 
-                    WHERE company = %s AND document_number = %s AND document_date = %s 
-                    LIMIT 1
-                """
-            elif table_name == 'purchase_orders':
-                # Purchase orders: check by company, document_number, and document_date
-                query = """
-                    SELECT 1 FROM purchase_orders 
-                    WHERE company = %s AND document_number = %s AND document_date = %s 
-                    LIMIT 1
-                """
-            elif table_name == 'branch_orders':
-                # Branch orders: check by company, document_number, and document_date
-                query = """
-                    SELECT 1 FROM branch_orders 
-                    WHERE company = %s AND document_number = %s AND document_date = %s 
-                    LIMIT 1
-                """
-            elif table_name == 'supplier_invoices':
-                # Supplier invoices: check by company, document_number, and document_date
-                query = """
-                    SELECT 1 FROM supplier_invoices 
-                    WHERE company = %s AND document_number = %s AND document_date = %s 
-                    LIMIT 1
-                """
-            else:
-                return False
+            # Check by document_number ONLY (not date) - per requirements
+            query = f"""
+                SELECT 1 FROM {table_name} 
+                WHERE company = %s AND document_number = %s 
+                LIMIT 1
+            """
             
-            cursor.execute(query, (company, document_number, document_date))
+            cursor.execute(query, (company, document_number))
             result = cursor.fetchone()
             return result is not None
             

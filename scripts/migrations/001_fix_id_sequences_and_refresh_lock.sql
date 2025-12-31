@@ -104,7 +104,8 @@ CREATE TABLE IF NOT EXISTS refresh_lock (
 CREATE INDEX IF NOT EXISTS idx_refresh_lock_type ON refresh_lock(lock_type);
 CREATE INDEX IF NOT EXISTS idx_refresh_lock_expires ON refresh_lock(expires_at) WHERE status = 'active';
 
--- Function to acquire refresh lock (returns true if acquired, false if already locked)
+-- Function to acquire refresh lock using Postgres advisory lock (pg_advisory_lock)
+-- Uses a fixed lock ID (12345) for global refresh lock - works across all processes/workers
 CREATE OR REPLACE FUNCTION acquire_refresh_lock(
     p_lock_type TEXT DEFAULT 'global',
     p_locked_by TEXT DEFAULT 'unknown',
@@ -112,23 +113,36 @@ CREATE OR REPLACE FUNCTION acquire_refresh_lock(
 ) RETURNS BOOLEAN AS $$
 DECLARE
     v_expires_at TIMESTAMP;
-    v_existing RECORD;
+    v_lock_id BIGINT;
+    v_lock_acquired BOOLEAN;
 BEGIN
+    -- Use a fixed lock ID based on lock_type (hash to bigint)
+    -- Global lock uses ID 12345, other types use different IDs
+    IF p_lock_type = 'global' THEN
+        v_lock_id := 12345;
+    ELSE
+        -- Hash lock_type to a bigint (simple hash)
+        v_lock_id := abs(hashtext(p_lock_type))::BIGINT;
+    END IF;
+    
+    -- Try to acquire Postgres advisory lock (non-blocking)
+    -- pg_try_advisory_lock returns true if acquired, false if already held
+    SELECT pg_try_advisory_lock(v_lock_id) INTO v_lock_acquired;
+    
+    IF NOT v_lock_acquired THEN
+        -- Lock is already held by another process
+        RETURN FALSE;
+    END IF;
+    
+    -- Lock acquired - record in refresh_lock table for monitoring
+    v_expires_at := NOW() + (p_timeout_seconds || ' seconds')::INTERVAL;
+    
     -- Clean up expired locks first
     DELETE FROM refresh_lock 
     WHERE status = 'active' 
     AND expires_at < NOW();
     
-    -- Try to acquire lock
-    SELECT * INTO v_existing 
-    FROM refresh_lock 
-    WHERE lock_type = p_lock_type 
-    AND status = 'active'
-    FOR UPDATE NOWAIT;
-    
-    -- If we get here, no active lock exists
-    v_expires_at := NOW() + (p_timeout_seconds || ' seconds')::INTERVAL;
-    
+    -- Record lock acquisition
     INSERT INTO refresh_lock (lock_type, locked_by, locked_at, expires_at, status)
     VALUES (p_lock_type, p_locked_by, NOW(), v_expires_at, 'active')
     ON CONFLICT (lock_type) DO UPDATE
@@ -138,26 +152,29 @@ BEGIN
         status = 'active';
     
     RETURN TRUE;
-    
-EXCEPTION
-    WHEN lock_not_available THEN
-        -- Lock is already held by another process
-        RETURN FALSE;
-    WHEN unique_violation THEN
-        -- Race condition - another process just acquired it
-        RETURN FALSE;
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to release refresh lock
+-- Function to release refresh lock (releases Postgres advisory lock)
 CREATE OR REPLACE FUNCTION release_refresh_lock(
     p_lock_type TEXT DEFAULT 'global',
     p_locked_by TEXT DEFAULT NULL
 ) RETURNS BOOLEAN AS $$
 DECLARE
     v_updated INTEGER;
+    v_lock_id BIGINT;
 BEGIN
-    -- Release lock (only if locked by the same process, or if p_locked_by is NULL)
+    -- Use same lock ID as acquire_refresh_lock
+    IF p_lock_type = 'global' THEN
+        v_lock_id := 12345;
+    ELSE
+        v_lock_id := abs(hashtext(p_lock_type))::BIGINT;
+    END IF;
+    
+    -- Release Postgres advisory lock
+    PERFORM pg_advisory_unlock(v_lock_id);
+    
+    -- Update refresh_lock table for monitoring
     IF p_locked_by IS NULL THEN
         UPDATE refresh_lock 
         SET status = 'completed', expires_at = NOW()
@@ -172,30 +189,43 @@ BEGIN
     END IF;
     
     GET DIAGNOSTICS v_updated = ROW_COUNT;
-    RETURN v_updated > 0;
+    RETURN TRUE;  -- Always return true if advisory lock was released
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to check if refresh is locked
+-- Function to check if refresh is locked (checks Postgres advisory lock)
 CREATE OR REPLACE FUNCTION is_refresh_locked(
     p_lock_type TEXT DEFAULT 'global'
 ) RETURNS BOOLEAN AS $$
 DECLARE
     v_exists BOOLEAN;
+    v_lock_id BIGINT;
+    v_lock_held BOOLEAN;
 BEGIN
-    -- Clean up expired locks first
+    -- Use same lock ID as acquire_refresh_lock
+    IF p_lock_type = 'global' THEN
+        v_lock_id := 12345;
+    ELSE
+        v_lock_id := abs(hashtext(p_lock_type))::BIGINT;
+    END IF;
+    
+    -- Check if Postgres advisory lock is held
+    -- pg_advisory_lock_held checks if lock is held by ANY session
+    SELECT pg_advisory_lock_held(v_lock_id) INTO v_lock_held;
+    
+    -- Also check refresh_lock table for monitoring
     DELETE FROM refresh_lock 
     WHERE status = 'active' 
     AND expires_at < NOW();
     
-    -- Check if active lock exists
     SELECT EXISTS(
         SELECT 1 FROM refresh_lock 
         WHERE lock_type = p_lock_type 
         AND status = 'active'
     ) INTO v_exists;
     
-    RETURN v_exists;
+    -- Return true if advisory lock is held OR table shows active lock
+    RETURN v_lock_held OR v_exists;
 END;
 $$ LANGUAGE plpgsql;
 
