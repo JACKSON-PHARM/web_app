@@ -25,13 +25,34 @@ class RefreshService:
         self.logger = logging.getLogger(__name__)
     
     def refresh_all_data(self, companies: Optional[List[str]] = None) -> Dict:
-        """Refresh all data types using DatabaseFetcherOrchestrator"""
+        """
+        Refresh all data types using DatabaseFetcherOrchestrator.
+        Uses database-level locking to prevent concurrent refreshes.
+        """
         results = {
             'success': True,
             'fetchers_run': [],
             'fetchers_failed': [],
             'messages': []
         }
+        
+        # Check if refresh is already running (database-level lock)
+        if hasattr(self.db_manager, 'is_refresh_locked'):
+            if self.db_manager.is_refresh_locked('global'):
+                self.logger.warning("⚠️ Refresh already in progress - skipping duplicate request")
+                results['success'] = False
+                results['messages'].append("⚠️ Refresh already in progress. Please wait for the current refresh to complete.")
+                return results
+        
+        # Acquire refresh lock (database-level, prevents concurrent refreshes)
+        lock_acquired = False
+        if hasattr(self.db_manager, 'acquire_refresh_lock'):
+            lock_acquired = self.db_manager.acquire_refresh_lock('global', timeout_seconds=7200)  # 2 hour timeout
+            if not lock_acquired:
+                self.logger.warning("⚠️ Could not acquire refresh lock - another refresh is running")
+                results['success'] = False
+                results['messages'].append("⚠️ Another refresh is currently running. Please wait for it to complete.")
+                return results
         
         try:
             # Use DatabaseFetcherOrchestrator to run all fetchers properly

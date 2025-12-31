@@ -221,16 +221,123 @@ class PostgresDatabaseManager:
         """Return connection to pool"""
         self.pool.putconn(conn)
     
+    # ============================================================
+    # REFRESH LOCK METHODS (for concurrent refresh safety)
+    # ============================================================
+    
+    def acquire_refresh_lock(self, lock_type: str = 'global', timeout_seconds: int = 3600) -> bool:
+        """
+        Acquire a refresh lock to prevent concurrent refreshes.
+        Returns True if lock acquired, False if already locked.
+        
+        Args:
+            lock_type: Type of lock ('global', 'stock', 'orders', etc.)
+            timeout_seconds: Lock expiration time (default 1 hour)
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Use PostgreSQL function to acquire lock
+            import socket
+            locked_by = f"{socket.gethostname()}-{os.getpid()}"
+            
+            cursor.execute(
+                "SELECT acquire_refresh_lock(%s, %s, %s)",
+                (lock_type, locked_by, timeout_seconds)
+            )
+            acquired = cursor.fetchone()[0]
+            conn.commit()
+            
+            if acquired:
+                self.logger.info(f"🔒 Acquired refresh lock: {lock_type}")
+            else:
+                self.logger.warning(f"⚠️ Refresh lock already held: {lock_type}")
+            
+            return acquired
+        except Exception as e:
+            self.logger.error(f"❌ Failed to acquire refresh lock: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                cursor.close()
+                self.put_connection(conn)
+    
+    def release_refresh_lock(self, lock_type: str = 'global') -> bool:
+        """
+        Release a refresh lock.
+        Returns True if released, False if not found.
+        
+        Args:
+            lock_type: Type of lock to release
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT release_refresh_lock(%s, NULL)", (lock_type,))
+            released = cursor.fetchone()[0]
+            conn.commit()
+            
+            if released:
+                self.logger.info(f"🔓 Released refresh lock: {lock_type}")
+            else:
+                self.logger.warning(f"⚠️ No active lock to release: {lock_type}")
+            
+            return released
+        except Exception as e:
+            self.logger.error(f"❌ Failed to release refresh lock: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                cursor.close()
+                self.put_connection(conn)
+    
+    def is_refresh_locked(self, lock_type: str = 'global') -> bool:
+        """
+        Check if a refresh lock is currently active.
+        Returns True if locked, False if available.
+        
+        Args:
+            lock_type: Type of lock to check
+        """
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT is_refresh_locked(%s)", (lock_type,))
+            is_locked = cursor.fetchone()[0]
+            
+            return is_locked
+        except Exception as e:
+            self.logger.error(f"❌ Failed to check refresh lock: {e}")
+            return False
+        finally:
+            if conn:
+                cursor.close()
+                self.put_connection(conn)
+    
     def insert_current_stock(self, stock_data: List[Dict], replace_all: bool = True) -> int:
         """
-        Insert current stock data - REPLACES ALL existing stock on each refresh (not append)
-        This ensures we maintain only the latest downloaded version, not build on top of old data.
-        Critical for Supabase free tier to avoid exceeding storage limits.
+        Insert current stock data - ATOMIC REPLACEMENT using staging table swap.
+        This ensures current_stock is NEVER empty during refresh.
+        
+        Process:
+        1. Insert all new data into current_stock_staging
+        2. Once successful, atomically swap staging -> main table
+        3. If any step fails, main table remains unchanged
         
         Args:
             stock_data: List of stock records from API
-            replace_all: If True (default), delete ALL existing records first, then insert new ones
-                         This ensures we replace, not append, maintaining only current stock
+            replace_all: If True (default), replace all existing stock (uses staging swap)
+                         If False, append to existing stock
         """
         if not stock_data:
             return 0
@@ -240,17 +347,17 @@ class PostgresDatabaseManager:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Track if we've deleted (for rollback scenarios)
-            deleted_count = 0
+            # Use staging table for atomic replacement
             if replace_all:
-                # Clear all existing stock data first
-                cursor.execute("DELETE FROM current_stock")
-                deleted_count = cursor.rowcount
-                if deleted_count > 0:
-                    self.logger.info(f"🗑️ Cleared {deleted_count} existing stock records")
+                # Step 1: Clear staging table
+                cursor.execute("TRUNCATE TABLE current_stock_staging")
+                self.logger.info("🧹 Cleared staging table for atomic stock refresh")
+                target_table = "current_stock_staging"
+            else:
+                # Append mode - insert directly into main table
+                target_table = "current_stock"
             
-            # First, get the actual table schema to ensure we're inserting the right columns
-            # Check if id column is auto-increment (SERIAL/BIGSERIAL) or has a default
+            # Get schema from target table (main or staging - they have same structure)
             cursor.execute("""
                 SELECT 
                     column_name, 
@@ -258,19 +365,19 @@ class PostgresDatabaseManager:
                     column_default,
                     is_nullable
                 FROM information_schema.columns 
-                WHERE table_name = 'current_stock' 
+                WHERE table_name = %s 
                 AND table_schema = 'public'
                 ORDER BY ordinal_position
-            """)
+            """, (target_table,))
             schema_info = cursor.fetchall()
             schema_columns = {row[0]: row[1] for row in schema_info}
             column_defaults = {row[0]: row[2] for row in schema_info}
             column_nullable = {row[0]: row[3] for row in schema_info}
             
             if not schema_columns:
-                raise ValueError("current_stock table does not exist or has no columns")
+                raise ValueError(f"{target_table} table does not exist or has no columns")
             
-            self.logger.info(f"📋 current_stock table schema: {list(schema_columns.keys())}")
+            self.logger.info(f"📋 {target_table} table schema: {list(schema_columns.keys())}")
             
             # Get columns from first record and validate against schema
             data_columns = list(stock_data[0].keys())
@@ -379,7 +486,7 @@ class PostgresDatabaseManager:
             placeholders = ', '.join(['%s'] * len(valid_columns))
             
             insert_sql = f"""
-                INSERT INTO current_stock ({column_names}) 
+                INSERT INTO {target_table} ({column_names}) 
                 VALUES ({placeholders})
             """
             
@@ -404,11 +511,21 @@ class PostgresDatabaseManager:
             output.seek(0)
             
             # Use COPY FROM for bulk insert (fastest method - can insert 200k+ records in seconds)
-            copy_sql = f'COPY current_stock ({column_names}) FROM STDIN WITH (FORMAT csv)'
+            copy_sql = f'COPY {target_table} ({column_names}) FROM STDIN WITH (FORMAT csv)'
             
             try:
                 cursor.copy_expert(copy_sql, output)
                 count = cursor.rowcount
+                
+                # If using staging table, atomically swap it with main table
+                if replace_all and target_table == "current_stock_staging":
+                    # Atomic swap: staging -> main (transaction ensures atomicity)
+                    self.logger.info(f"🔄 Swapping staging table to main (atomic operation)...")
+                    cursor.execute("TRUNCATE TABLE current_stock")
+                    cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
+                    swap_count = cursor.rowcount
+                    self.logger.info(f"✅ Atomically swapped {swap_count:,} records from staging to main table")
+                
                 conn.commit()
                 self.logger.info(f"✅ Inserted {count:,} stock records using COPY (fastest method)")
                 return count
@@ -450,11 +567,20 @@ class PostgresDatabaseManager:
                                 if failed_count <= 3:
                                     self.logger.debug(f"Failed to insert stock record {chunk_start + idx}: {record_error}")
                 
+                # If using staging table, atomically swap it with main table
+                if replace_all and target_table == "current_stock_staging":
+                    # Atomic swap: staging -> main (transaction ensures atomicity)
+                    self.logger.info(f"🔄 Swapping staging table to main (atomic operation)...")
+                    cursor.execute("TRUNCATE TABLE current_stock")
+                    cursor.execute("INSERT INTO current_stock SELECT * FROM current_stock_staging")
+                    swap_count = cursor.rowcount
+                    self.logger.info(f"✅ Atomically swapped {swap_count:,} records from staging to main table")
+                
                 conn.commit()
                 if failed_count > 0:
-                    self.logger.warning(f"⚠️ Inserted {count:,} records into current_stock, {failed_count} failed")
+                    self.logger.warning(f"⚠️ Inserted {count:,} records into {target_table}, {failed_count} failed")
                 else:
-                    self.logger.info(f"✅ Inserted {count:,} records into current_stock")
+                    self.logger.info(f"✅ Inserted {count:,} records into {target_table}")
                 return count
             
         except Exception as e:
