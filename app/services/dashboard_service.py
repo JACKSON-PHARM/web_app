@@ -239,7 +239,7 @@ class DashboardService:
             return self._abc_cache
     
     def get_new_arrivals_this_week(self, source_branch: str, source_company: str,
-                                   target_branch: str, target_company: str, limit: int = 50):
+                                   target_branch: str, target_company: str, limit: int = 200):
         """
         Get new arrivals (supplier invoices) from BABA DOGO HQ this week (last 7 days)
         Shows items received at HQ regardless of selected branch, with branch stock info
@@ -478,7 +478,7 @@ class DashboardService:
     
     def get_priority_items_between_branches(self, target_branch: str, target_company: str,
                                             source_branch: str, source_company: str,
-                                            limit: int = 50):
+                                            limit: int = 200):
         """
         Get priority items: Items that are IN STOCK at source branch (HQ) but NOT in selected branch
         and are fast moving (Class A, B, or C)
@@ -951,15 +951,16 @@ class DashboardService:
             source_pack_size = df['source_pack_size'].replace(0, 1).fillna(1) if 'source_pack_size' in df.columns else df['pack_size']
             
             # Calculate packs from pieces using pack_size (round to whole packs)
-            df['source_stock_packs'] = (df['source_stock_pieces'] / source_pack_size).round(0).astype(int)
-            df['target_stock_packs'] = (df['target_stock_pieces'] / df['pack_size']).round(0).astype(int)
+            # Convert to float first to avoid decimal/float division errors
+            df['source_stock_packs'] = (pd.to_numeric(df['source_stock_pieces'], errors='coerce') / pd.to_numeric(source_pack_size, errors='coerce').replace(0, 1)).round(0).astype(int)
+            df['target_stock_packs'] = (pd.to_numeric(df['target_stock_pieces'], errors='coerce') / pd.to_numeric(df['pack_size'], errors='coerce').replace(0, 1)).round(0).astype(int)
             
             # Convert AMC from pieces to packs (using target branch pack_size) - round to 2 decimals for display
-            df['amc_packs'] = (df['amc_pieces'] / df['pack_size']).round(2)
+            df['amc_packs'] = (pd.to_numeric(df['amc_pieces'], errors='coerce') / pd.to_numeric(df['pack_size'], errors='coerce').replace(0, 1)).round(2)
             
             # Recalculate stock_level_pct using AMC from Inventory_Analysis
             df['stock_level_pct'] = df.apply(
-                lambda row: (row['target_stock_pieces'] / row['amc_pieces'] * 100) if row['amc_pieces'] > 0 else 0,
+                lambda row: (float(row['target_stock_pieces']) / float(row['amc_pieces']) * 100) if float(row.get('amc_pieces', 0) or 0) > 0 else 0,
                 axis=1
             )
             

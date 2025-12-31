@@ -368,7 +368,7 @@ async def get_priority_items(
     target_company: str = Query(default="NILA"),
     source_branch: str = Query(default="BABA DOGO HQ"),
     source_company: str = Query(default="NILA"),
-    limit: int = Query(default=50),
+    limit: int = Query(default=200),
     current_user: dict = Depends(get_current_user),
     db_manager = Depends(get_db_manager)
 ):
