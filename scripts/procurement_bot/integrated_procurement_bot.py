@@ -357,20 +357,29 @@ class IntegratedProcurementBot:
             date_str = today.strftime("%d/%m/%Y")
             
             # Filter valid items
+            # Default price to use when unit_price is 0 or missing
+            DEFAULT_ITEM_PRICE = 5.0
+            
             valid_items = []
             for _, row in items_df.iterrows():
                 item_code = str(row.get('item_code', '')).strip()
                 quantity = float(row.get('order_quantity', 0))
+                unit_price = float(row.get('unit_price', 0))
                 
                 if not item_code or quantity <= 0:
                     continue
+                
+                # Use default price if unit_price is 0 or missing
+                if unit_price <= 0:
+                    unit_price = DEFAULT_ITEM_PRICE
+                    logger.info(f"⚠️ Item {item_code} has no price, using default price: {DEFAULT_ITEM_PRICE}")
                 
                 valid_items.append({
                     'item_code': item_code,
                     'item_name': str(row.get('item_name', '')).strip(),
                     'quantity': quantity,
                     'pack_size': float(row.get('pack_size', 1)),
-                    'unit_price': float(row.get('unit_price', 0))
+                    'unit_price': unit_price
                 })
             
             if not valid_items:
