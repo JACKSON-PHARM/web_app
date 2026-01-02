@@ -1961,33 +1961,64 @@
         localStorage.setItem('procurement_username', procurementUsername);
         localStorage.setItem('procurement_company', procurementCompany);
         
-        // Validate based on order mode
+        // Get source branch (for both order types)
+        const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
+        const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
+        
+        // Validate based on order mode and build confirmation message
+        let confirmationMessage = '';
+        let targetBranch = branch;
+        let targetCompany = company;
+        let supplierCode = null;
+        let supplierName = null;
+        
         if (orderMode === 'purchase_order') {
             // For purchase orders: user selects external suppliers
-            // Source branch selection is maintained for compatibility (from stock view)
-            const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
-            const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
-            
-            // Validate supplier selection
-            const supplierCode = document.getElementById('selectedSupplierCode').value;
-            const supplierName = document.getElementById('selectedSupplierName').value;
+            supplierCode = document.getElementById('selectedSupplierCode').value;
+            supplierName = document.getElementById('selectedSupplierName').value;
             
             if (!supplierCode || !supplierName) {
                 alert('Please select a supplier for the purchase order');
                 return;
             }
             
+            confirmationMessage = `📋 PURCHASE ORDER CONFIRMATION\n\n`;
+            confirmationMessage += `Order Type: Purchase Order (from external supplier)\n`;
+            confirmationMessage += `Target Branch: ${branch} (${company})\n`;
+            confirmationMessage += `Supplier: ${supplierName} (${supplierCode})\n`;
+            confirmationMessage += `Source Branch (reference): ${sourceBranch} (${sourceCompany})\n`;
+            confirmationMessage += `Number of Items: ${selectedItems.length}\n\n`;
+            confirmationMessage += `⚠️ This order will be sent to: ${branch} (${company})\n\n`;
+            confirmationMessage += `Do you want to proceed with creating this order?`;
+        } else {
+            // Branch order mode
+            // For branch orders, the order goes TO the target branch (where we're viewing stock)
+            targetBranch = branch;  // Target branch = where order is going TO
+            targetCompany = company;
+            
+            confirmationMessage = `📋 BRANCH ORDER CONFIRMATION\n\n`;
+            confirmationMessage += `Order Type: Branch Order (inter-branch transfer)\n`;
+            confirmationMessage += `Target Branch (Order will be sent TO): ${targetBranch} (${targetCompany})\n`;
+            confirmationMessage += `Source Branch (Stock coming FROM): ${sourceBranch} (${sourceCompany})\n`;
+            confirmationMessage += `Number of Items: ${selectedItems.length}\n\n`;
+            confirmationMessage += `⚠️ This order will be sent to: ${targetBranch} (${targetCompany})\n\n`;
+            confirmationMessage += `Do you want to proceed with creating this order?`;
+        }
+        
+        // Show confirmation dialog
+        const confirmed = confirm(confirmationMessage);
+        if (!confirmed) {
+            console.log('Order creation cancelled by user');
+            return;
+        }
+        
+        // Proceed with order creation
+        if (orderMode === 'purchase_order') {
             // Batch items if more than 20
             // For purchase orders: branch = branch making the order, sourceBranch = source from stock view (for reference)
             await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName, procurementCompany, procurementUsername, procurementPassword);
         } else {
             // Branch order mode
-            // For branch orders, the order goes TO the target branch (where we're viewing stock)
-            // The source branch is where stock is coming FROM
-            // So target branch = branch (where order goes TO), source branch = sourceBranch (where stock comes FROM)
-            const targetBranch = branch;  // Target branch = where order is going TO
-            const targetCompany = company;
-            
             // Batch items if more than 20
             // Note: For branch orders, branch parameter is the target branch (where order goes TO)
             // sourceBranch parameter is the source branch (where stock comes FROM)
@@ -1996,6 +2027,16 @@
     }
     
     async function createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, orderMode, supplierCode = null, supplierName = null, procurementCompany = null, procurementUsername = null, procurementPassword = null) {
+        // Store order details for summary message
+        window.lastOrderDetails = {
+            orderMode: orderMode,
+            targetBranch: branch,
+            targetCompany: company,
+            sourceBranch: sourceBranch,
+            sourceCompany: sourceCompany,
+            supplierName: supplierName,
+            supplierCode: supplierCode
+        };
         const BATCH_SIZE = 20;
         const batches = [];
         
@@ -2035,13 +2076,16 @@
                 }
                 
                 console.log(`Creating batch ${batchNum}/${batches.length} with ${batch.length} items...`);
+                console.log('Request body:', JSON.stringify(requestBody, null, 2));
                 
                 const result = await apiRequest('/api/procurement/run', {
                     method: 'POST',
                     body: JSON.stringify(requestBody)
                 });
                 
-                if (result.success) {
+                console.log(`Batch ${batchNum} API response:`, result);
+                
+                if (result && result.success) {
                     totalSuccess += result.successful_orders || batch.length;
                     if (result.order_number) {
                         orderNumbers.push(result.order_number);
@@ -2049,29 +2093,54 @@
                     console.log(`✅ Batch ${batchNum} completed: ${result.successful_orders || batch.length} items`);
                 } else {
                     totalFailed += batch.length;
-                    console.error(`❌ Batch ${batchNum} failed: ${result.message}`);
+                    const errorMsg = result?.message || result?.error || 'Unknown error';
+                    console.error(`❌ Batch ${batchNum} failed: ${errorMsg}`);
+                    // Show error to user
+                    if (batchIndex === 0) { // Show error for first batch failure
+                        alert(`Order creation failed: ${errorMsg}\n\nPlease check:\n1. API credentials are correct\n2. Network connection is stable\n3. Target branch is valid`);
+                    }
                 }
             } catch (error) {
                 totalFailed += batch.length;
+                const errorMsg = error.message || error.toString() || 'Unknown error';
                 console.error(`❌ Batch ${batchNum} error:`, error);
+                // Show error to user
+                if (batchIndex === 0) { // Show error for first batch failure
+                    alert(`Order creation error: ${errorMsg}\n\nPlease check:\n1. API credentials are correct\n2. Network connection is stable\n3. Console for detailed error information`);
+                }
             }
         }
         
         // Show summary with target branch information
+        const orderDetails = window.lastOrderDetails || {};
         const orderType = orderMode === 'purchase_order' ? 'Purchase Order' : 'Branch Order';
         let message = `✅ ${orderType} Creation Complete!\n\n`;
-        message += `Target Branch: ${branch} (${company})\n`;
+        
         if (orderMode === 'branch_order') {
-            message += `Order submitted to: ${branch} (${company})\n`;
+            message += `Order Type: Branch Order\n`;
+            message += `Order sent TO: ${orderDetails.targetBranch || branch} (${orderDetails.targetCompany || company})\n`;
+            message += `Stock coming FROM: ${orderDetails.sourceBranch || sourceBranch} (${orderDetails.sourceCompany || sourceCompany})\n`;
         } else {
-            message += `Purchase order created for: ${branch} (${company})\n`;
+            message += `Order Type: Purchase Order\n`;
+            message += `Order created for: ${orderDetails.targetBranch || branch} (${orderDetails.targetCompany || company})\n`;
+            if (orderDetails.supplierName) {
+                message += `Supplier: ${orderDetails.supplierName}\n`;
+            }
         }
+        
         message += `\nTotal Items: ${selectedItems.length}\n`;
         message += `Successful: ${totalSuccess}\n`;
         message += `Failed: ${totalFailed}\n`;
         message += `Batches: ${batches.length}\n`;
+        
         if (orderNumbers.length > 0) {
             message += `\nOrder Number(s):\n${orderNumbers.join('\n')}`;
+        } else if (totalSuccess > 0) {
+            message += `\n⚠️ Note: Order was created but order number not returned. Please check the target branch to verify.`;
+        }
+        
+        if (totalFailed > 0) {
+            message += `\n\n⚠️ Warning: ${totalFailed} item(s) failed to process. Please check console for details.`;
         }
         
         alert(message);
