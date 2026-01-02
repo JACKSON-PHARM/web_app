@@ -362,8 +362,6 @@ async def run_procurement_bot(
                 response_data["total_orders"] = total_orders
             
             return response_data
-                "target_company": request.branch_company
-            }
         else:
             # Process failed
             for _, item in selected_items.iterrows():
