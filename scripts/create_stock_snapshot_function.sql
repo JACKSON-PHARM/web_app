@@ -134,7 +134,13 @@ BEGIN
     )
     SELECT 
         ia.item_code,
-        COALESCE(ia.item_name, tgt.item_name, '') as item_name,
+        -- Prioritize stock table item_name over inventory_analysis if inventory_analysis has "NO SALES"
+        CASE 
+            WHEN ia.item_name IS NULL OR UPPER(TRIM(ia.item_name)) = 'NO SALES' THEN 
+                COALESCE(tgt.item_name, src.item_name, '')
+            ELSE 
+                COALESCE(ia.item_name, tgt.item_name, src.item_name, '')
+        END as item_name,
         COALESCE(tgt.pack_size, src.pack_size, 1)::NUMERIC as pack_size,
         COALESCE(ia.adjusted_amc, 0)::NUMERIC as adjusted_amc_packs,
         COALESCE(ia.ideal_stock_pieces, 0)::NUMERIC as ideal_stock_pieces,

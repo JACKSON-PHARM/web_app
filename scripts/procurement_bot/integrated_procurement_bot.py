@@ -220,20 +220,34 @@ class IntegratedProcurementBot:
             session = self.get_session()
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             
+            # Default price to use when unit_price is 0 or missing
+            DEFAULT_ITEM_PRICE = 5.0
+            
             # Prepare order items
             order_items = []
             for _, row in items_df.iterrows():
                 item_code = str(row.get('item_code', '')).strip()
                 quantity = float(row.get('order_quantity', 0))
+                unit_price = float(row.get('unit_price', 0))
+                
+                # Ensure quantity is at least 1 (API requires quantity >= 1)
+                quantity = max(1, quantity)
+                if row.get('order_quantity', 0) < 1:
+                    logger.warning(f"⚠️ Item {item_code} has quantity {row.get('order_quantity', 0)} < 1, rounding up to 1")
                 
                 if not item_code or quantity <= 0:
                     continue
                 
+                # Use default price if unit_price is 0 or missing
+                if unit_price <= 0:
+                    unit_price = DEFAULT_ITEM_PRICE
+                    logger.info(f"⚠️ Item {item_code} has no price, using default price: {DEFAULT_ITEM_PRICE}")
+                
                 order_items.append({
                     "dT_ItemCode": item_code,
                     "dT_Quantity": quantity,
-                    "dT_Price": float(row.get('unit_price', 0)),
-                    "dT_Total": float(row.get('unit_price', 0)) * quantity
+                    "dT_Price": unit_price,
+                    "dT_Total": unit_price * quantity
                 })
             
             if not order_items:
@@ -397,7 +411,10 @@ class IntegratedProcurementBot:
             for idx, item in enumerate(valid_items):
                 # Prepare item payload
                 # Note: Quantity should be in packs (already in packs from AMC)
-                quantity_packs = int(round(item['quantity']))
+                # Ensure quantity is at least 1 (API requires quantity >= 1)
+                quantity_packs = max(1, int(round(item['quantity'])))
+                if item['quantity'] < 1:
+                    logger.warning(f"⚠️ Item {item['item_code']} has quantity {item['quantity']} < 1, rounding up to 1")
                 
                 item_payload = {
                     "bcode": int(self.branch_code),  # Source branch code (numeric, e.g., 18)
