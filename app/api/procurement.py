@@ -87,8 +87,7 @@ async def run_procurement_bot(
         
         # Create temporary credential manager with user-provided credentials
         # This ensures accountability - user must provide current credentials
-        from app.services.credential_manager_supabase import CredentialManagerSupabase
-        from app.services.credential_manager import CredentialManager
+        # Note: We don't import CredentialManager as it's not needed - we create a simple temp class
         
         # Create a temporary credential manager that uses provided credentials
         # We'll create a temporary instance that doesn't save to database
@@ -169,11 +168,29 @@ async def run_procurement_bot(
         branch_to_code_str = None
         
         if request.order_mode == "branch_order":
-            # For branch orders, the target branch (where order is going TO) is request.branch_name
-            # The source branch (where stock is coming FROM) is request.source_branch_name
+            # For branch orders:
+            # - request.branch_name = target branch (where we're viewing stock) = where order goes TO
+            # - request.source_branch_name = source branch (where stock comes FROM) = where order comes FROM
+            # The order should be created FROM source branch TO target branch
             branch_to_name = request.branch_name  # Target branch = where order is going TO
-            branch_to_code_str = str(branch_code)  # Use the target branch code
-            logger.info(f"Branch order: Target branch (where order goes TO) = {branch_to_name}, Source branch (where stock comes FROM) = {request.source_branch_name}")
+            branch_to_code_str = str(branch_code)  # Target branch code (where order goes TO)
+            
+            # Get source branch code (where order comes FROM)
+            source_branch_code = None
+            if request.source_branch_name and request.source_branch_company:
+                for branch in ALL_BRANCHES:
+                    if branch['branch_name'] == request.source_branch_name and branch['company'] == request.source_branch_company:
+                        source_branch_code_raw = branch.get('branchcode') or branch.get('branch_code')
+                        if isinstance(source_branch_code_raw, str) and source_branch_code_raw.startswith('BR'):
+                            try:
+                                source_branch_code = int(source_branch_code_raw.replace('BR', ''))
+                            except:
+                                source_branch_code = int(source_branch_code_raw) if source_branch_code_raw.isdigit() else None
+                        else:
+                            source_branch_code = int(source_branch_code_raw) if str(source_branch_code_raw).isdigit() else None
+                        break
+            
+            logger.info(f"Branch order: Target branch (where order goes TO) = {branch_to_name} (code: {branch_to_code_str}), Source branch (where order comes FROM) = {request.source_branch_name} (code: {source_branch_code})")
         else:
             # For purchase orders: user selects external suppliers, so branch_to_name is not used
             # Source branch selection is maintained for compatibility but not used for branch_to_name
@@ -183,15 +200,25 @@ async def run_procurement_bot(
             logger.info(f"Purchase order: Branch = {request.branch_name}, Supplier = {getattr(request, 'supplier_name', 'N/A')}, Source branch (for reference only) = {request.source_branch_name}")
         
         # Initialize procurement bot
+        # For branch orders: branch_name should be source branch (where order comes FROM)
+        # For purchase orders: branch_name is the branch making the order
+        actual_branch_name = request.branch_name
+        actual_branch_code = branch_code
+        
+        if request.order_mode == "branch_order" and request.source_branch_name:
+            # For branch orders, the order comes FROM source branch
+            actual_branch_name = request.source_branch_name
+            actual_branch_code = source_branch_code if 'source_branch_code' in locals() else branch_code
+        
         bot = IntegratedProcurementBot(
             stock_view_df=items_df,
-            branch_name=request.branch_name,
-            branch_code=branch_code,
+            branch_name=actual_branch_name,  # Source branch for branch orders, branch making order for purchase orders
+            branch_code=actual_branch_code,  # Source branch code for branch orders
             company=request.branch_company,
             credential_manager=cred_manager,
             order_mode=request.order_mode,
-            branch_to_name=branch_to_name,  # Target branch for branch orders, source branch for purchase orders
-            branch_to_code=branch_to_code_str,  # Use branch code string (e.g., "BR001")
+            branch_to_name=branch_to_name,  # Target branch for branch orders (where order goes TO)
+            branch_to_code=branch_to_code_str,  # Target branch code for branch orders
             manual_selection=request.manual_selection,
             supplier_code=getattr(request, 'supplier_code', None),  # Optional supplier code
             supplier_name=getattr(request, 'supplier_name', None)  # Optional supplier name

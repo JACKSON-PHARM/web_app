@@ -371,12 +371,12 @@
                 </div>
             </div>
             
-            <!-- Destination Branch Selection (for Branch Order) -->
+            <!-- Branch Order Info (Target branch is already set from Stock View) -->
             <div class="procurement-form-group" id="branchSelectionGroup" style="display: none;">
-                <label for="destinationBranchSelect">Destination Branch (Branch Order):</label>
-                <select id="destinationBranchSelect">
-                    <option value="">-- Select Branch --</option>
-                </select>
+                <div style="padding: 10px; background: #e9ecef; border-radius: 4px;">
+                    <strong>Branch Order Info:</strong><br>
+                    <span id="branchOrderTargetInfo">Order will be sent to the target branch selected in Stock View.</span>
+                </div>
             </div>
             
             <!-- Credentials Section (Required for Accountability) -->
@@ -1666,8 +1666,11 @@
             });
         }
         
-        // Load destination branches for branch order mode
-        loadDestinationBranches(branch, company);
+        // Update branch order info (target branch is already set from stock view)
+        const branchOrderInfo = document.getElementById('branchOrderTargetInfo');
+        if (branchOrderInfo) {
+            branchOrderInfo.textContent = `Order will be sent to: ${branch} (${company})`;
+        }
     }
     
     function closeProcurementModal() {
@@ -1694,19 +1697,17 @@
         if (orderMode === 'purchase_order') {
             supplierGroup.style.display = 'block';
             branchGroup.style.display = 'none';
-            document.getElementById('destinationBranchSelect').required = false;
         } else {
             supplierGroup.style.display = 'none';
             branchGroup.style.display = 'block';
-            document.getElementById('destinationBranchSelect').required = true;
             
-            // Reload destination branches when switching to branch order mode
-            // to ensure they're filtered by company
+            // Update branch order info to show target branch
             const modal = document.getElementById('procurementModal');
             const branch = modal.dataset.branch;
             const company = modal.dataset.company;
-            if (branch && company) {
-                loadDestinationBranches(branch, company);
+            const targetInfo = document.getElementById('branchOrderTargetInfo');
+            if (targetInfo && branch && company) {
+                targetInfo.textContent = `Order will be sent to: ${branch} (${company})`;
             }
         }
     }
