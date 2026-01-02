@@ -119,24 +119,74 @@ class IntegratedProcurementBot:
     def get_token(self) -> Optional[str]:
         """Get authentication token"""
         try:
+            # First try to get token from credential manager
             token = self.credential_manager.get_valid_token(self.company)
-            if not token:
-                # Try to get token using credentials
-                creds = self.credential_manager.get_credentials(self.company)
-                if creds:
-                    session = self.get_session()
-                    auth_url = f"{self.base_url}/api/auth/login"
-                    response = session.post(auth_url, json={
-                        'username': creds.get('username'),
-                        'password': creds.get('password')
-                    }, timeout=10)
-                    
-                    if response.status_code == 200:
+            if token:
+                logger.info(f"✅ Got token from credential manager cache")
+                return token
+            
+            # If no cached token, get credentials and authenticate
+            logger.info(f"🔐 No cached token, authenticating with API...")
+            creds = self.credential_manager.get_credentials(self.company)
+            if not creds:
+                logger.error(f"❌ No credentials found for company: {self.company}")
+                return None
+            
+            username = creds.get('username')
+            password = creds.get('password')
+            base_url = creds.get('base_url', self.base_url)
+            
+            if not username or not password:
+                logger.error(f"❌ Missing username or password for company: {self.company}")
+                return None
+            
+            logger.info(f"🔐 Authenticating user: {username} with API: {base_url}")
+            session = self.get_session()
+            auth_url = f"{base_url}/api/auth/login"
+            
+            try:
+                response = session.post(auth_url, json={
+                    'username': username,
+                    'password': password
+                }, timeout=15)
+                
+                logger.info(f"🔐 Auth response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    try:
                         data = response.json()
-                        return data.get('access_token') or data.get('token')
-            return token
+                        token = data.get('access_token') or data.get('token')
+                        if token:
+                            logger.info(f"✅ Successfully authenticated, got token")
+                            return token
+                        else:
+                            logger.error(f"❌ No token in response: {data}")
+                            return None
+                    except ValueError as e:
+                        # Response is not JSON
+                        logger.error(f"❌ Response is not JSON: {response.text[:200]}")
+                        return None
+                else:
+                    error_text = response.text[:500] if response.text else "No error message"
+                    logger.error(f"❌ Authentication failed: HTTP {response.status_code} - {error_text}")
+                    return None
+                    
+            except requests.exceptions.Timeout:
+                logger.error(f"❌ Authentication request timed out")
+                return None
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"❌ Connection error during authentication: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"❌ Error during authentication request: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return None
+                
         except Exception as e:
-            logger.error(f"Error getting token: {e}")
+            logger.error(f"❌ Error getting token: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def create_purchase_order(self, items_df: pd.DataFrame) -> Dict[str, Any]:
