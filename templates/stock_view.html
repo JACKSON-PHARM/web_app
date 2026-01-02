@@ -1961,12 +1961,13 @@
         localStorage.setItem('procurement_username', procurementUsername);
         localStorage.setItem('procurement_company', procurementCompany);
         
-        // Get source branch (for branch orders)
-        const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
-        const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
-        
         // Validate based on order mode
         if (orderMode === 'purchase_order') {
+            // For purchase orders: user selects external suppliers
+            // Source branch selection is maintained for compatibility (from stock view)
+            const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
+            const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
+            
             // Validate supplier selection
             const supplierCode = document.getElementById('selectedSupplierCode').value;
             const supplierName = document.getElementById('selectedSupplierName').value;
@@ -1977,6 +1978,7 @@
             }
             
             // Batch items if more than 20
+            // For purchase orders: branch = branch making the order, sourceBranch = source from stock view (for reference)
             await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName, procurementCompany, procurementUsername, procurementPassword);
         } else {
             // Branch order mode

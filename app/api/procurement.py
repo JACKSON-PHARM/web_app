@@ -164,7 +164,7 @@ async def run_procurement_bot(
         logger.info(f"✅ Using user-provided credentials for procurement (company: {request.company}, user: {request.username})")
         
         # For branch orders: branch_to_name should be the TARGET branch (where order is going TO)
-        # For purchase orders: branch_to_name is not used
+        # For purchase orders: branch_to_name is not used (external suppliers, not branch-to-branch)
         branch_to_name = None
         branch_to_code_str = None
         
@@ -175,13 +175,12 @@ async def run_procurement_bot(
             branch_to_code_str = str(branch_code)  # Use the target branch code
             logger.info(f"Branch order: Target branch (where order goes TO) = {branch_to_name}, Source branch (where stock comes FROM) = {request.source_branch_name}")
         else:
-            # For purchase orders, get source branch code if provided
-            if request.source_branch_name and request.source_branch_company:
-                for branch in ALL_BRANCHES:
-                    if branch['branch_name'] == request.source_branch_name and branch['company'] == request.source_branch_company:
-                        branch_to_name = request.source_branch_name
-                        branch_to_code_str = branch.get('branchcode') or branch.get('branch_code')
-                        break
+            # For purchase orders: user selects external suppliers, so branch_to_name is not used
+            # Source branch selection is maintained for compatibility but not used for branch_to_name
+            # Purchase orders are from external suppliers, not from another branch
+            branch_to_name = None
+            branch_to_code_str = None
+            logger.info(f"Purchase order: Branch = {request.branch_name}, Supplier = {getattr(request, 'supplier_name', 'N/A')}, Source branch (for reference only) = {request.source_branch_name}")
         
         # Initialize procurement bot
         bot = IntegratedProcurementBot(
