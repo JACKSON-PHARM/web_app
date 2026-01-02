@@ -435,6 +435,12 @@ class IntegratedProcurementBot:
                     if item['quantity'] < 1:
                         logger.warning(f"⚠️ Item {item['item_code']} has quantity {item['quantity']} < 1, rounding up to 1")
                     
+                    # Log current order state before making request
+                    if idx == 0:
+                        logger.info(f"📝 Creating NEW order for item {idx + 1} (bdocid=0, bdocnumber='')")
+                    else:
+                        logger.info(f"📝 Adding item {idx + 1} to EXISTING order (bdocid={bdocid}, bdocnumber={bdocnumber})")
+                    
                     item_payload = {
                         "bcode": int(self.branch_code),  # TARGET branch code (where order is CREATED) - numeric, e.g., 18
                         "branchToCode": source_branch_code_str,  # SOURCE branch code (where stock comes FROM) - e.g., "BR001"
@@ -455,12 +461,16 @@ class IntegratedProcurementBot:
                     }
                     
                     # Prepare URL with query parameters
+                    # For first item: bdocid=0, bdocnumber="" (creates new order)
+                    # For subsequent items: use bdocid and bdocnumber from first item's response
                     url_params = {
                         "bdocid": bdocid,
                         "bdocnumber": bdocnumber,
                         "bdocdetid": 0,
                         "dataBaseName": database_name
                     }
+                    
+                    logger.debug(f"   URL params for item {idx + 1}: bdocid={bdocid}, bdocnumber='{bdocnumber}'")
                     
                     url = f"{self.base_url}/api/BranchOrders/CreateBranchOrder"
                     
@@ -472,36 +482,61 @@ class IntegratedProcurementBot:
                     response = session.post(url, json=item_payload, params=url_params, headers=headers, timeout=30, verify=False)
                     
                     logger.info(f"   Response status: {response.status_code}")
+                    logger.info(f"   Request URL params: bdocid={bdocid}, bdocnumber={bdocnumber}")
                     
                     if response.status_code in [200, 201]:
                         try:
                             result = response.json()
-                            logger.debug(f"   Response: {result}")
+                            logger.info(f"   Response JSON: {result}")
+                            logger.debug(f"   Full response: {result}")
                             
                             # Extract bdocid and bdocnumber from response (for subsequent items in this batch)
+                            # Always try to extract, but only use for first item to create order
+                            # For subsequent items, we should already have bdocid and bdocnumber from first item
+                            extracted_bdocid = result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
+                            extracted_bdocnumber = result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
+                            
+                            # If response is a dict with nested data, try to extract
+                            if isinstance(result, dict):
+                                # Check for nested structure
+                                if 'data' in result:
+                                    data = result['data']
+                                    extracted_bdocid = data.get('bdocid') or data.get('id') or extracted_bdocid
+                                    extracted_bdocnumber = data.get('bdocnumber') or data.get('docNumber') or extracted_bdocnumber
+                            
+                            # For first item, use extracted values to create the order
                             if idx == 0:
-                                # First item in batch - get order ID and number from response
-                                # Try multiple possible response formats
-                                bdocid = result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
-                                bdocnumber = result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
-                                
-                                # If response is a dict with nested data, try to extract
-                                if isinstance(result, dict):
-                                    # Check for nested structure
-                                    if 'data' in result:
-                                        data = result['data']
-                                        bdocid = data.get('bdocid') or data.get('id') or bdocid
-                                        bdocnumber = data.get('bdocnumber') or data.get('docNumber') or bdocnumber
-                                
-                                if bdocid and bdocnumber:
+                                if extracted_bdocid and extracted_bdocnumber:
+                                    bdocid = int(extracted_bdocid) if extracted_bdocid else 0
+                                    bdocnumber = str(extracted_bdocnumber)
                                     logger.info(f"✅ Branch order {batch_idx + 1} created: ID={bdocid}, Number={bdocnumber}")
                                     all_order_numbers.append(bdocnumber)
                                     if batch_idx == 0:
                                         self.order_doc_number = bdocnumber  # Store first order number
                                 else:
-                                    logger.warning(f"⚠️ Order created but bdocid/bdocnumber not in response: {result}")
-                                    logger.warning(f"   Full response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
-                                    # Continue anyway - API might return order details in a different way
+                                    # Try to extract from response text or check if response indicates success
+                                    logger.warning(f"⚠️ Order created but bdocid/bdocnumber not in response JSON")
+                                    logger.warning(f"   Response type: {type(result)}")
+                                    logger.warning(f"   Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                                    logger.warning(f"   Full response: {result}")
+                                    logger.warning(f"   Response text (first 500 chars): {response.text[:500] if hasattr(response, 'text') else 'N/A'}")
+                                    
+                                    # If response is just a success indicator, we might need to check response URL or headers
+                                    # But for now, if we don't get order details, we can't continue
+                                    if not bdocid or not bdocnumber:
+                                        logger.error(f"❌ Cannot continue adding items - no order ID/number from first item response")
+                                        logger.error(f"   This means subsequent items cannot be added to the same order")
+                                        return {
+                                            'success': False,
+                                            'message': f'Failed to get order ID/number from first item response. Response: {result}'
+                                        }
+                            else:
+                                # For subsequent items, verify we're using the same order
+                                if extracted_bdocid and extracted_bdocnumber:
+                                    # Verify it matches our current order (should be the same)
+                                    if extracted_bdocid != bdocid or extracted_bdocnumber != bdocnumber:
+                                        logger.warning(f"⚠️ Response order ID/number differs from expected: got {extracted_bdocid}/{extracted_bdocnumber}, expected {bdocid}/{bdocnumber}")
+                                logger.info(f"✅ Item {idx + 1} added to order {bdocnumber}")
                             
                             batch_processed += 1
                             processed_count += 1
