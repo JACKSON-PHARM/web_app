@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 import asyncio
 import logging
+from datetime import datetime
 from app.dependencies import get_current_user, get_db_manager
 from app.dependencies import get_credential_manager
 from app.services.fetcher_manager import FetcherManager
@@ -52,8 +53,11 @@ async def run_refresh_task():
         
         # Run refresh - fetch new data from APIs and save to Supabase/PostgreSQL
         logger.info("🔄 Fetching new data from APIs and saving to database...")
+        logger.info(f"   This is a long-running task that may take 10-30 minutes")
+        logger.info(f"   Progress will be logged here and available via /api/refresh/status")
         RefreshStatusService.update_progress(0.1, "Connecting to Supabase database...")
         result = refresh_service.refresh_all_data()
+        logger.info(f"   Refresh service returned: success={result.get('success')}")
         
         if result.get('success'):
             # Data refresh complete - Supabase automatically persists all changes
@@ -140,6 +144,29 @@ async def get_refresh_status(current_user: dict = Depends(get_current_user)):
     status = RefreshStatusService.get_status()
     data_age = RefreshStatusService.get_data_age()
     
+    # Get scheduler status with more details
+    scheduler_status = {}
+    if _scheduler:
+        try:
+            scheduler_status = _scheduler.get_status()
+            scheduler_status["enabled"] = getattr(_scheduler, 'enabled', True)
+            scheduler_status["is_running"] = getattr(_scheduler, 'is_running', False)
+            scheduler_status["last_refresh"] = _scheduler.last_refresh.isoformat() if _scheduler.last_refresh else None
+            scheduler_status["next_refresh"] = _scheduler.next_refresh.isoformat() if _scheduler.next_refresh else None
+        except Exception as e:
+            logger.error(f"Error getting scheduler status: {e}")
+            scheduler_status = {
+                "enabled": False,
+                "is_running": False,
+                "message": f"Scheduler error: {str(e)}"
+            }
+    else:
+        scheduler_status = {
+            "enabled": False,
+            "is_running": False,
+            "message": "Scheduler not initialized"
+        }
+    
     return {
         "is_refreshing": status.get("is_refreshing", False),
         "last_refresh": status.get("last_refresh"),
@@ -147,11 +174,7 @@ async def get_refresh_status(current_user: dict = Depends(get_current_user)):
         "refresh_progress": status.get("refresh_progress"),
         "refresh_message": status.get("refresh_message"),
         "data_age": data_age,
-        "scheduler": _scheduler.get_status() if _scheduler else {
-            "enabled": False,
-            "is_running": False,
-            "message": "Scheduler not initialized"
-        }
+        "scheduler": scheduler_status
     }
 
 class TriggerRefreshRequest(BaseModel):
@@ -174,10 +197,13 @@ async def trigger_manual_refresh(
     If empty body {} is sent, all fields will be None and all fetchers will run
     """
     try:
-        logger.info("=" * 70)
-        logger.info("🔄 /api/refresh/trigger endpoint called")
-        logger.info(f"👤 User: {current_user.get('username', 'unknown') if current_user else 'unknown'}")
-        logger.info(f"📥 Request received: fetchers={request.fetchers}, has_nila_creds={bool(request.nila_username)}, has_daima_creds={bool(request.daima_username)}")
+        # Log immediately with clear markers for Render logs
+        logger.info("=" * 80)
+        logger.info("🔄 REFRESH TRIGGER ENDPOINT CALLED")
+        logger.info(f"   Timestamp: {datetime.now().isoformat()}")
+        logger.info(f"   User: {current_user.get('username', 'unknown') if current_user else 'unknown'}")
+        logger.info(f"   Request: fetchers={request.fetchers}, has_nila_creds={bool(request.nila_username)}, has_daima_creds={bool(request.daima_username)}")
+        logger.info("=" * 80)
         
         # Get database and credential managers
         db_manager = get_db_manager()
@@ -228,8 +254,10 @@ async def trigger_manual_refresh(
         
         # Run refresh in background with fetcher selection
         logger.info(f"🚀 Adding background task for fetchers: {fetcher_list}")
+        logger.info(f"   Task will run asynchronously - check logs for progress")
         background_tasks.add_task(run_refresh_task_with_fetchers, fetchers_to_run)
-        logger.info("✅ Background task added successfully")
+        logger.info("✅ Background task added successfully - refresh will start shortly")
+        logger.info(f"   Monitor progress via /api/refresh/status endpoint")
         
         response_data = {
             "status": "started",
@@ -255,12 +283,22 @@ async def trigger_manual_refresh(
 async def run_refresh_task_with_fetchers(fetchers: Optional[List[str]] = None):
     """Background task to run refresh with optional fetcher selection"""
     fetcher_list = fetchers if fetchers else "all"
+    
+    # Log immediately to ensure visibility in Render logs
+    logger.info("=" * 80)
+    logger.info("🔄 REFRESH TASK STARTED")
+    logger.info(f"   Fetchers: {fetcher_list}")
+    logger.info(f"   Timestamp: {datetime.now().isoformat()}")
+    logger.info("=" * 80)
+    
     RefreshStatusService.set_refreshing(True, f"Starting data refresh for fetchers: {fetcher_list}...")
     
     try:
         logger.info(f"🔄 Starting refresh task for fetchers: {fetcher_list}")
+        logger.info(f"   Getting database and credential managers...")
         db_manager = get_db_manager()
         cred_manager = get_credential_manager()
+        logger.info(f"   ✅ Database and credential managers obtained")
         
         # Use refresh service
         from app.services.refresh_service import RefreshService
@@ -284,8 +322,13 @@ async def run_refresh_task_with_fetchers(fetchers: Optional[List[str]] = None):
             summary = result.get('summary', {})
             messages = result.get('messages', [])
             
-            logger.info("✅ Data refresh complete - all changes saved to database")
-            logger.info(f"   Summary: {messages}")
+            logger.info("=" * 80)
+            logger.info("✅ REFRESH TASK COMPLETED SUCCESSFULLY")
+            logger.info(f"   Timestamp: {datetime.now().isoformat()}")
+            logger.info(f"   Fetchers: {fetcher_list}")
+            logger.info(f"   Summary: {summary}")
+            logger.info(f"   Messages: {messages}")
+            logger.info("=" * 80)
             RefreshStatusService.update_progress(1.0, "Refresh complete!")
             RefreshStatusService.set_refresh_complete(True, "Data refreshed successfully")
             
@@ -309,10 +352,15 @@ async def run_refresh_task_with_fetchers(fetchers: Optional[List[str]] = None):
             }
             
     except Exception as e:
-        logger.error(f"❌ Error in refresh task: {e}")
+        logger.error("=" * 80)
+        logger.error("❌ REFRESH TASK FAILED")
+        logger.error(f"   Timestamp: {datetime.now().isoformat()}")
+        logger.error(f"   Fetchers: {fetcher_list}")
+        logger.error(f"   Error: {e}")
         import traceback
         error_traceback = traceback.format_exc()
-        logger.error(error_traceback)
+        logger.error(f"   Traceback:\n{error_traceback}")
+        logger.error("=" * 80)
         RefreshStatusService.set_refresh_complete(False, str(e))
         return {
             "success": False, 

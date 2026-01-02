@@ -104,15 +104,28 @@ class RefreshScheduler:
                     if 0 <= time_diff <= 60:
                         # Only refresh if we're within active hours
                         if self._is_within_active_hours(now):
-                            logger.info(f"🔄 Starting scheduled data refresh (scheduled for {self.next_refresh.strftime('%H:%M')})...")
+                            logger.info("=" * 80)
+                            logger.info("🔄 SCHEDULED REFRESH TRIGGERED")
+                            logger.info(f"   Scheduled time: {self.next_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
+                            logger.info(f"   Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+                            logger.info("=" * 80)
                             self.last_refresh = datetime.now()
                             
                             # Run refresh callback
                             try:
                                 await self.refresh_callback()
-                                logger.info("✅ Scheduled refresh completed")
+                                logger.info("=" * 80)
+                                logger.info("✅ SCHEDULED REFRESH COMPLETED")
+                                logger.info(f"   Completed at: {datetime.now().isoformat()}")
+                                logger.info("=" * 80)
                             except Exception as e:
-                                logger.error(f"❌ Scheduled refresh failed: {e}")
+                                logger.error("=" * 80)
+                                logger.error("❌ SCHEDULED REFRESH FAILED")
+                                logger.error(f"   Error: {e}")
+                                logger.error(f"   Failed at: {datetime.now().isoformat()}")
+                                import traceback
+                                logger.error(traceback.format_exc())
+                                logger.error("=" * 80)
                         else:
                             logger.info(f"⏸️ Skipping refresh - outside active hours (current: {now.strftime('%H:%M')}, active: {self.START_HOUR}:00-{self.END_HOUR}:00)")
                         
