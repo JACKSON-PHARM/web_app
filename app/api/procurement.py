@@ -120,17 +120,30 @@ async def run_procurement_bot(
                 import requests
                 try:
                     session = requests.Session()
-                    auth_url = f"{self.base_url}/api/auth/login"
+                    # Use /Auth endpoint (not /api/auth/login) with userName/password format
+                    auth_url = f"{self.base_url}/Auth"
                     response = session.post(auth_url, json={
-                        'username': self.username,
+                        'userName': self.username,  # Note: userName (camelCase), not username
                         'password': self.password
-                    }, timeout=10)
+                    }, timeout=15, verify=False)
+                    
+                    logger.info(f"🔐 Auth response status: {response.status_code}")
                     
                     if response.status_code == 200:
                         data = response.json()
-                        return data.get('access_token') or data.get('token')
+                        token = data.get('token')  # Response contains 'token', not 'access_token'
+                        if token:
+                            logger.info(f"✅ Authentication successful, got token")
+                            return token
+                        else:
+                            logger.error(f"❌ No token in auth response: {data}")
+                    else:
+                        error_text = response.text[:500] if response.text else "No error message"
+                        logger.error(f"❌ Authentication failed: HTTP {response.status_code} - {error_text}")
                 except Exception as e:
-                    logger.error(f"Error getting token: {e}")
+                    logger.error(f"❌ Error getting token: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                 return None
             
             def get_session(self, company: str):

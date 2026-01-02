@@ -11,6 +11,10 @@ from typing import Optional, Dict, Any
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import urllib3
+
+# Disable SSL warnings (API uses self-signed certificates)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Add app root to path
 app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -146,20 +150,22 @@ class IntegratedProcurementBot:
             
             logger.info(f"🔐 Authenticating user: {username} with API: {base_url}")
             session = self.get_session()
-            auth_url = f"{base_url}/api/auth/login"
+            # Use /Auth endpoint (not /api/auth/login) with userName/password format
+            auth_url = f"{base_url}/Auth"
             
             try:
                 response = session.post(auth_url, json={
-                    'username': username,
+                    'userName': username,  # Note: userName (camelCase), not username
                     'password': password
-                }, timeout=15)
+                }, timeout=15, verify=False)
                 
                 logger.info(f"🔐 Auth response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     try:
                         data = response.json()
-                        token = data.get('access_token') or data.get('token')
+                        # API returns 'token', not 'access_token'
+                        token = data.get('token')
                         if token:
                             logger.info(f"✅ Successfully authenticated, got token")
                             return token
@@ -417,8 +423,8 @@ class IntegratedProcurementBot:
                 logger.debug(f"   URL params: {url_params}")
                 logger.debug(f"   Payload: {item_payload}")
                 
-                # Make API request
-                response = session.post(url, json=item_payload, params=url_params, headers=headers, timeout=30)
+                # Make API request (disable SSL verification for self-signed certificates)
+                response = session.post(url, json=item_payload, params=url_params, headers=headers, timeout=30, verify=False)
                 
                 logger.info(f"   Response status: {response.status_code}")
                 
