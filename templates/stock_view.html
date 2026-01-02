@@ -746,7 +746,7 @@
                     { key: 'branch_stock_string', label: 'Branch Stock', displayKey: 'branch_stock_string', sortKey: 'branch_stock_sort' },
                     { key: 'stock_level_pct', label: 'Stock Level %' },
                     { key: 'abc_class', label: 'ABC Class' },
-                    { key: 'amc', label: 'AMC (Packs, from pieces)', isPack: true },
+                    { key: 'amc', label: 'AMC (Packs)', isPack: false },
                     { key: 'order_quantity', label: 'Order Qty (Packs)', isPack: true, isEditable: true },
                     { key: 'last_order_date', label: 'Last Order Date' },
                     { key: 'last_order_quantity', label: 'Last Order Qty (Packs)', isPack: true },
@@ -794,10 +794,9 @@
                         
                         // Handle editable order quantity column
                         if (col.isEditable && header === 'order_quantity') {
-                            // Get AMC value in packs as default
+                            // Get AMC value - it's already in packs (from inventory_analysis_new.adjusted_amc)
                             const amcValue = row['amc'] || 0;
-                            const amcPieces = parseFloat(amcValue) || 0;
-                            const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                            const amcPacks = parseFloat(amcValue) || 0;
                             const defaultValue = amcPacks > 0 ? amcPacks.toFixed(2) : '0.00';
                             
                             // Create editable input field
@@ -838,21 +837,16 @@
                                 cellClass = 'stock-good';
                             }
                         } else if (col.isPack) {
-                            // Convert pieces to packs
+                            // Convert pieces to packs (for columns that are in pieces)
+                            // NOTE: AMC is NOT isPack - it's already in packs
                             const piecesVal = parseFloat(value) || 0;
                             const packsVal = packSize > 0 ? piecesVal / packSize : 0;
                             cellValue = packsVal.toFixed(2);
-                            
-                            // Color coding for other pack columns
-                            if (header === 'supplier_stock' || header === 'branch_stock') {
-                                if (packsVal === 0) {
-                                    cellClass = 'stock-zero';
-                                } else if (packsVal < 10) {
-                                    cellClass = 'stock-low';
-                                } else {
-                                    cellClass = 'stock-good';
-                                }
-                            }
+                        } else if (header === 'amc') {
+                            // AMC is already in packs - display directly without conversion
+                            const amcPacks = parseFloat(value) || 0;
+                            cellValue = amcPacks.toFixed(2);
+                            // No special color coding for AMC
                         } else if (header === 'abc_class') {
                             const abc = String(value).trim().toUpperCase();
                             cellValue = abc;
@@ -1187,7 +1181,7 @@
             { key: 'branch_stock_string', label: 'Branch Stock', displayKey: 'branch_stock_string', sortKey: 'branch_stock_sort' },
             { key: 'stock_level_pct', label: 'Stock Level %' },
             { key: 'abc_class', label: 'ABC Class' },
-            { key: 'amc', label: 'AMC (Packs)', isPack: true },
+            { key: 'amc', label: 'AMC (Packs)', isPack: false },
             { key: 'order_quantity', label: 'Order Qty (Packs)', isPack: true, isEditable: true },
             { key: 'last_order_date', label: 'Last Order Date' },
             { key: 'last_order_quantity', label: 'Last Order Qty (Packs)', isPack: true },
@@ -1352,10 +1346,9 @@
                 
                 // Handle editable order quantity column
                 if (col.isEditable && header === 'order_quantity') {
-                    // Get AMC value in packs as default
+                    // Get AMC value - it's already in packs (from inventory_analysis_new.adjusted_amc)
                     const amcValue = row['amc'] || 0;
-                    const amcPieces = parseFloat(amcValue) || 0;
-                    const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                    const amcPacks = parseFloat(amcValue) || 0;
                     const defaultValue = amcPacks > 0 ? amcPacks.toFixed(2) : '0.00';
                     
                     // Check if checkbox is checked to enable/disable input
@@ -1403,8 +1396,14 @@
                     } else {
                         cellClass = 'stock-good';
                     }
+                } else if (header === 'amc') {
+                    // AMC is already in packs - display directly without conversion
+                    const amcPacks = parseFloat(displayValue) || 0;
+                    cellValue = amcPacks.toFixed(2);
+                    // No special color coding for AMC
                 } else if (col.isPack) {
-                    // Convert pieces to packs
+                    // Convert pieces to packs (for columns that are in pieces)
+                    // NOTE: AMC is NOT isPack - it's already in packs
                     const piecesVal = parseFloat(displayValue) || 0;
                     const packsVal = packSize > 0 ? piecesVal / packSize : 0;
                     cellValue = packsVal.toFixed(2);
@@ -1509,13 +1508,13 @@
             const autoSelectedItems = window.stockViewData.filter(item => {
                 // Get basic item data
                 const stockLevel = parseFloat(item.stock_level_pct) || 0;
-                const amcPieces = parseFloat(item.amc) || 0;
+                // AMC is already in packs (from inventory_analysis_new.adjusted_amc)
+                const amcPacks = parseFloat(item.amc) || 0;
                 const abcClass = (item.abc_class || '').trim().toUpperCase();
                 const supplierStock = parseFloat(item.supplier_stock) || 0;
                 const packSize = parseFloat(item.pack_size) || 1;
                 
-                // Convert AMC from pieces to packs (order quantity will be AMC in packs)
-                const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                // Convert supplier stock from pieces to packs
                 const supplierStockPacks = packSize > 0 ? supplierStock / packSize : 0;
                 
                 // 1. Check ABC class - must be A, B, or C
@@ -1523,7 +1522,7 @@
                     return false;
                 }
                 
-                // 2. Check AMC > 0
+                // 2. Check AMC > 0 (already in packs)
                 if (amcPacks <= 0) {
                     return false;
                 }
@@ -1896,10 +1895,8 @@
             selectedItems = window.autoSelectedItems.map(item => {
                 const itemCopy = { ...item }; // Copy item to avoid modifying original
                 
-                // Calculate order quantity based on AMC
-                const packSize = parseFloat(item.pack_size) || 1;
-                const amcPieces = parseFloat(item.amc) || 0;
-                const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                // AMC is already in packs (from inventory_analysis_new.adjusted_amc)
+                const amcPacks = parseFloat(item.amc) || 0;
                 
                 // Use AMC as order quantity for auto-selection
                 itemCopy.custom_order_quantity = Math.max(1, Math.round(amcPacks));
@@ -1925,12 +1922,10 @@
                     item.amc = customQty;
                     console.log(`Using custom order quantity for ${item.item_code}: ${customQty} packs`);
                 } else {
-                    // Use AMC as fallback
-                    const packSize = parseFloat(item.pack_size) || 1;
-                    const amcPieces = parseFloat(item.amc) || 0;
-                    const amcPacks = packSize > 0 ? amcPieces / packSize : 0;
+                    // Use AMC as fallback (already in packs)
+                    const amcPacks = parseFloat(item.amc) || 0;
                     item.custom_order_quantity = amcPacks;
-                    item.amc = amcPacks; // Ensure amc is in packs for manual selection
+                    item.amc = amcPacks; // AMC is already in packs
                     console.log(`Using AMC as order quantity for ${item.item_code}: ${amcPacks} packs`);
                 }
                 

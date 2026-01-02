@@ -30,7 +30,7 @@ BEGIN
     RETURN QUERY
     WITH 
     inventory_analysis AS (
-        SELECT 
+        SELECT DISTINCT ON (ia.item_code)
             ia.item_code,
             ia.item_name,
             ia.adjusted_amc,
@@ -39,9 +39,11 @@ BEGIN
         FROM inventory_analysis_new ia
         WHERE ia.branch_name = p_target_branch 
             AND ia.company_name = p_company
+        ORDER BY ia.item_code, ia.adjusted_amc DESC NULLS LAST
+        -- If multiple records exist for same item_code, prefer the one with highest adjusted_amc
     ),
     target_stock AS (
-        SELECT 
+        SELECT DISTINCT ON (tgt.item_code)
             tgt.item_code,
             tgt.item_name,
             tgt.stock_string,
@@ -49,15 +51,19 @@ BEGIN
         FROM current_stock tgt
         WHERE tgt.branch = p_target_branch 
             AND tgt.company = p_company
+        ORDER BY tgt.item_code, tgt.stock_pieces DESC NULLS LAST
+        -- If multiple records exist for same item_code, prefer the one with highest stock
     ),
     source_stock AS (
-        SELECT 
+        SELECT DISTINCT ON (src.item_code)
             src.item_code,
             src.stock_string,
             src.pack_size
         FROM current_stock src
         WHERE src.branch = p_source_branch 
             AND src.company = p_company
+        ORDER BY src.item_code, src.stock_pieces DESC NULLS LAST
+        -- If multiple records exist for same item_code, prefer the one with highest stock
     ),
     all_orders AS (
         SELECT 

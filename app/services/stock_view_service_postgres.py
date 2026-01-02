@@ -61,6 +61,22 @@ class StockViewServicePostgres:
             df = pd.DataFrame(snapshot_results)
             logger.info(f"Retrieved {len(df)} items from stock_snapshot()")
             
+            # CRITICAL: Deduplicate by item_code - only one record per item_code should exist
+            # If duplicates exist, keep the first one (or the one with most complete data)
+            if 'item_code' in df.columns:
+                before_dedup = len(df)
+                # Check for duplicates
+                duplicates = df[df.duplicated(subset=['item_code'], keep=False)]
+                if len(duplicates) > 0:
+                    logger.warning(f"⚠️ Found {len(duplicates)} duplicate item_code records - deduplicating")
+                    logger.warning(f"   Duplicate item_codes: {duplicates['item_code'].unique().tolist()[:10]}")
+                    # Keep first occurrence of each item_code
+                    df = df.drop_duplicates(subset=['item_code'], keep='first')
+                    after_dedup = len(df)
+                    logger.info(f"✅ Deduplicated: {before_dedup} → {after_dedup} records (removed {before_dedup - after_dedup} duplicates)")
+                else:
+                    logger.info(f"✅ No duplicates found - {len(df)} unique item_codes")
+            
             # Map columns for compatibility with existing frontend
             column_mapping = {
                 'target_stock_display': 'branch_stock_string',
