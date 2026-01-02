@@ -280,9 +280,20 @@ class IntegratedProcurementBot:
                 'message': f'Error creating purchase order: {str(e)}'
             }
     
+    def _get_database_name(self, company: str) -> str:
+        """Get database name for company"""
+        database_names = {
+            'NILA': 'PNLCUS0005DB',
+            'DAIMA': 'P0757DB'
+        }
+        return database_names.get(company.upper(), 'PNLCUS0005DB')
+    
     def create_branch_order(self, items_df: pd.DataFrame) -> Dict[str, Any]:
         """
         Create branch order via API
+        Branch orders are created item-by-item:
+        - First item creates the order (bdocid=0)
+        - Subsequent items use the returned bdocid and bdocnumber
         
         Args:
             items_df: DataFrame with items to order
@@ -299,28 +310,48 @@ class IntegratedProcurementBot:
                 }
             
             session = self.get_session()
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
             
-            # Get target branch code
-            target_branch_code = None
+            # Get target branch code (as string like "BR001")
+            target_branch_code_str = None
             if self.branch_to_code:
-                # Extract numeric part if needed
-                if isinstance(self.branch_to_code, str) and self.branch_to_code.startswith('BR'):
-                    try:
-                        target_branch_code = int(self.branch_to_code.replace('BR', ''))
-                    except:
-                        target_branch_code = int(self.branch_to_code) if self.branch_to_code.isdigit() else None
+                if isinstance(self.branch_to_code, str):
+                    if self.branch_to_code.startswith('BR'):
+                        target_branch_code_str = self.branch_to_code
+                    else:
+                        # Convert numeric to BR format
+                        try:
+                            num = int(self.branch_to_code)
+                            target_branch_code_str = f"BR{num:03d}"
+                        except:
+                            target_branch_code_str = self.branch_to_code
                 else:
-                    target_branch_code = int(self.branch_to_code) if str(self.branch_to_code).isdigit() else None
+                    # Convert numeric to BR format
+                    try:
+                        num = int(self.branch_to_code)
+                        target_branch_code_str = f"BR{num:03d}"
+                    except:
+                        target_branch_code_str = str(self.branch_to_code)
             
-            if not target_branch_code:
+            if not target_branch_code_str:
                 return {
                     'success': False,
                     'message': f'Invalid target branch code: {self.branch_to_code}'
                 }
             
-            # Prepare order items
-            order_items = []
+            # Get database name based on company
+            database_name = self._get_database_name(self.company)
+            
+            # Get current date in DD/MM/YYYY format
+            today = datetime.now()
+            date_str = today.strftime("%d/%m/%Y")
+            
+            # Filter valid items
+            valid_items = []
             for _, row in items_df.iterrows():
                 item_code = str(row.get('item_code', '')).strip()
                 quantity = float(row.get('order_quantity', 0))
@@ -328,52 +359,122 @@ class IntegratedProcurementBot:
                 if not item_code or quantity <= 0:
                     continue
                 
-                order_items.append({
-                    "dT_ItemCode": item_code,
-                    "dT_Quantity": quantity,
-                    "dT_Price": float(row.get('unit_price', 0)),
-                    "dT_Total": float(row.get('unit_price', 0)) * quantity
+                valid_items.append({
+                    'item_code': item_code,
+                    'item_name': str(row.get('item_name', '')).strip(),
+                    'quantity': quantity,
+                    'pack_size': float(row.get('pack_size', 1)),
+                    'unit_price': float(row.get('unit_price', 0))
                 })
             
-            if not order_items:
+            if not valid_items:
                 return {
                     'success': False,
                     'message': 'No valid items to order'
                 }
             
-            # Prepare order header
-            order_data = {
-                "hD2_SenderBranch": self.branch_code,  # Source branch (where order is coming from)
-                "hD2_ReceiverBranch": target_branch_code,  # Target branch (where order is going to)
-                "hD2_Reference": "",
-                "hD2_Comments": f"Created via PharmaStock Web App - Order to {self.branch_to_name}",
-                "hD2_Doneby": getattr(self.credential_manager, 'username', 'System'),
-                "details": order_items
-            }
+            # Initialize order document IDs (will be set after first item)
+            bdocid = 0
+            bdocnumber = ""
+            processed_count = 0
             
-            # Create order via API
-            url = f"{self.base_url}/api/BranchOrders/CreateBranchOrder"
-            response = session.post(url, json=order_data, headers=headers, timeout=30)
-            
-            if response.status_code in [200, 201]:
-                result = response.json()
-                order_number = result.get('docNumber') or result.get('orderNumber') or 'N/A'
-                self.order_doc_number = order_number
+            # Process items one by one
+            for idx, item in enumerate(valid_items):
+                # Prepare item payload
+                # Note: Quantity should be in packs (already in packs from AMC)
+                quantity_packs = int(round(item['quantity']))
                 
-                logger.info(f"✅ Branch order created: {order_number} (from {self.branch_name} to {self.branch_to_name})")
-                return {
-                    'success': True,
-                    'message': f'Branch order created successfully',
-                    'order_number': order_number,
-                    'processed_count': len(order_items)
+                item_payload = {
+                    "bcode": int(self.branch_code),  # Source branch code (numeric, e.g., 18)
+                    "branchToCode": target_branch_code_str,  # Target branch code (e.g., "BR001")
+                    "boddate": date_str,  # Order date (DD/MM/YYYY)
+                    "boddeldate": date_str,  # Delivery date (DD/MM/YYYY)
+                    "bodsuppref": "",  # Supplier reference (empty for branch orders)
+                    "bodcomments": "Created via PharmaStock Web App",  # Comments
+                    "bodpayterms": "0 DAYS",  # Payment terms
+                    "defpw": "W",  # Default pack/whole (W = whole)
+                    "itmcode": item['item_code'],
+                    "itmname": item['item_name'],
+                    "itmpackqty": int(item['pack_size']),  # Pack size (e.g., 1, 50)
+                    "itmpartwhole": "W",  # Part/whole (W = whole)
+                    "itmprice": float(item['unit_price']),
+                    "itmqty": str(quantity_packs),  # Quantity in packs as string
+                    "itmtax": "07",  # Tax code
+                    "itmlinedisc": 0  # Line discount (numeric)
                 }
-            else:
-                error_msg = response.text or f"HTTP {response.status_code}"
-                logger.error(f"❌ Branch order creation failed: {error_msg}")
-                return {
-                    'success': False,
-                    'message': f'Failed to create branch order: {error_msg}'
+                
+                # Prepare URL with query parameters
+                url_params = {
+                    "bdocid": bdocid,
+                    "bdocnumber": bdocnumber,
+                    "bdocdetid": 0,
+                    "dataBaseName": database_name
                 }
+                
+                url = f"{self.base_url}/api/BranchOrders/CreateBranchOrder"
+                
+                logger.info(f"📦 Adding item {idx + 1}/{len(valid_items)} to branch order: {item['item_code']} (qty: {item['quantity']})")
+                logger.debug(f"   URL params: {url_params}")
+                logger.debug(f"   Payload: {item_payload}")
+                
+                # Make API request
+                response = session.post(url, json=item_payload, params=url_params, headers=headers, timeout=30)
+                
+                logger.info(f"   Response status: {response.status_code}")
+                
+                if response.status_code in [200, 201]:
+                    try:
+                        result = response.json()
+                        logger.debug(f"   Response: {result}")
+                        
+                        # Extract bdocid and bdocnumber from response (for subsequent items)
+                        if idx == 0:
+                            # First item - get order ID and number from response
+                            # Try multiple possible response formats
+                            bdocid = result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
+                            bdocnumber = result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
+                            
+                            # If response is a dict with nested data, try to extract
+                            if isinstance(result, dict):
+                                # Check for nested structure
+                                if 'data' in result:
+                                    data = result['data']
+                                    bdocid = data.get('bdocid') or data.get('id') or bdocid
+                                    bdocnumber = data.get('bdocnumber') or data.get('docNumber') or bdocnumber
+                            
+                            if bdocid and bdocnumber:
+                                logger.info(f"✅ Branch order created: ID={bdocid}, Number={bdocnumber}")
+                                self.order_doc_number = bdocnumber
+                            else:
+                                logger.warning(f"⚠️ Order created but bdocid/bdocnumber not in response: {result}")
+                                logger.warning(f"   Full response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                                # Continue anyway - API might return order details in a different way
+                        
+                        processed_count += 1
+                        
+                    except ValueError as e:
+                        logger.error(f"❌ Failed to parse response JSON: {e}")
+                        logger.error(f"   Response text: {response.text[:500]}")
+                        return {
+                            'success': False,
+                            'message': f'Failed to parse API response: {str(e)}'
+                        }
+                else:
+                    error_text = response.text[:500] if response.text else "No error message"
+                    logger.error(f"❌ Failed to add item {idx + 1}: HTTP {response.status_code} - {error_text}")
+                    return {
+                        'success': False,
+                        'message': f'Failed to add item {idx + 1} to branch order: HTTP {response.status_code} - {error_text}'
+                    }
+            
+            # All items processed successfully
+            logger.info(f"✅ Branch order completed: {processed_count} items added (Order: {bdocnumber})")
+            return {
+                'success': True,
+                'message': f'Branch order created successfully',
+                'order_number': bdocnumber or 'N/A',
+                'processed_count': processed_count
+            }
                 
         except Exception as e:
             logger.error(f"❌ Error creating branch order: {e}")

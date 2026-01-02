@@ -173,7 +173,18 @@ async def run_procurement_bot(
             # - request.source_branch_name = source branch (where stock comes FROM) = where order comes FROM
             # The order should be created FROM source branch TO target branch
             branch_to_name = request.branch_name  # Target branch = where order is going TO
-            branch_to_code_str = str(branch_code)  # Target branch code (where order goes TO)
+            
+            # Convert target branch code to "BR001" format
+            if isinstance(branch_code, int):
+                branch_to_code_str = f"BR{branch_code:03d}"  # e.g., 1 -> "BR001", 18 -> "BR018"
+            elif isinstance(branch_code, str) and branch_code.startswith('BR'):
+                branch_to_code_str = branch_code
+            else:
+                try:
+                    num = int(branch_code)
+                    branch_to_code_str = f"BR{num:03d}"
+                except:
+                    branch_to_code_str = str(branch_code)
             
             # Get source branch code (where order comes FROM)
             source_branch_code = None
