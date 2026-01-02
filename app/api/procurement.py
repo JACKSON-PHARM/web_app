@@ -319,7 +319,13 @@ async def run_procurement_bot(
         if result.get('success'):
             # Extract order details from result
             order_number = result.get('order_number', bot.order_doc_number)
+            order_numbers = result.get('order_numbers', [])  # Array of order numbers (for multiple orders)
             processed_count = result.get('processed_count', len(selected_items))
+            total_orders = result.get('total_orders', 1)  # Number of orders created
+            
+            # If order_numbers array exists, use it; otherwise use single order_number
+            if order_numbers and len(order_numbers) > 0:
+                order_number = order_numbers[0]  # Use first order number as primary
             
             # Create result entries for each item
             for _, item in selected_items.iterrows():
@@ -339,15 +345,23 @@ async def run_procurement_bot(
             elif request.order_mode == "purchase_order":
                 target_branch = request.branch_name  # For purchase orders, target is the branch making the order
             
-            return {
+            response_data = {
                 "success": True,
                 "message": result.get('message', f"Processed {processed_count} items successfully"),
                 "results": results,
                 "total_items": len(results),
                 "successful_orders": processed_count,
-                "order_number": order_number,
+                "order_number": order_number,  # Primary order number (first one)
                 "order_mode": request.order_mode,
                 "target_branch": target_branch,
+            }
+            
+            # Add order_numbers array if multiple orders were created
+            if order_numbers and len(order_numbers) > 0:
+                response_data["order_numbers"] = order_numbers
+                response_data["total_orders"] = total_orders
+            
+            return response_data
                 "target_company": request.branch_company
             }
         else:

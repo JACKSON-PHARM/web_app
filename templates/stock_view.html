@@ -2089,7 +2089,10 @@
                 
                 if (result && result.success) {
                     totalSuccess += result.successful_orders || batch.length;
-                    if (result.order_number) {
+                    // Handle both single order_number and array of order_numbers
+                    if (result.order_numbers && Array.isArray(result.order_numbers)) {
+                        orderNumbers.push(...result.order_numbers);
+                    } else if (result.order_number) {
                         orderNumbers.push(result.order_number);
                     }
                     console.log(`✅ Batch ${batchNum} completed: ${result.successful_orders || batch.length} items`);

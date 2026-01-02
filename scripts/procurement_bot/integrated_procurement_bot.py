@@ -405,110 +405,134 @@ class IntegratedProcurementBot:
                     'message': 'No valid items to order'
                 }
             
-            # Initialize order document IDs (will be set after first item)
-            bdocid = 0
-            bdocnumber = ""
+            # Process items in batches of 10 per order
+            MAX_ITEMS_PER_ORDER = 10
             processed_count = 0
+            all_order_numbers = []
             
-            # Process items one by one
-            for idx, item in enumerate(valid_items):
-                # Prepare item payload
-                # Note: Quantity should be in packs (already in packs from AMC)
-                # Ensure quantity is at least 1 (API requires quantity >= 1)
-                quantity_packs = max(1, int(round(item['quantity'])))
-                if item['quantity'] < 1:
-                    logger.warning(f"⚠️ Item {item['item_code']} has quantity {item['quantity']} < 1, rounding up to 1")
+            # Split items into batches of max 10 items per order
+            item_batches = []
+            for i in range(0, len(valid_items), MAX_ITEMS_PER_ORDER):
+                item_batches.append(valid_items[i:i + MAX_ITEMS_PER_ORDER])
+            
+            logger.info(f"📦 Processing {len(valid_items)} items in {len(item_batches)} order(s) (max {MAX_ITEMS_PER_ORDER} items per order)")
+            
+            # Process each batch as a separate order
+            for batch_idx, batch_items in enumerate(item_batches):
+                # Initialize order document IDs for this batch (will be set after first item)
+                bdocid = 0
+                bdocnumber = ""
+                batch_processed = 0
                 
-                item_payload = {
-                    "bcode": int(self.branch_code),  # TARGET branch code (where order is CREATED) - numeric, e.g., 18
-                    "branchToCode": source_branch_code_str,  # SOURCE branch code (where stock comes FROM) - e.g., "BR001"
-                    "boddate": date_str,  # Order date (DD/MM/YYYY)
-                    "boddeldate": date_str,  # Delivery date (DD/MM/YYYY)
-                    "bodsuppref": "",  # Supplier reference (empty for branch orders)
-                    "bodcomments": "Created via PharmaStock Web App",  # Comments
-                    "bodpayterms": "0 DAYS",  # Payment terms
-                    "defpw": "W",  # Default pack/whole (W = whole)
-                    "itmcode": item['item_code'],
-                    "itmname": item['item_name'],
-                    "itmpackqty": int(item['pack_size']),  # Pack size (e.g., 1, 50)
-                    "itmpartwhole": "W",  # Part/whole (W = whole)
-                    "itmprice": float(item['unit_price']),
-                    "itmqty": str(quantity_packs),  # Quantity in packs as string
-                    "itmtax": "07",  # Tax code
-                    "itmlinedisc": 0  # Line discount (numeric)
-                }
+                logger.info(f"📋 Creating order {batch_idx + 1}/{len(item_batches)} with {len(batch_items)} items")
                 
-                # Prepare URL with query parameters
-                url_params = {
-                    "bdocid": bdocid,
-                    "bdocnumber": bdocnumber,
-                    "bdocdetid": 0,
-                    "dataBaseName": database_name
-                }
-                
-                url = f"{self.base_url}/api/BranchOrders/CreateBranchOrder"
-                
-                logger.info(f"📦 Adding item {idx + 1}/{len(valid_items)} to branch order: {item['item_code']} (qty: {item['quantity']})")
-                logger.debug(f"   URL params: {url_params}")
-                logger.debug(f"   Payload: {item_payload}")
-                
-                # Make API request (disable SSL verification for self-signed certificates)
-                response = session.post(url, json=item_payload, params=url_params, headers=headers, timeout=30, verify=False)
-                
-                logger.info(f"   Response status: {response.status_code}")
-                
-                if response.status_code in [200, 201]:
-                    try:
-                        result = response.json()
-                        logger.debug(f"   Response: {result}")
-                        
-                        # Extract bdocid and bdocnumber from response (for subsequent items)
-                        if idx == 0:
-                            # First item - get order ID and number from response
-                            # Try multiple possible response formats
-                            bdocid = result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
-                            bdocnumber = result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
+                # Process items one by one within this batch
+                for idx, item in enumerate(batch_items):
+                    # Prepare item payload
+                    # Note: Quantity should be in packs (already in packs from AMC)
+                    # Ensure quantity is at least 1 (API requires quantity >= 1)
+                    quantity_packs = max(1, int(round(item['quantity'])))
+                    if item['quantity'] < 1:
+                        logger.warning(f"⚠️ Item {item['item_code']} has quantity {item['quantity']} < 1, rounding up to 1")
+                    
+                    item_payload = {
+                        "bcode": int(self.branch_code),  # TARGET branch code (where order is CREATED) - numeric, e.g., 18
+                        "branchToCode": source_branch_code_str,  # SOURCE branch code (where stock comes FROM) - e.g., "BR001"
+                        "boddate": date_str,  # Order date (DD/MM/YYYY)
+                        "boddeldate": date_str,  # Delivery date (DD/MM/YYYY)
+                        "bodsuppref": "",  # Supplier reference (empty for branch orders)
+                        "bodcomments": "URGENT",  # Comments
+                        "bodpayterms": "0 DAYS",  # Payment terms
+                        "defpw": "W",  # Default pack/whole (W = whole)
+                        "itmcode": item['item_code'],
+                        "itmname": item['item_name'],
+                        "itmpackqty": int(item['pack_size']),  # Pack size (e.g., 1, 50)
+                        "itmpartwhole": "W",  # Part/whole (W = whole)
+                        "itmprice": float(item['unit_price']),
+                        "itmqty": str(quantity_packs),  # Quantity in packs as string
+                        "itmtax": "07",  # Tax code
+                        "itmlinedisc": 0  # Line discount (numeric)
+                    }
+                    
+                    # Prepare URL with query parameters
+                    url_params = {
+                        "bdocid": bdocid,
+                        "bdocnumber": bdocnumber,
+                        "bdocdetid": 0,
+                        "dataBaseName": database_name
+                    }
+                    
+                    url = f"{self.base_url}/api/BranchOrders/CreateBranchOrder"
+                    
+                    logger.info(f"📦 Adding item {idx + 1}/{len(batch_items)} to order {batch_idx + 1}: {item['item_code']} (qty: {item['quantity']})")
+                    logger.debug(f"   URL params: {url_params}")
+                    logger.debug(f"   Payload: {item_payload}")
+                    
+                    # Make API request (disable SSL verification for self-signed certificates)
+                    response = session.post(url, json=item_payload, params=url_params, headers=headers, timeout=30, verify=False)
+                    
+                    logger.info(f"   Response status: {response.status_code}")
+                    
+                    if response.status_code in [200, 201]:
+                        try:
+                            result = response.json()
+                            logger.debug(f"   Response: {result}")
                             
-                            # If response is a dict with nested data, try to extract
-                            if isinstance(result, dict):
-                                # Check for nested structure
-                                if 'data' in result:
-                                    data = result['data']
-                                    bdocid = data.get('bdocid') or data.get('id') or bdocid
-                                    bdocnumber = data.get('bdocnumber') or data.get('docNumber') or bdocnumber
+                            # Extract bdocid and bdocnumber from response (for subsequent items in this batch)
+                            if idx == 0:
+                                # First item in batch - get order ID and number from response
+                                # Try multiple possible response formats
+                                bdocid = result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
+                                bdocnumber = result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
+                                
+                                # If response is a dict with nested data, try to extract
+                                if isinstance(result, dict):
+                                    # Check for nested structure
+                                    if 'data' in result:
+                                        data = result['data']
+                                        bdocid = data.get('bdocid') or data.get('id') or bdocid
+                                        bdocnumber = data.get('bdocnumber') or data.get('docNumber') or bdocnumber
+                                
+                                if bdocid and bdocnumber:
+                                    logger.info(f"✅ Branch order {batch_idx + 1} created: ID={bdocid}, Number={bdocnumber}")
+                                    all_order_numbers.append(bdocnumber)
+                                    if batch_idx == 0:
+                                        self.order_doc_number = bdocnumber  # Store first order number
+                                else:
+                                    logger.warning(f"⚠️ Order created but bdocid/bdocnumber not in response: {result}")
+                                    logger.warning(f"   Full response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                                    # Continue anyway - API might return order details in a different way
                             
-                            if bdocid and bdocnumber:
-                                logger.info(f"✅ Branch order created: ID={bdocid}, Number={bdocnumber}")
-                                self.order_doc_number = bdocnumber
-                            else:
-                                logger.warning(f"⚠️ Order created but bdocid/bdocnumber not in response: {result}")
-                                logger.warning(f"   Full response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
-                                # Continue anyway - API might return order details in a different way
-                        
-                        processed_count += 1
-                        
-                    except ValueError as e:
-                        logger.error(f"❌ Failed to parse response JSON: {e}")
-                        logger.error(f"   Response text: {response.text[:500]}")
+                            batch_processed += 1
+                            processed_count += 1
+                            
+                        except ValueError as e:
+                            logger.error(f"❌ Failed to parse response JSON: {e}")
+                            logger.error(f"   Response text: {response.text[:500]}")
+                            return {
+                                'success': False,
+                                'message': f'Failed to parse API response: {str(e)}'
+                            }
+                    else:
+                        error_text = response.text[:500] if response.text else "No error message"
+                        logger.error(f"❌ Failed to add item {idx + 1} to order {batch_idx + 1}: HTTP {response.status_code} - {error_text}")
                         return {
                             'success': False,
-                            'message': f'Failed to parse API response: {str(e)}'
+                            'message': f'Failed to add item {idx + 1} to branch order {batch_idx + 1}: HTTP {response.status_code} - {error_text}'
                         }
-                else:
-                    error_text = response.text[:500] if response.text else "No error message"
-                    logger.error(f"❌ Failed to add item {idx + 1}: HTTP {response.status_code} - {error_text}")
-                    return {
-                        'success': False,
-                        'message': f'Failed to add item {idx + 1} to branch order: HTTP {response.status_code} - {error_text}'
-                    }
+                
+                # Batch completed
+                logger.info(f"✅ Order {batch_idx + 1} completed: {batch_processed} items added (Order: {bdocnumber})")
             
             # All items processed successfully
-            logger.info(f"✅ Branch order completed: {processed_count} items added (Order: {bdocnumber})")
+            logger.info(f"✅ All branch orders completed: {processed_count} items in {len(item_batches)} order(s)")
             return {
                 'success': True,
-                'message': f'Branch order created successfully',
-                'order_number': bdocnumber or 'N/A',
-                'processed_count': processed_count
+                'message': f'Branch order(s) created successfully',
+                'order_number': all_order_numbers[0] if all_order_numbers else 'N/A',
+                'order_numbers': all_order_numbers,  # Return all order numbers
+                'processed_count': processed_count,
+                'total_orders': len(item_batches)
             }
                 
         except Exception as e:
