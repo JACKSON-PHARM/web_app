@@ -490,19 +490,19 @@ class IntegratedProcurementBot:
                             logger.info(f"   Response JSON: {result}")
                             logger.debug(f"   Full response: {result}")
                             
-                            # Extract bdocid and bdocnumber from response (for subsequent items in this batch)
-                            # Always try to extract, but only use for first item to create order
-                            # For subsequent items, we should already have bdocid and bdocnumber from first item
-                            extracted_bdocid = result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
-                            extracted_bdocnumber = result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
+                            # Extract bdocid and bdocnumber from response
+                            # API returns: {'documentId': 18019776, 'docNumber': 'AOD18019776', 'bdocdetid': 584904}
+                            # documentId = bdocid, docNumber = bdocnumber
+                            extracted_bdocid = result.get('documentId') or result.get('bdocid') or result.get('id') or result.get('orderId') or result.get('docId') or 0
+                            extracted_bdocnumber = result.get('docNumber') or result.get('bdocnumber') or result.get('docNumber') or result.get('orderNumber') or result.get('number') or ""
                             
                             # If response is a dict with nested data, try to extract
                             if isinstance(result, dict):
                                 # Check for nested structure
                                 if 'data' in result:
                                     data = result['data']
-                                    extracted_bdocid = data.get('bdocid') or data.get('id') or extracted_bdocid
-                                    extracted_bdocnumber = data.get('bdocnumber') or data.get('docNumber') or extracted_bdocnumber
+                                    extracted_bdocid = data.get('documentId') or data.get('bdocid') or data.get('id') or extracted_bdocid
+                                    extracted_bdocnumber = data.get('docNumber') or data.get('bdocnumber') or data.get('docNumber') or extracted_bdocnumber
                             
                             # For first item, use extracted values to create the order
                             if idx == 0:
@@ -513,9 +513,37 @@ class IntegratedProcurementBot:
                                     all_order_numbers.append(bdocnumber)
                                     if batch_idx == 0:
                                         self.order_doc_number = bdocnumber  # Store first order number
+                                    
+                                    # Verify order was created by GETting it
+                                    try:
+                                        logger.info(f"🔍 Verifying order {bdocnumber} (ID: {bdocid})...")
+                                        verify_url = f"{self.base_url}/api/BranchOrders/GetBranchOrder"
+                                        verify_params = {
+                                            "bcode": int(self.branch_code),
+                                            "ordernum": bdocid,  # Use numeric bdocid
+                                            "dataBaseName": database_name
+                                        }
+                                        verify_response = session.get(verify_url, params=verify_params, headers=headers, timeout=30, verify=False)
+                                        if verify_response.status_code == 200:
+                                            verify_data = verify_response.json()
+                                            if isinstance(verify_data, list) and len(verify_data) > 0:
+                                                # Extract bdocid from line_ID2 if available
+                                                first_line = verify_data[0]
+                                                verified_bdocid = first_line.get('line_ID2') or bdocid
+                                                verified_bdocnumber = first_line.get('hD2_DocNum') or bdocnumber
+                                                logger.info(f"✅ Order verified: ID={verified_bdocid}, Number={verified_bdocnumber}")
+                                                # Update to use verified values
+                                                bdocid = int(verified_bdocid) if verified_bdocid else bdocid
+                                                bdocnumber = str(verified_bdocnumber) if verified_bdocnumber else bdocnumber
+                                            else:
+                                                logger.warning(f"⚠️ Order verification returned empty array")
+                                        else:
+                                            logger.warning(f"⚠️ Order verification failed: HTTP {verify_response.status_code}")
+                                    except Exception as verify_error:
+                                        logger.warning(f"⚠️ Could not verify order (non-fatal): {verify_error}")
                                 else:
                                     # Try to extract from response text or check if response indicates success
-                                    logger.warning(f"⚠️ Order created but bdocid/bdocnumber not in response JSON")
+                                    logger.warning(f"⚠️ Order created but documentId/docNumber not in response JSON")
                                     logger.warning(f"   Response type: {type(result)}")
                                     logger.warning(f"   Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
                                     logger.warning(f"   Full response: {result}")
@@ -531,7 +559,35 @@ class IntegratedProcurementBot:
                                             'message': f'Failed to get order ID/number from first item response. Response: {result}'
                                         }
                             else:
-                                # For subsequent items, verify we're using the same order
+                                # For subsequent items, GET the order first to verify it exists and get correct bdocid
+                                try:
+                                    logger.info(f"🔍 Getting order details for {bdocnumber} (ID: {bdocid}) before adding item {idx + 1}...")
+                                    get_order_url = f"{self.base_url}/api/BranchOrders/GetBranchOrder"
+                                    get_order_params = {
+                                        "bcode": int(self.branch_code),
+                                        "ordernum": bdocid,  # Use numeric bdocid
+                                        "dataBaseName": database_name
+                                    }
+                                    get_order_response = session.get(get_order_url, params=get_order_params, headers=headers, timeout=30, verify=False)
+                                    if get_order_response.status_code == 200:
+                                        order_data = get_order_response.json()
+                                        if isinstance(order_data, list) and len(order_data) > 0:
+                                            # Extract bdocid from line_ID2 and docNumber from hD2_DocNum
+                                            first_line = order_data[0]
+                                            verified_bdocid = first_line.get('line_ID2') or bdocid
+                                            verified_bdocnumber = first_line.get('hD2_DocNum') or bdocnumber
+                                            logger.info(f"✅ Order retrieved: ID={verified_bdocid}, Number={verified_bdocnumber}, Items in order: {len(order_data)}")
+                                            # Update to use verified values
+                                            bdocid = int(verified_bdocid) if verified_bdocid else bdocid
+                                            bdocnumber = str(verified_bdocnumber) if verified_bdocnumber else bdocnumber
+                                        else:
+                                            logger.warning(f"⚠️ Order GET returned empty array, using existing bdocid/bdocnumber")
+                                    else:
+                                        logger.warning(f"⚠️ Order GET failed: HTTP {get_order_response.status_code}, using existing bdocid/bdocnumber")
+                                except Exception as get_error:
+                                    logger.warning(f"⚠️ Could not GET order before adding item (non-fatal): {get_error}")
+                                
+                                # Verify we're using the same order
                                 if extracted_bdocid and extracted_bdocnumber:
                                     # Verify it matches our current order (should be the same)
                                     if extracted_bdocid != bdocid or extracted_bdocnumber != bdocnumber:
