@@ -163,13 +163,25 @@ async def run_procurement_bot(
         )
         logger.info(f"✅ Using user-provided credentials for procurement (company: {request.company}, user: {request.username})")
         
-        # Get source branch code if provided (for branch orders)
-        source_branch_code_str = None
-        if request.source_branch_name and request.source_branch_company:
-            for branch in ALL_BRANCHES:
-                if branch['branch_name'] == request.source_branch_name and branch['company'] == request.source_branch_company:
-                    source_branch_code_str = branch.get('branchcode') or branch.get('branch_code')
-                    break
+        # For branch orders: branch_to_name should be the TARGET branch (where order is going TO)
+        # For purchase orders: branch_to_name is not used
+        branch_to_name = None
+        branch_to_code_str = None
+        
+        if request.order_mode == "branch_order":
+            # For branch orders, the target branch (where order is going TO) is request.branch_name
+            # The source branch (where stock is coming FROM) is request.source_branch_name
+            branch_to_name = request.branch_name  # Target branch = where order is going TO
+            branch_to_code_str = str(branch_code)  # Use the target branch code
+            logger.info(f"Branch order: Target branch (where order goes TO) = {branch_to_name}, Source branch (where stock comes FROM) = {request.source_branch_name}")
+        else:
+            # For purchase orders, get source branch code if provided
+            if request.source_branch_name and request.source_branch_company:
+                for branch in ALL_BRANCHES:
+                    if branch['branch_name'] == request.source_branch_name and branch['company'] == request.source_branch_company:
+                        branch_to_name = request.source_branch_name
+                        branch_to_code_str = branch.get('branchcode') or branch.get('branch_code')
+                        break
         
         # Initialize procurement bot
         bot = IntegratedProcurementBot(
@@ -179,8 +191,8 @@ async def run_procurement_bot(
             company=request.branch_company,
             credential_manager=cred_manager,
             order_mode=request.order_mode,
-            branch_to_name=request.source_branch_name,
-            branch_to_code=source_branch_code_str,  # Use branch code string (e.g., "BR001")
+            branch_to_name=branch_to_name,  # Target branch for branch orders, source branch for purchase orders
+            branch_to_code=branch_to_code_str,  # Use branch code string (e.g., "BR001")
             manual_selection=request.manual_selection,
             supplier_code=getattr(request, 'supplier_code', None),  # Optional supplier code
             supplier_name=getattr(request, 'supplier_name', None)  # Optional supplier name
@@ -255,13 +267,23 @@ async def run_procurement_bot(
                     "order_doc": order_number
                 })
             
+            # Determine target branch for notification
+            target_branch = request.branch_name
+            if request.order_mode == "branch_order":
+                target_branch = request.branch_name  # For branch orders, target is where order goes TO
+            elif request.order_mode == "purchase_order":
+                target_branch = request.branch_name  # For purchase orders, target is the branch making the order
+            
             return {
                 "success": True,
                 "message": result.get('message', f"Processed {processed_count} items successfully"),
                 "results": results,
                 "total_items": len(results),
                 "successful_orders": processed_count,
-                "order_number": order_number
+                "order_number": order_number,
+                "order_mode": request.order_mode,
+                "target_branch": target_branch,
+                "target_company": request.branch_company
             }
         else:
             # Process failed

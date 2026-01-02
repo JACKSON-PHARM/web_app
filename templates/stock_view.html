@@ -1640,6 +1640,17 @@
         // Reset form
         document.getElementById('procurementForm').reset();
         document.querySelector('input[name="orderMode"][value="purchase_order"]').checked = true;
+        
+        // Load saved username from localStorage
+        const savedUsername = localStorage.getItem('procurement_username');
+        const savedCompany = localStorage.getItem('procurement_company');
+        if (savedUsername) {
+            document.getElementById('procurementUsername').value = savedUsername;
+        }
+        if (savedCompany) {
+            document.getElementById('procurementCompany').value = savedCompany;
+        }
+        
         toggleProcurementOptions();
         
         // Load suppliers if branch code is available
@@ -1946,6 +1957,10 @@
             return;
         }
         
+        // Save username and company to localStorage for next time
+        localStorage.setItem('procurement_username', procurementUsername);
+        localStorage.setItem('procurement_company', procurementCompany);
+        
         // Get source branch (for branch orders)
         const sourceBranchValue = document.getElementById('sourceBranchSelect').value || `${branch}|${company}`;
         const [sourceBranch, sourceCompany] = sourceBranchValue.split('|').map(s => s.trim());
@@ -1965,16 +1980,16 @@
             await createBatchedOrders(selectedItems, branch, company, sourceBranch, sourceCompany, 'purchase_order', supplierCode, supplierName, procurementCompany, procurementUsername, procurementPassword);
         } else {
             // Branch order mode
-            const destinationBranchValue = document.getElementById('destinationBranchSelect').value;
-            if (!destinationBranchValue) {
-                alert('Please select a destination branch for the branch order');
-                return;
-            }
-            
-            const [destBranch, destCompany] = destinationBranchValue.split('|').map(s => s.trim());
+            // For branch orders, the order goes TO the target branch (where we're viewing stock)
+            // The source branch is where stock is coming FROM
+            // So target branch = branch (where order goes TO), source branch = sourceBranch (where stock comes FROM)
+            const targetBranch = branch;  // Target branch = where order is going TO
+            const targetCompany = company;
             
             // Batch items if more than 20
-            await createBatchedOrders(selectedItems, branch, company, destBranch, destCompany, 'branch_order', null, null, procurementCompany, procurementUsername, procurementPassword);
+            // Note: For branch orders, branch parameter is the target branch (where order goes TO)
+            // sourceBranch parameter is the source branch (where stock comes FROM)
+            await createBatchedOrders(selectedItems, targetBranch, targetCompany, sourceBranch, sourceCompany, 'branch_order', null, null, procurementCompany, procurementUsername, procurementPassword);
         }
     }
     
@@ -2040,15 +2055,21 @@
             }
         }
         
-        // Show summary
+        // Show summary with target branch information
         const orderType = orderMode === 'purchase_order' ? 'Purchase Order' : 'Branch Order';
         let message = `✅ ${orderType} Creation Complete!\n\n`;
-        message += `Total Items: ${selectedItems.length}\n`;
+        message += `Target Branch: ${branch} (${company})\n`;
+        if (orderMode === 'branch_order') {
+            message += `Order submitted to: ${branch} (${company})\n`;
+        } else {
+            message += `Purchase order created for: ${branch} (${company})\n`;
+        }
+        message += `\nTotal Items: ${selectedItems.length}\n`;
         message += `Successful: ${totalSuccess}\n`;
         message += `Failed: ${totalFailed}\n`;
         message += `Batches: ${batches.length}\n`;
         if (orderNumbers.length > 0) {
-            message += `\nOrder Numbers:\n${orderNumbers.join('\n')}`;
+            message += `\nOrder Number(s):\n${orderNumbers.join('\n')}`;
         }
         
         alert(message);
