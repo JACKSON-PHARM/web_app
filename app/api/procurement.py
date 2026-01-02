@@ -210,11 +210,16 @@ async def run_procurement_bot(
             actual_branch_name = request.source_branch_name
             actual_branch_code = source_branch_code if 'source_branch_code' in locals() else branch_code
         
+        # CRITICAL: Use request.company (procurement company) for authentication, not branch_company
+        # The user selects the company (NILA/DAIMA) for API authentication
+        # This is different from branch_company which is the branch's company
+        procurement_company = request.company  # Company selected by user for authentication
+        
         bot = IntegratedProcurementBot(
             stock_view_df=items_df,
             branch_name=actual_branch_name,  # Source branch for branch orders, branch making order for purchase orders
             branch_code=actual_branch_code,  # Source branch code for branch orders
-            company=request.branch_company,
+            company=procurement_company,  # Use procurement company for authentication (user-selected)
             credential_manager=cred_manager,
             order_mode=request.order_mode,
             branch_to_name=branch_to_name,  # Target branch for branch orders (where order goes TO)
@@ -223,6 +228,8 @@ async def run_procurement_bot(
             supplier_code=getattr(request, 'supplier_code', None),  # Optional supplier code
             supplier_name=getattr(request, 'supplier_name', None)  # Optional supplier name
         )
+        
+        logger.info(f"🔐 Procurement bot initialized: company={procurement_company} (for auth), branch={actual_branch_name}, mode={request.order_mode}")
         
         # Prepare data
         prepared_df = bot.prepare_data()

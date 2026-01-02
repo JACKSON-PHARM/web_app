@@ -119,15 +119,19 @@ class IntegratedProcurementBot:
     def get_token(self) -> Optional[str]:
         """Get authentication token"""
         try:
+            # Use the company for authentication (this is the procurement company selected by user)
+            auth_company = self.company
+            logger.info(f"🔐 Getting token for company: {auth_company}")
+            
             # First try to get token from credential manager
-            token = self.credential_manager.get_valid_token(self.company)
+            token = self.credential_manager.get_valid_token(auth_company)
             if token:
                 logger.info(f"✅ Got token from credential manager cache")
                 return token
             
             # If no cached token, get credentials and authenticate
-            logger.info(f"🔐 No cached token, authenticating with API...")
-            creds = self.credential_manager.get_credentials(self.company)
+            logger.info(f"🔐 No cached token, authenticating with API for company: {auth_company}...")
+            creds = self.credential_manager.get_credentials(auth_company)
             if not creds:
                 logger.error(f"❌ No credentials found for company: {self.company}")
                 return None
