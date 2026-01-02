@@ -182,24 +182,13 @@ async def run_procurement_bot(
         
         if request.order_mode == "branch_order":
             # For branch orders:
-            # - request.branch_name = target branch (where we're viewing stock) = where order goes TO
-            # - request.source_branch_name = source branch (where stock comes FROM) = where order comes FROM
-            # The order should be created FROM source branch TO target branch
-            branch_to_name = request.branch_name  # Target branch = where order is going TO
+            # - request.branch_name = target branch (where we're viewing stock) = where order is CREATED
+            # - request.source_branch_name = source branch (where stock comes FROM) = where stock is requested FROM
+            # The order is CREATED at target branch, requesting stock FROM source branch
+            # So branch_to_name/branch_to_code should be SOURCE branch (where stock comes FROM)
+            branch_to_name = request.source_branch_name  # Source branch = where stock comes FROM
             
-            # Convert target branch code to "BR001" format
-            if isinstance(branch_code, int):
-                branch_to_code_str = f"BR{branch_code:03d}"  # e.g., 1 -> "BR001", 18 -> "BR018"
-            elif isinstance(branch_code, str) and branch_code.startswith('BR'):
-                branch_to_code_str = branch_code
-            else:
-                try:
-                    num = int(branch_code)
-                    branch_to_code_str = f"BR{num:03d}"
-                except:
-                    branch_to_code_str = str(branch_code)
-            
-            # Get source branch code (where order comes FROM)
+            # Get source branch code (where stock comes FROM) and convert to "BR001" format
             source_branch_code = None
             if request.source_branch_name and request.source_branch_company:
                 for branch in ALL_BRANCHES:
@@ -214,7 +203,22 @@ async def run_procurement_bot(
                             source_branch_code = int(source_branch_code_raw) if str(source_branch_code_raw).isdigit() else None
                         break
             
-            logger.info(f"Branch order: Target branch (where order goes TO) = {branch_to_name} (code: {branch_to_code_str}), Source branch (where order comes FROM) = {request.source_branch_name} (code: {source_branch_code})")
+            # Convert source branch code to "BR001" format for branchToCode
+            if source_branch_code:
+                if isinstance(source_branch_code, int):
+                    branch_to_code_str = f"BR{source_branch_code:03d}"  # e.g., 1 -> "BR001", 18 -> "BR018"
+                elif isinstance(source_branch_code, str) and source_branch_code.startswith('BR'):
+                    branch_to_code_str = source_branch_code
+                else:
+                    try:
+                        num = int(source_branch_code)
+                        branch_to_code_str = f"BR{num:03d}"
+                    except:
+                        branch_to_code_str = str(source_branch_code)
+            else:
+                branch_to_code_str = None
+            
+            logger.info(f"Branch order: Target branch (where order is CREATED) = {request.branch_name} (code: {branch_code}), Source branch (where stock comes FROM) = {branch_to_name} (code: {branch_to_code_str})")
         else:
             # For purchase orders: user selects external suppliers, so branch_to_name is not used
             # Source branch selection is maintained for compatibility but not used for branch_to_name
@@ -224,15 +228,19 @@ async def run_procurement_bot(
             logger.info(f"Purchase order: Branch = {request.branch_name}, Supplier = {getattr(request, 'supplier_name', 'N/A')}, Source branch (for reference only) = {request.source_branch_name}")
         
         # Initialize procurement bot
-        # For branch orders: branch_name should be source branch (where order comes FROM)
+        # For branch orders: 
+        # - branch_name/branch_code should be TARGET branch (where order is CREATED)
+        # - branch_to_name/branch_to_code should be SOURCE branch (where stock comes FROM)
         # For purchase orders: branch_name is the branch making the order
-        actual_branch_name = request.branch_name
-        actual_branch_code = branch_code
+        actual_branch_name = request.branch_name  # Target branch (where order is created)
+        actual_branch_code = branch_code  # Target branch code
         
-        if request.order_mode == "branch_order" and request.source_branch_name:
-            # For branch orders, the order comes FROM source branch
-            actual_branch_name = request.source_branch_name
-            actual_branch_code = source_branch_code if 'source_branch_code' in locals() else branch_code
+        if request.order_mode == "branch_order":
+            # For branch orders, the order is CREATED at the target branch
+            # Stock comes FROM the source branch
+            # So we keep target branch as actual_branch_name/branch_code
+            # And set branch_to to source branch
+            pass  # Already set correctly above
         
         # CRITICAL: Use request.company (procurement company) for authentication, not branch_company
         # The user selects the company (NILA/DAIMA) for API authentication

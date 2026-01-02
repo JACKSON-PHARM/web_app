@@ -336,31 +336,34 @@ class IntegratedProcurementBot:
                 "Accept": "application/json"
             }
             
-            # Get target branch code (as string like "BR001")
-            target_branch_code_str = None
+            # For branch orders:
+            # - self.branch_code = TARGET branch code (where order is CREATED) - used as bcode
+            # - self.branch_to_code = SOURCE branch code (where stock comes FROM) - used as branchToCode
+            # Get source branch code (as string like "BR001") for branchToCode
+            source_branch_code_str = None
             if self.branch_to_code:
                 if isinstance(self.branch_to_code, str):
                     if self.branch_to_code.startswith('BR'):
-                        target_branch_code_str = self.branch_to_code
+                        source_branch_code_str = self.branch_to_code
                     else:
                         # Convert numeric to BR format
                         try:
                             num = int(self.branch_to_code)
-                            target_branch_code_str = f"BR{num:03d}"
+                            source_branch_code_str = f"BR{num:03d}"
                         except:
-                            target_branch_code_str = self.branch_to_code
+                            source_branch_code_str = self.branch_to_code
                 else:
                     # Convert numeric to BR format
                     try:
                         num = int(self.branch_to_code)
-                        target_branch_code_str = f"BR{num:03d}"
+                        source_branch_code_str = f"BR{num:03d}"
                     except:
-                        target_branch_code_str = str(self.branch_to_code)
+                        source_branch_code_str = str(self.branch_to_code)
             
-            if not target_branch_code_str:
+            if not source_branch_code_str:
                 return {
                     'success': False,
-                    'message': f'Invalid target branch code: {self.branch_to_code}'
+                    'message': f'Invalid source branch code: {self.branch_to_code}'
                 }
             
             # Get database name based on company
@@ -417,8 +420,8 @@ class IntegratedProcurementBot:
                     logger.warning(f"⚠️ Item {item['item_code']} has quantity {item['quantity']} < 1, rounding up to 1")
                 
                 item_payload = {
-                    "bcode": int(self.branch_code),  # Source branch code (numeric, e.g., 18)
-                    "branchToCode": target_branch_code_str,  # Target branch code (e.g., "BR001")
+                    "bcode": int(self.branch_code),  # TARGET branch code (where order is CREATED) - numeric, e.g., 18
+                    "branchToCode": source_branch_code_str,  # SOURCE branch code (where stock comes FROM) - e.g., "BR001"
                     "boddate": date_str,  # Order date (DD/MM/YYYY)
                     "boddeldate": date_str,  # Delivery date (DD/MM/YYYY)
                     "bodsuppref": "",  # Supplier reference (empty for branch orders)
