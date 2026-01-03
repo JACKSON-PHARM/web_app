@@ -67,6 +67,18 @@ BEGIN
         ORDER BY src.item_code, src.stock_pieces DESC NULLS LAST
         -- If multiple records exist for same item_code, prefer the one with highest stock
     ),
+    item_names_fallback AS (
+        -- Get item names from current_stock table for any item_code (fallback for NO SALES items)
+        SELECT DISTINCT ON (cs.item_code)
+            cs.item_code,
+            cs.item_name
+        FROM current_stock cs
+        WHERE cs.item_name IS NOT NULL 
+            AND TRIM(cs.item_name) != '' 
+            AND UPPER(TRIM(cs.item_name)) NOT IN ('NO SALES', 'NO SALES DATA', 'NO SALES DATA ', 'NO SALES ')
+        ORDER BY cs.item_code, cs.stock_pieces DESC NULLS LAST
+        -- Prefer item_name from records with highest stock
+    ),
     all_orders AS (
         SELECT 
             po.item_code,
@@ -136,12 +148,38 @@ BEGIN
     )
     SELECT 
         ia.item_code,
-        -- Prioritize stock table item_name over inventory_analysis if inventory_analysis has "NO SALES"
+        -- Prioritize stock table item_name over inventory_analysis if inventory_analysis has "NO SALES" or "NO SALES DATA"
         CASE 
-            WHEN ia.item_name IS NULL OR UPPER(TRIM(ia.item_name)) = 'NO SALES' THEN 
-                COALESCE(tgt.item_name, src.item_name, '')
+            WHEN ia.item_name IS NULL 
+                 OR UPPER(TRIM(ia.item_name)) IN ('NO SALES', 'NO SALES DATA', 'NO SALES DATA ', 'NO SALES ') 
+                 OR UPPER(TRIM(ia.item_name)) LIKE 'NO SALES%' THEN 
+                -- If inventory_analysis has NO SALES, use item_name from stock tables or fallback
+                COALESCE(
+                    NULLIF(TRIM(tgt.item_name), ''),  -- Target branch item_name (if not empty)
+                    NULLIF(TRIM(src.item_name), ''),   -- Source branch item_name (if not empty)
+                    NULLIF(TRIM(inf.item_name), ''),   -- Fallback: any item_name from current_stock
+                    ''                                  -- Final fallback: empty string
+                )
             ELSE 
-                COALESCE(ia.item_name, tgt.item_name, src.item_name, '')
+                -- If inventory_analysis has valid item_name, use it, but fallback to stock tables if it's also NO SALES
+                CASE 
+                    WHEN UPPER(TRIM(ia.item_name)) IN ('NO SALES', 'NO SALES DATA', 'NO SALES DATA ', 'NO SALES ')
+                         OR UPPER(TRIM(ia.item_name)) LIKE 'NO SALES%' THEN
+                        COALESCE(
+                            NULLIF(TRIM(tgt.item_name), ''),
+                            NULLIF(TRIM(src.item_name), ''),
+                            NULLIF(TRIM(inf.item_name), ''),
+                            ''
+                        )
+                    ELSE
+                        COALESCE(
+                            NULLIF(TRIM(ia.item_name), ''),
+                            NULLIF(TRIM(tgt.item_name), ''),
+                            NULLIF(TRIM(src.item_name), ''),
+                            NULLIF(TRIM(inf.item_name), ''),
+                            ''
+                        )
+                END
         END as item_name,
         COALESCE(tgt.pack_size, src.pack_size, 1)::NUMERIC as pack_size,
         COALESCE(ia.adjusted_amc, 0)::NUMERIC as adjusted_amc_packs,
@@ -162,6 +200,7 @@ BEGIN
     FROM inventory_analysis ia
     LEFT JOIN target_stock tgt ON ia.item_code = tgt.item_code
     LEFT JOIN source_stock src ON ia.item_code = src.item_code
+    LEFT JOIN item_names_fallback inf ON ia.item_code = inf.item_code
     LEFT JOIN last_order_info loi ON ia.item_code = loi.item_code
     LEFT JOIN last_invoice_info lii ON ia.item_code = lii.item_code
     LEFT JOIN last_supplier_invoice_info lsii ON ia.item_code = lsii.item_code
