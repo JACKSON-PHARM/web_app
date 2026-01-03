@@ -6,7 +6,7 @@ import os
 import sys
 import pandas as pd
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import requests
 from requests.adapters import HTTPAdapter
@@ -201,7 +201,8 @@ class IntegratedProcurementBot:
     
     def create_purchase_order(self, items_df: pd.DataFrame) -> Dict[str, Any]:
         """
-        Create purchase order via API
+        Create purchase order via API using MakePurchaseOrderHybridV2 endpoint
+        Matches the payload structure from the standalone procurement script
         
         Args:
             items_df: DataFrame with items to order
@@ -218,24 +219,87 @@ class IntegratedProcurementBot:
                 }
             
             session = self.get_session()
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Origin": "https://phamacoreonline.co.ke:5100",
+                "Referer": "https://phamacoreonline.co.ke:5100/",
+                "Accept": "application/json"
+            }
             
-            # Default price to use when unit_price is 0 or missing
-            DEFAULT_ITEM_PRICE = 5.0
+            # Default values matching standalone script
+            DEFAULT_ITEM_PRICE = 100.00
+            DEFAULT_VAT_CODE = "00"
+            DEFAULT_DISCOUNT = 0.01  # 1%
             
-            # Prepare order items
-            order_items = []
-            for _, row in items_df.iterrows():
+            # Ensure branch code is valid (cannot be 0)
+            if not self.branch_code or self.branch_code == 0:
+                return {
+                    'success': False,
+                    'message': f'Invalid branch code: {self.branch_code}. Branch code cannot be 0.'
+                }
+            
+            # Ensure supplier code and name are provided
+            if not self.supplier_code or not self.supplier_name:
+                return {
+                    'success': False,
+                    'message': 'Supplier code and name are required for purchase orders'
+                }
+            
+            # Initialize or reuse order document number
+            if not self.order_doc_number:
+                # Try to get existing order for today
+                try:
+                    today = datetime.now().strftime("%d/%m/%Y")
+                    get_orders_url = f"{self.base_url}/api/PurchaseOrder/GetPurchaseOrders"
+                    get_orders_params = {
+                        "bcode": self.branch_code,
+                        "startDate": today,
+                        "endDate": today
+                    }
+                    get_orders_response = session.get(
+                        get_orders_url,
+                        params=get_orders_params,
+                        headers=headers,
+                        timeout=30,
+                        verify=False
+                    )
+                    
+                    if get_orders_response.status_code == 200:
+                        orders = get_orders_response.json()
+                        if orders and len(orders) > 0:
+                            self.order_doc_number = str(orders[0].get("docNumber", ""))
+                            logger.info(f"Reusing existing order: {self.order_doc_number}")
+                    
+                    if not self.order_doc_number:
+                        # Generate new order number
+                        import random
+                        self.order_doc_number = f"P{datetime.now().strftime('%m%d')}{random.randint(1000, 9999)}"
+                        logger.info(f"Creating new order: {self.order_doc_number}")
+                except Exception as e:
+                    logger.warning(f"Could not check for existing orders, creating new: {e}")
+                    import random
+                    self.order_doc_number = f"P{datetime.now().strftime('%m%d')}{random.randint(1000, 9999)}"
+            
+            # Prepare order items in the format expected by MakePurchaseOrderHybridV2
+            item_list = []
+            total_excl = 0
+            now = datetime.now()
+            
+            for idx, (_, row) in enumerate(items_df.iterrows(), 1):
                 item_code = str(row.get('item_code', '')).strip()
+                item_name = str(row.get('item_name', 'Unknown')).strip()
                 quantity = float(row.get('order_quantity', 0))
                 unit_price = float(row.get('unit_price', 0))
+                amc = float(row.get('amc', 0))
                 
                 # Ensure quantity is at least 1 (API requires quantity >= 1)
-                quantity = max(1, quantity)
-                if row.get('order_quantity', 0) < 1:
-                    logger.warning(f"⚠️ Item {item_code} has quantity {row.get('order_quantity', 0)} < 1, rounding up to 1")
+                qty = max(1, int(round(quantity)))
+                if quantity < 1:
+                    logger.warning(f"⚠️ Item {item_code} has quantity {quantity} < 1, rounding up to 1")
                 
-                if not item_code or quantity <= 0:
+                if not item_code:
+                    logger.warning(f"⚠️ Skipping item with empty item_code")
                     continue
                 
                 # Use default price if unit_price is 0 or missing
@@ -243,49 +307,121 @@ class IntegratedProcurementBot:
                     unit_price = DEFAULT_ITEM_PRICE
                     logger.info(f"⚠️ Item {item_code} has no price, using default price: {DEFAULT_ITEM_PRICE}")
                 
-                order_items.append({
-                    "dT_ItemCode": item_code,
-                    "dT_Quantity": quantity,
-                    "dT_Price": unit_price,
-                    "dT_Total": unit_price * quantity
+                total = qty * unit_price
+                total_excl += total
+                
+                # Create informative comment
+                comment = (
+                    f"Auto-Order | AMC: {amc:.1f} | Stock: {row.get('branch_stock', 0)} | "
+                    f"Class: {row.get('abc_class', 'N/A')}"
+                )
+                
+                item_list.append({
+                    "itemCode": item_code,
+                    "itemName": item_name,
+                    "saleQty": f"{qty}W0P",
+                    "avgSale": f"{amc:.1f}W0P",
+                    "reqQty": f"{qty}W0P",
+                    "inStore": "0W0P",
+                    "var": f"{qty}W0P",
+                    "ordQty": f"{qty}W0P",
+                    "getsel": 1,
+                    "lastPrice": unit_price,
+                    "suppCode": self.supplier_code,
+                    "suppName": self.supplier_name,
+                    "packqty": 1,
+                    "ordQtyValue": float(qty),
+                    "tradeprice": unit_price,
+                    "comments": comment,
+                    "tableData": {"id": idx},
+                    "dT_Vat": DEFAULT_VAT_CODE,
+                    "dT_Disc": DEFAULT_DISCOUNT,
+                    "dT_Bonus": 0.0,
+                    "dT_Unit": 1.0,
+                    "dT_PW": "W",
+                    "dT_Total": total,
+                    "dT_Nett": total * (1 - DEFAULT_DISCOUNT)
                 })
             
-            if not order_items:
+            if not item_list:
                 return {
                     'success': False,
                     'message': 'No valid items to order'
                 }
             
-            # Prepare order header
-            order_data = {
-                "hD2_BranchCode": self.branch_code,
-                "hD2_SupplierCode": self.supplier_code or "",
-                "hD2_SupplierName": self.supplier_name or "",
-                "hD2_Reference": "",
-                "hD2_Comments": f"Created via PharmaStock Web App",
-                "hD2_Doneby": getattr(self.credential_manager, 'username', 'System'),
-                "details": order_items
+            # Calculate totals
+            total_discount = total_excl * DEFAULT_DISCOUNT
+            total_nett = total_excl - total_discount
+            
+            # Prepare payload matching standalone script structure
+            payload = {
+                "data": [{
+                    "dochybridneo": 1,
+                    "bcode": int(self.branch_code),  # Branch code (cannot be 0)
+                    "supCode": self.supplier_code,  # Supplier code
+                    "docNumber": self.order_doc_number,
+                    "itemList": item_list,
+                    "hD1_DocNum": self.order_doc_number,
+                    "hD2_Date": now.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "hD2_Expdeliv": (now + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S"),
+                    "suppName": self.supplier_name,
+                    "hD2_Comments": f"Auto-generated order | {len(item_list)} items | {now.strftime('%d/%m/%Y %H:%M')}",
+                    "hD2_Doneby": getattr(self.credential_manager, 'username', 'System'),
+                    "summ_Excl": total_excl,
+                    "summ_Nett": total_nett,
+                    "summ_Disc": total_discount,
+                    "summ_Total": total_excl
+                }]
             }
             
-            # Create order via API
-            url = f"{self.base_url}/api/PurchaseOrder/CreatePurchaseOrder"
-            response = session.post(url, json=order_data, headers=headers, timeout=30)
+            logger.info(f"Generated payload for {len(item_list)} items | Total value: {total_excl:.2f}")
+            
+            # Create order via API using MakePurchaseOrderHybridV2 endpoint
+            url = f"{self.base_url}/api/PurchaseOrder/MakePurchaseOrderHybridV2"
+            response = session.post(url, json=payload, headers=headers, timeout=60, verify=False)
             
             if response.status_code in [200, 201]:
-                result = response.json()
-                order_number = result.get('docNumber') or result.get('orderNumber') or 'N/A'
-                self.order_doc_number = order_number
-                
-                logger.info(f"✅ Purchase order created: {order_number}")
-                return {
-                    'success': True,
-                    'message': f'Purchase order created successfully',
-                    'order_number': order_number,
-                    'processed_count': len(order_items)
-                }
+                try:
+                    result = response.json()
+                    order_number = result.get('docNumber') or result.get('orderNumber') or self.order_doc_number
+                    self.order_doc_number = order_number
+                    
+                    logger.info(f"✅ Purchase order created: {order_number}")
+                    return {
+                        'success': True,
+                        'message': f'Purchase order created successfully',
+                        'order_number': order_number,
+                        'processed_count': len(item_list)
+                    }
+                except ValueError:
+                    # Response might not be JSON, but status is 200/201
+                    logger.info(f"✅ Purchase order created (non-JSON response): {self.order_doc_number}")
+                    return {
+                        'success': True,
+                        'message': f'Purchase order created successfully',
+                        'order_number': self.order_doc_number,
+                        'processed_count': len(item_list)
+                    }
             else:
                 error_msg = response.text or f"HTTP {response.status_code}"
                 logger.error(f"❌ Purchase order creation failed: {error_msg}")
+                
+                # Try to parse error details
+                try:
+                    error_json = response.json()
+                    if isinstance(error_json, dict):
+                        errors = error_json.get('errors', {})
+                        if errors:
+                            error_details = []
+                            for field, messages in errors.items():
+                                if isinstance(messages, list):
+                                    error_details.extend([f"{field}: {msg}" for msg in messages])
+                                else:
+                                    error_details.append(f"{field}: {messages}")
+                            error_msg = " | ".join(error_details)
+                except:
+                    pass
+                
                 return {
                     'success': False,
                     'message': f'Failed to create purchase order: {error_msg}'
