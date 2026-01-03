@@ -76,15 +76,22 @@ class IntegratedProcurementBot:
         df = self.stock_view_df.copy()
         
         # Ensure required columns exist
+        # Note: amc is now ideal_stock_pieces (in pieces), need to convert to packs for order quantity
         if 'order_quantity' not in df.columns:
             if 'custom_order_quantity' in df.columns:
-                df['order_quantity'] = df['custom_order_quantity'].fillna(df.get('amc', 1))
-            elif 'amc' in df.columns:
-                df['order_quantity'] = df['amc'].fillna(1)
+                # custom_order_quantity is already in packs (from UI)
+                df['order_quantity'] = df['custom_order_quantity'].fillna(1)
+            elif 'amc' in df.columns or 'amc_pieces' in df.columns:
+                # ideal_stock_pieces is in pieces - convert to packs for order quantity
+                amc_pieces = df.get('amc', df.get('amc_pieces', 1))
+                pack_size = df.get('pack_size', 1)
+                # Convert pieces to packs: order_quantity = amc_pieces / pack_size
+                df['order_quantity'] = (pd.to_numeric(amc_pieces, errors='coerce') / 
+                                       pd.to_numeric(pack_size, errors='coerce').replace(0, 1)).fillna(1)
             else:
                 df['order_quantity'] = 1
         
-        # Ensure order_quantity is numeric
+        # Ensure order_quantity is numeric and in packs
         df['order_quantity'] = pd.to_numeric(df['order_quantity'], errors='coerce').fillna(1)
         
         # Filter out items with zero or negative quantities
@@ -301,9 +308,12 @@ class IntegratedProcurementBot:
             for idx, (_, row) in enumerate(items_df.iterrows(), 1):
                 item_code = str(row.get('item_code', '')).strip()
                 item_name = str(row.get('item_name', 'Unknown')).strip()
-                quantity = float(row.get('order_quantity', 0))
+                quantity = float(row.get('order_quantity', 0))  # Already in packs
                 unit_price = float(row.get('unit_price', 0))
-                amc = float(row.get('amc', 0))
+                # ideal_stock_pieces is in pieces
+                amc_pieces = float(row.get('amc', row.get('amc_pieces', 0)))
+                pack_size = float(row.get('pack_size', 1))
+                amc_packs = (amc_pieces / pack_size) if pack_size > 0 else 0
                 
                 # Ensure quantity is at least 1 (API requires quantity >= 1)
                 qty = max(1, int(round(quantity)))
@@ -324,15 +334,15 @@ class IntegratedProcurementBot:
                 
                 # Create informative comment
                 comment = (
-                    f"Auto-Order | AMC: {amc:.1f} | Stock: {row.get('branch_stock', 0)} | "
-                    f"Class: {row.get('abc_class', 'N/A')}"
+                    f"Auto-Order | Ideal Stock: {amc_pieces:.0f} pieces ({amc_packs:.1f} packs) | "
+                    f"Stock: {row.get('branch_stock', 0)} pieces | Class: {row.get('abc_class', 'N/A')}"
                 )
                 
                 item_list.append({
                     "itemCode": item_code,
                     "itemName": item_name,
                     "saleQty": f"{qty}W0P",
-                    "avgSale": f"{amc:.1f}W0P",
+                    "avgSale": f"{amc_packs:.1f}W0P",  # AMC in packs for API
                     "reqQty": f"{qty}W0P",
                     "inStore": "0W0P",
                     "var": f"{qty}W0P",

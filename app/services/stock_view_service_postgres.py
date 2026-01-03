@@ -183,32 +183,30 @@ class StockViewServicePostgres:
             df['branch_stock_sort'] = df['branch_stock_packs']  # Alias for numeric sorting
             df['supplier_stock_sort'] = df['supplier_stock_packs']  # Alias for numeric sorting
             
-            # GROUND TRUTH: inventory_analysis_new.adjusted_amc is stored in PACKS
-            # Display AMC in packs directly - do NOT divide by pack_size
-            if 'adjusted_amc_packs' in df.columns:
-                # adjusted_amc_packs is already in packs - display directly
-                df['amc_packs'] = pd.to_numeric(df['adjusted_amc_packs'], errors='coerce').fillna(0.0).astype(float)
-                df['amc'] = df['amc_packs']  # Alias for compatibility
-                # amc_pieces is calculated in StockSnapshotService for stock_level_pct calculation
-                # If not already present, calculate it here for compatibility
-                if 'amc_pieces' not in df.columns:
-                    df['amc_pieces'] = df.apply(
-                        lambda row: row['amc_packs'] * row['pack_size'] if row['pack_size'] > 0 else 0.0,
-                        axis=1
-                    ).astype(float)
+            # GROUND TRUTH: Use ideal_stock_pieces from inventory_analysis (in PIECES)
+            # Convert to packs for UI display (UI shows packs, not pieces)
+            if 'ideal_stock_pieces' in df.columns:
+                # ideal_stock_pieces is in pieces - convert to packs for UI display
+                df['amc_pieces'] = pd.to_numeric(df['ideal_stock_pieces'], errors='coerce').fillna(0.0).astype(float)
+                # Convert pieces to packs for UI display
+                df['amc_packs'] = df.apply(
+                    lambda row: (row['amc_pieces'] / row['pack_size']) if row['pack_size'] > 0 else 0.0,
+                    axis=1
+                ).round(2)
+                df['amc'] = df['amc_packs']  # Use packs for UI display (primary value shown to user)
             elif 'amc_pieces' in df.columns:
-                # If amc_pieces exists from StockSnapshotService, convert back to packs for display
+                # If amc_pieces exists from StockSnapshotService (from ideal_stock_pieces), use it
                 df['amc_pieces'] = pd.to_numeric(df['amc_pieces'], errors='coerce').fillna(0.0).astype(float)
-                # Convert pieces to packs for display: amc_packs = amc_pieces / pack_size
+                # Convert pieces to packs for UI display
                 df['amc_packs'] = df.apply(
                     lambda row: (row['amc_pieces'] / row['pack_size']) if row['pack_size'] > 0 else 0,
                     axis=1
                 ).round(2)
-                df['amc'] = df['amc_packs']  # Alias for compatibility
+                df['amc'] = df['amc_packs']  # Use packs for UI display (primary value shown to user)
             else:
+                df['amc_pieces'] = 0.0
                 df['amc_packs'] = 0.0
                 df['amc'] = 0.0
-                df['amc_pieces'] = 0.0
             
             # Add missing columns for compatibility
             df['unit_price'] = 0.0
@@ -246,8 +244,9 @@ class StockViewServicePostgres:
                            f"branch_stock_string={sample.get('branch_stock_string')}, "
                            f"branch_stock={sample.get('branch_stock')} pieces, "
                            f"branch_stock_packs={sample.get('branch_stock_packs')}, "
-                           f"amc_packs={sample.get('amc_packs')} packs (from DB), "
-                           f"amc_pieces={sample.get('amc_pieces')} pieces (calculated), "
+                           f"ideal_stock_pieces={sample.get('amc_pieces')} pieces (from inventory_analysis), "
+                           f"amc_packs={sample.get('amc_packs')} packs (for UI display), "
+                           f"amc={sample.get('amc')} packs (shown to user), "
                            f"stock_level_pct={sample.get('stock_level_pct')}% (READ-ONLY from StockSnapshotService)")
                 
                 # Verify calculation for debugging
