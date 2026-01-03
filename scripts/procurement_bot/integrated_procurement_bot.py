@@ -267,9 +267,21 @@ class IntegratedProcurementBot:
                     
                     if get_orders_response.status_code == 200:
                         orders = get_orders_response.json()
-                        if orders and len(orders) > 0:
-                            self.order_doc_number = str(orders[0].get("docNumber", ""))
-                            logger.info(f"Reusing existing order: {self.order_doc_number}")
+                        # Handle both list and dict responses
+                        if orders:
+                            if isinstance(orders, list) and len(orders) > 0:
+                                # If it's a list, get first element
+                                first_order = orders[0]
+                                if isinstance(first_order, dict):
+                                    self.order_doc_number = str(first_order.get("docNumber", ""))
+                                else:
+                                    self.order_doc_number = str(first_order) if first_order else ""
+                            elif isinstance(orders, dict):
+                                # If it's a dict, try to get docNumber directly
+                                self.order_doc_number = str(orders.get("docNumber", ""))
+                            
+                            if self.order_doc_number:
+                                logger.info(f"Reusing existing order: {self.order_doc_number}")
                     
                     if not self.order_doc_number:
                         # Generate new order number
@@ -383,7 +395,20 @@ class IntegratedProcurementBot:
             if response.status_code in [200, 201]:
                 try:
                     result = response.json()
-                    order_number = result.get('docNumber') or result.get('orderNumber') or self.order_doc_number
+                    order_number = self.order_doc_number  # Default to our generated number
+                    
+                    # Handle different response formats
+                    if isinstance(result, dict):
+                        # If response is a dict, try to extract order number
+                        order_number = result.get('docNumber') or result.get('orderNumber') or result.get('doc_number') or self.order_doc_number
+                    elif isinstance(result, list) and len(result) > 0:
+                        # If response is a list, get first element
+                        first_item = result[0]
+                        if isinstance(first_item, dict):
+                            order_number = first_item.get('docNumber') or first_item.get('orderNumber') or first_item.get('doc_number') or self.order_doc_number
+                        else:
+                            order_number = str(first_item) if first_item else self.order_doc_number
+                    
                     self.order_doc_number = order_number
                     
                     logger.info(f"✅ Purchase order created: {order_number}")
@@ -393,9 +418,20 @@ class IntegratedProcurementBot:
                         'order_number': order_number,
                         'processed_count': len(item_list)
                     }
-                except ValueError:
+                except ValueError as e:
                     # Response might not be JSON, but status is 200/201
+                    logger.warning(f"Response is not JSON (status {response.status_code}): {e}")
                     logger.info(f"✅ Purchase order created (non-JSON response): {self.order_doc_number}")
+                    return {
+                        'success': True,
+                        'message': f'Purchase order created successfully',
+                        'order_number': self.order_doc_number,
+                        'processed_count': len(item_list)
+                    }
+                except Exception as e:
+                    # Any other error parsing response, but status is 200/201 so assume success
+                    logger.warning(f"Error parsing response but status is {response.status_code}: {e}")
+                    logger.info(f"✅ Purchase order created (response parse error): {self.order_doc_number}")
                     return {
                         'success': True,
                         'message': f'Purchase order created successfully',
@@ -409,6 +445,7 @@ class IntegratedProcurementBot:
                 # Try to parse error details
                 try:
                     error_json = response.json()
+                    # Handle both dict and list error responses
                     if isinstance(error_json, dict):
                         errors = error_json.get('errors', {})
                         if errors:
@@ -419,7 +456,26 @@ class IntegratedProcurementBot:
                                 else:
                                     error_details.append(f"{field}: {messages}")
                             error_msg = " | ".join(error_details)
-                except:
+                        # Also check for direct error message
+                        if 'message' in error_json:
+                            error_msg = error_json.get('message', error_msg)
+                        if 'title' in error_json:
+                            error_msg = f"{error_json.get('title', '')}: {error_msg}"
+                    elif isinstance(error_json, list) and len(error_json) > 0:
+                        # If error is a list, try to extract messages
+                        error_details = []
+                        for item in error_json:
+                            if isinstance(item, dict):
+                                if 'message' in item:
+                                    error_details.append(item['message'])
+                                elif 'error' in item:
+                                    error_details.append(item['error'])
+                            else:
+                                error_details.append(str(item))
+                        if error_details:
+                            error_msg = " | ".join(error_details)
+                except Exception as parse_error:
+                    logger.debug(f"Could not parse error response: {parse_error}")
                     pass
                 
                 return {
