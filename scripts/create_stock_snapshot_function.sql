@@ -1,7 +1,8 @@
 CREATE OR REPLACE FUNCTION stock_snapshot(
     p_target_branch TEXT,
     p_source_branch TEXT,
-    p_company TEXT
+    p_target_company TEXT,
+    p_source_company TEXT DEFAULT NULL
 )
 RETURNS TABLE (
     item_code TEXT,
@@ -38,7 +39,7 @@ BEGIN
             ia.abc_class
         FROM inventory_analysis_new ia
         WHERE ia.branch_name = p_target_branch 
-            AND ia.company_name = p_company
+            AND ia.company_name = p_target_company
         ORDER BY ia.item_code, ia.adjusted_amc DESC NULLS LAST
         -- If multiple records exist for same item_code, prefer the one with highest adjusted_amc
     ),
@@ -50,18 +51,19 @@ BEGIN
             tgt.pack_size
         FROM current_stock tgt
         WHERE tgt.branch = p_target_branch 
-            AND tgt.company = p_company
+            AND tgt.company = p_target_company
         ORDER BY tgt.item_code, tgt.stock_pieces DESC NULLS LAST
         -- If multiple records exist for same item_code, prefer the one with highest stock
     ),
     source_stock AS (
         SELECT DISTINCT ON (src.item_code)
             src.item_code,
+            src.item_name,
             src.stock_string,
             src.pack_size
         FROM current_stock src
         WHERE src.branch = p_source_branch 
-            AND src.company = p_company
+            AND src.company = COALESCE(p_source_company, p_target_company)
         ORDER BY src.item_code, src.stock_pieces DESC NULLS LAST
         -- If multiple records exist for same item_code, prefer the one with highest stock
     ),
@@ -74,7 +76,7 @@ BEGIN
             'PURCHASE' as order_type
         FROM purchase_orders po
         WHERE po.branch = p_target_branch 
-            AND po.company = p_company
+            AND po.company = p_target_company
         
         UNION ALL
         
@@ -86,7 +88,7 @@ BEGIN
             'BRANCH' as order_type
         FROM branch_orders bo
         WHERE bo.destination_branch = p_target_branch 
-            AND bo.company = p_company
+            AND bo.company = p_target_company
         
         UNION ALL
         
@@ -98,7 +100,7 @@ BEGIN
             'HQ_INVOICE' as order_type
         FROM hq_invoices hi
         WHERE hi.branch = p_target_branch
-            AND p_company = 'NILA'
+            AND p_target_company = 'NILA'
     ),
     last_order_info AS (
         SELECT DISTINCT ON (ao.item_code)
@@ -118,7 +120,7 @@ BEGIN
             hi2.quantity as last_invoice_qty_packs
         FROM hq_invoices hi2
         WHERE hi2.branch = p_target_branch
-            AND p_company = 'NILA'
+            AND p_target_company = 'NILA'
         ORDER BY hi2.item_code, hi2.date DESC, hi2.invoice_number DESC
     ),
     last_supplier_invoice_info AS (
@@ -129,7 +131,7 @@ BEGIN
             si.units as last_supplier_invoice_qty_packs
         FROM supplier_invoices si
         WHERE si.branch = p_target_branch 
-            AND si.company = p_company
+            AND si.company = p_target_company
         ORDER BY si.item_code, si.document_date DESC, si.document_number DESC
     )
     SELECT 

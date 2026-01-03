@@ -100,14 +100,15 @@ class StockSnapshotService:
         
         return 'NORMAL'
     
-    def get_snapshot(self, target_branch: str, source_branch: str, company: str) -> List[Dict]:
+    def get_snapshot(self, target_branch: str, source_branch: str, target_company: str, source_company: Optional[str] = None) -> List[Dict]:
         """
         Get complete stock snapshot using canonical function
         
         Args:
             target_branch: Branch to analyze
             source_branch: Source branch for stock comparison
-            company: Company name (NILA or DAIMA)
+            target_company: Company name for target branch (NILA or DAIMA)
+            source_company: Company name for source branch (NILA or DAIMA). If None, uses target_company.
             
         Returns:
             List of dictionaries with all stock snapshot data (computed fields included)
@@ -118,9 +119,12 @@ class StockSnapshotService:
             conn = self.db_manager.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
+            # Use source_company if provided, otherwise use target_company (for backward compatibility)
+            actual_source_company = source_company if source_company else target_company
+            
             cursor.execute("""
-                SELECT * FROM stock_snapshot(%s::text, %s::text, %s::text)
-            """, (target_branch, source_branch, company))
+                SELECT * FROM stock_snapshot(%s::text, %s::text, %s::text, %s::text)
+            """, (target_branch, source_branch, target_company, actual_source_company))
             
             raw_results = cursor.fetchall()
             logger.info(f"✅ Retrieved {len(raw_results)} items from stock_snapshot()")
@@ -204,7 +208,7 @@ class StockSnapshotService:
             if conn:
                 self.db_manager.put_connection(conn)
     
-    def get_priority_items(self, target_branch: str, source_branch: str, company: str,
+    def get_priority_items(self, target_branch: str, source_branch: str, target_company: str, source_company: Optional[str] = None,
                           priority_only: bool = True, days: Optional[int] = None) -> List[Dict]:
         """
         Get priority items using stock_snapshot function
@@ -212,7 +216,8 @@ class StockSnapshotService:
         Args:
             target_branch: Target branch
             source_branch: Source branch
-            company: Company name
+            target_company: Company name for target branch
+            source_company: Company name for source branch (if None, uses target_company)
             priority_only: If True, only return LOW/RECENT_ORDER/RECENT_INVOICE
             days: Filter by recent activity (last N days)
             
@@ -220,7 +225,7 @@ class StockSnapshotService:
             List of priority items
         """
         # Get full snapshot
-        all_items = self.get_snapshot(target_branch, source_branch, company)
+        all_items = self.get_snapshot(target_branch, source_branch, target_company, source_company)
         
         # Filter in Python (NO SQL filtering on stock_string)
         filtered_items = []
@@ -294,7 +299,7 @@ class StockSnapshotService:
             List of new arrival items
         """
         # Get snapshot (target = source = branch for new arrivals)
-        all_items = self.get_snapshot(branch, branch, company)
+        all_items = self.get_snapshot(branch, branch, company, company)
         
         # Filter by recent activity
         today = datetime.now().date()

@@ -538,7 +538,7 @@ class DashboardService:
                         
                         snapshot_service = StockSnapshotService(self.db_manager)
                         priority_items = snapshot_service.get_priority_items(
-                            target_branch, source_branch, target_company,
+                            target_branch, source_branch, target_company, source_company,
                             priority_only=True, days=7
                         )
                         

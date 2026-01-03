@@ -48,10 +48,10 @@ class StockViewServicePostgres:
             actual_source_branch = source_branch_name if source_branch_name else branch_name
             actual_source_company = source_branch_company if source_branch_company else branch_company
             
-            logger.info(f"Using stock_snapshot: target={branch_name}, source={actual_source_branch}, company={branch_company}")
+            logger.info(f"Using stock_snapshot: target={branch_name} ({branch_company}), source={actual_source_branch} ({actual_source_company})")
             
-            # Get snapshot with computed fields
-            snapshot_results = snapshot_service.get_snapshot(branch_name, actual_source_branch, branch_company)
+            # Get snapshot with computed fields - pass both target and source companies
+            snapshot_results = snapshot_service.get_snapshot(branch_name, actual_source_branch, branch_company, actual_source_company)
             
             if not snapshot_results:
                 logger.warning(f"No stock data found for branch '{branch_name}' ({branch_company})")

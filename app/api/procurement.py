@@ -175,6 +175,29 @@ async def run_procurement_bot(
         )
         logger.info(f"✅ Using user-provided credentials for procurement (company: {request.company}, user: {request.username})")
         
+        # Save credentials to database for future use (data refresh, etc.)
+        try:
+            from app.dependencies import get_credential_manager
+            permanent_cred_manager = get_credential_manager()
+            
+            # Determine API URL based on company
+            api_url = request.base_url or (
+                settings.NILA_API_URL if request.company.upper() == 'NILA' 
+                else settings.DAIMA_API_URL
+            )
+            
+            # Save credentials
+            permanent_cred_manager.save_credentials(
+                request.company,
+                request.username,
+                request.password,
+                api_url
+            )
+            logger.info(f"✅ Saved credentials for {request.company} to database for future use")
+        except Exception as save_error:
+            # Non-fatal - log but don't fail the procurement
+            logger.warning(f"⚠️ Could not save credentials to database (non-fatal): {save_error}")
+        
         # For branch orders: branch_to_name should be the TARGET branch (where order is going TO)
         # For purchase orders: branch_to_name is not used (external suppliers, not branch-to-branch)
         branch_to_name = None
