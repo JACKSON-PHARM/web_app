@@ -49,7 +49,9 @@ async def run_refresh_task():
         
         # Use refresh service
         from app.services.refresh_service import RefreshService
-        refresh_service = RefreshService(db_manager, settings.LOCAL_CACHE_DIR, cred_manager)
+        # Get actual app root directory (parent of app directory, contains both app/ and scripts/)
+        app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        refresh_service = RefreshService(db_manager, app_root, cred_manager)
         
         # Run refresh - fetch new data from APIs and save to Supabase/PostgreSQL
         logger.info("🔄 Fetching new data from APIs and saving to database...")
@@ -302,7 +304,9 @@ async def run_refresh_task_with_fetchers(fetchers: Optional[List[str]] = None):
         
         # Use refresh service
         from app.services.refresh_service import RefreshService
-        refresh_service = RefreshService(db_manager, settings.LOCAL_CACHE_DIR, cred_manager)
+        # Get actual app root directory (parent of app directory, contains both app/ and scripts/)
+        app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        refresh_service = RefreshService(db_manager, app_root, cred_manager)
         
         # Run refresh with fetcher selection
         logger.info(f"🔄 Fetching data from APIs for fetchers: {fetcher_list}...")
