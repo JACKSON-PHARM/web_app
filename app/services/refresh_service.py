@@ -11,7 +11,10 @@ from app.services.fetcher_manager import FetcherManager
 # CredentialManager can be either local or Supabase - passed as parameter
 
 # Add parent directory to import orchestrator
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+# __file__ is app/services/refresh_service.py, so we need to go up 2 levels to get to the root
+_refresh_service_app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _refresh_service_app_root not in sys.path:
+    sys.path.insert(0, _refresh_service_app_root)
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +91,18 @@ class RefreshService:
         
         try:
             # Use DatabaseFetcherOrchestrator to run all fetchers properly
+            # Ensure app_root is in sys.path for imports
+            if self.app_root and self.app_root not in sys.path:
+                sys.path.insert(0, self.app_root)
             try:
                 from scripts.data_fetchers.database_fetcher_orchestrator import DatabaseFetcherOrchestrator
-            except ImportError:
-                self.logger.error("⚠️ Could not import DatabaseFetcherOrchestrator: No module named 'scripts'")
+            except ImportError as import_error:
+                self.logger.error(f"⚠️ Could not import DatabaseFetcherOrchestrator: {import_error}")
+                self.logger.error(f"   App root: {self.app_root}")
+                self.logger.error(f"   Scripts path exists: {os.path.exists(os.path.join(self.app_root, 'scripts')) if self.app_root else False}")
+                self.logger.error(f"   sys.path (first 5): {sys.path[:5]}")
                 results['success'] = False
-                results['messages'].append("Data refresh not available - scripts module not found")
+                results['messages'].append(f"Data refresh not available - scripts module not found: {import_error}")
                 return results
             
             from app.config import settings
@@ -412,12 +421,18 @@ class RefreshService:
         
         try:
             # Use DatabaseFetcherOrchestrator to run selected fetchers
+            # Ensure app_root is in sys.path for imports
+            if self.app_root and self.app_root not in sys.path:
+                sys.path.insert(0, self.app_root)
             try:
                 from scripts.data_fetchers.database_fetcher_orchestrator import DatabaseFetcherOrchestrator
-            except ImportError:
-                self.logger.error("⚠️ Could not import DatabaseFetcherOrchestrator: No module named 'scripts'")
+            except ImportError as import_error:
+                self.logger.error(f"⚠️ Could not import DatabaseFetcherOrchestrator: {import_error}")
+                self.logger.error(f"   App root: {self.app_root}")
+                self.logger.error(f"   Scripts path exists: {os.path.exists(os.path.join(self.app_root, 'scripts')) if self.app_root else False}")
+                self.logger.error(f"   sys.path (first 5): {sys.path[:5]}")
                 results['success'] = False
-                results['messages'].append("Data refresh not available - scripts module not found")
+                results['messages'].append(f"Data refresh not available - scripts module not found: {import_error}")
                 return results
             
             from app.config import settings
