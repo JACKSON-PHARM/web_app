@@ -64,6 +64,9 @@ class IntegratedProcurementBot:
         self.base_url = getattr(credential_manager, 'base_url', 'https://corebasebackendnila.co.ke:5019')
         self.order_doc_number = None
         
+        # In-memory cache for resolved items: (item_code, branch_code, stock_type) -> item_data
+        self._item_cache: Dict[tuple, Dict[str, Any]] = {}
+        
         logger.info(f"Initialized procurement bot: mode={order_mode}, branch={branch_name}, items={len(stock_view_df)}")
     
     def prepare_data(self) -> pd.DataFrame:
@@ -234,11 +237,6 @@ class IntegratedProcurementBot:
                 "Accept": "application/json"
             }
             
-            # Default values matching standalone script
-            DEFAULT_ITEM_PRICE = 100.00
-            DEFAULT_VAT_CODE = "00"
-            DEFAULT_DISCOUNT = 0.01  # 1%
-            
             # Ensure branch code is valid (cannot be 0)
             if not self.branch_code or self.branch_code == 0:
                 return {
@@ -252,6 +250,68 @@ class IntegratedProcurementBot:
                     'success': False,
                     'message': 'Supplier code and name are required for purchase orders'
                 }
+            
+            # STEP 1: Resolve ALL items from CoreBase API FIRST (before building payload)
+            # This ensures we have authoritative metadata (price, tax, pack size)
+            resolved_items = {}
+            failed_items = []
+            
+            logger.info(f"🔍 Resolving {len(items_df)} items from CoreBase API...")
+            for idx, (_, row) in enumerate(items_df.iterrows(), 1):
+                item_code = str(row.get('item_code', '')).strip()
+                
+                if not item_code:
+                    failed_items.append({
+                        'item_code': '',
+                        'reason': 'Empty item code'
+                    })
+                    continue
+                
+                try:
+                    # Resolve item from CoreBase API (stock_type=0 for purchase order)
+                    item_data = self.resolve_item_from_corebase(
+                        item_code=item_code,
+                        branch_code=self.branch_code,
+                        stock_type=0  # 0 for purchase order
+                    )
+                    resolved_items[item_code] = item_data
+                    logger.debug(f"✅ Resolved item {idx}/{len(items_df)}: {item_code}")
+                except ValueError as e:
+                    # Item resolution failed (missing, network error after retries, etc.)
+                    error_msg = str(e)
+                    logger.error(f"❌ Failed to resolve item {item_code}: {error_msg}")
+                    failed_items.append({
+                        'item_code': item_code,
+                        'reason': error_msg
+                    })
+                except Exception as e:
+                    # Unexpected error
+                    error_msg = f"Unexpected error: {str(e)}"
+                    logger.error(f"❌ Unexpected error resolving item {item_code}: {error_msg}")
+                    failed_items.append({
+                        'item_code': item_code,
+                        'reason': error_msg
+                    })
+            
+            # FAILURE STRATEGY: Stop order creation if ANY item failed
+            if failed_items:
+                failed_codes = [item['item_code'] for item in failed_items]
+                reasons = [f"{item['item_code']}: {item['reason']}" for item in failed_items]
+                return {
+                    'success': False,
+                    'message': f'Failed to resolve {len(failed_items)} item(s) from CoreBase API',
+                    'failed_items': failed_items,
+                    'failed_item_codes': failed_codes,
+                    'failure_reasons': reasons
+                }
+            
+            if not resolved_items:
+                return {
+                    'success': False,
+                    'message': 'No items could be resolved from CoreBase API'
+                }
+            
+            logger.info(f"✅ Successfully resolved {len(resolved_items)} items from CoreBase API")
             
             # Initialize or reuse order document number
             if not self.order_doc_number:
@@ -300,36 +360,64 @@ class IntegratedProcurementBot:
                     import random
                     self.order_doc_number = f"P{datetime.now().strftime('%m%d')}{random.randint(1000, 9999)}"
             
-            # Prepare order items in the format expected by MakePurchaseOrderHybridV2
+            # STEP 2: Build order payload using resolved items
+            # Quantities come from stock view, metadata comes from CoreBase API
             item_list = []
             total_excl = 0
             now = datetime.now()
             
             for idx, (_, row) in enumerate(items_df.iterrows(), 1):
                 item_code = str(row.get('item_code', '')).strip()
-                item_name = str(row.get('item_name', 'Unknown')).strip()
-                quantity = float(row.get('order_quantity', 0))  # Already in packs
-                unit_price = float(row.get('unit_price', 0))
-                # ideal_stock_pieces is in pieces
-                amc_pieces = float(row.get('amc', row.get('amc_pieces', 0)))
-                pack_size = float(row.get('pack_size', 1))
+                
+                if item_code not in resolved_items:
+                    # Should not happen if resolution passed, but check anyway
+                    logger.error(f"❌ Item {item_code} not in resolved items - skipping")
+                    continue
+                
+                item_data = resolved_items[item_code]
+                
+                # Extract quantities from stock view (ONLY source for quantities)
+                quantity_packs = float(row.get('order_quantity', 0))  # Already in packs from stock view
+                amc_pieces = float(row.get('amc', row.get('amc_pieces', 0)))  # From stock view
+                
+                # Extract metadata from CoreBase API (ONLY source for metadata)
+                # Price: use avgCost or lastnitcost
+                trade_price = item_data.get('avgCost') or item_data.get('lastnitcost')
+                if trade_price is None:
+                    raise ValueError(f"Item {item_code} missing price (avgCost/lastnitcost) in CoreBase API response")
+                trade_price = self._parse_numeric_value(trade_price, f"price for item {item_code}")
+                
+                # Pack size: use pkz
+                pack_size = item_data.get('pkz')
+                if pack_size is None:
+                    raise ValueError(f"Item {item_code} missing pack size (pkz) in CoreBase API response")
+                pack_size = self._parse_numeric_value(pack_size, f"pkz for item {item_code}")
+                
+                # Tax information: use API fields
+                tax_code = item_data.get('taX_CODE') or item_data.get('tax_CODE') or item_data.get('taxCode')
+                if tax_code is None:
+                    raise ValueError(f"Item {item_code} missing tax code (taX_CODE/tax_CODE/taxCode) in CoreBase API response")
+                tax_code = str(tax_code)
+                
+                tax_perc = item_data.get('taxPerc') or item_data.get('tax_perc')
+                if tax_perc is None:
+                    raise ValueError(f"Item {item_code} missing tax percentage (taxPerc/tax_perc) in CoreBase API response")
+                tax_perc = self._parse_numeric_value(tax_perc, f"tax percentage for item {item_code}")
+                
+                # Discount: use API field if available, otherwise 0 (NO DEFAULT)
+                discount_raw = item_data.get('discount', 0)
+                discount = self._parse_numeric_value(discount_raw, f"discount for item {item_code}") if discount_raw is not None and discount_raw != 0 else 0.0
+                
+                # Convert quantities using pack size from API
                 amc_packs = (amc_pieces / pack_size) if pack_size > 0 else 0
                 
                 # Ensure quantity is at least 1 (API requires quantity >= 1)
-                qty = max(1, int(round(quantity)))
-                if quantity < 1:
-                    logger.warning(f"⚠️ Item {item_code} has quantity {quantity} < 1, rounding up to 1")
+                qty = max(1, int(round(quantity_packs)))
+                if quantity_packs < 1:
+                    logger.warning(f"⚠️ Item {item_code} has quantity {quantity_packs} < 1, rounding up to 1")
                 
-                if not item_code:
-                    logger.warning(f"⚠️ Skipping item with empty item_code")
-                    continue
-                
-                # Use default price if unit_price is 0 or missing
-                if unit_price <= 0:
-                    unit_price = DEFAULT_ITEM_PRICE
-                    logger.info(f"⚠️ Item {item_code} has no price, using default price: {DEFAULT_ITEM_PRICE}")
-                
-                total = qty * unit_price
+                # Calculate totals
+                total = qty * trade_price
                 total_excl += total
                 
                 # Create informative comment
@@ -340,7 +428,7 @@ class IntegratedProcurementBot:
                 
                 item_list.append({
                     "itemCode": item_code,
-                    "itemName": item_name,
+                    "itemName": str(row.get('item_name', item_data.get('itemName', 'Unknown'))).strip(),
                     "saleQty": f"{qty}W0P",
                     "avgSale": f"{amc_packs:.1f}W0P",  # AMC in packs for API
                     "reqQty": f"{qty}W0P",
@@ -348,21 +436,21 @@ class IntegratedProcurementBot:
                     "var": f"{qty}W0P",
                     "ordQty": f"{qty}W0P",
                     "getsel": 1,
-                    "lastPrice": unit_price,
+                    "lastPrice": trade_price,
                     "suppCode": self.supplier_code,
                     "suppName": self.supplier_name,
-                    "packqty": 1,
+                    "packqty": int(pack_size),  # From API
                     "ordQtyValue": float(qty),
-                    "tradeprice": unit_price,
+                    "tradeprice": trade_price,  # From API
                     "comments": comment,
                     "tableData": {"id": idx},
-                    "dT_Vat": DEFAULT_VAT_CODE,
-                    "dT_Disc": DEFAULT_DISCOUNT,
+                    "dT_Vat": tax_code,  # From API
+                    "dT_Disc": discount,  # From API (0 if not provided)
                     "dT_Bonus": 0.0,
                     "dT_Unit": 1.0,
                     "dT_PW": "W",
                     "dT_Total": total,
-                    "dT_Nett": total * (1 - DEFAULT_DISCOUNT)
+                    "dT_Nett": total * (1 - discount)
                 })
             
             if not item_list:
@@ -371,8 +459,8 @@ class IntegratedProcurementBot:
                     'message': 'No valid items to order'
                 }
             
-            # Calculate totals
-            total_discount = total_excl * DEFAULT_DISCOUNT
+            # Calculate totals (using discounts from API, not defaults)
+            total_discount = sum((item['dT_Total'] * item['dT_Disc']) for item in item_list)
             total_nett = total_excl - total_discount
             
             # Prepare payload matching standalone script structure
@@ -510,6 +598,245 @@ class IntegratedProcurementBot:
         }
         return database_names.get(company.upper(), 'PNLCUS0005DB')
     
+    def _parse_numeric_value(self, value: Any, field_name: str = "value") -> float:
+        """
+        Parse numeric value from API response.
+        Handles both numeric values and formatted strings like "456W0P" (pack/whole format).
+        
+        Format: "XWYP" where:
+        - X = whole packs/units
+        - W = literal "W"
+        - Y = pieces (partial)
+        - P = literal "P"
+        
+        Args:
+            value: Value to parse (can be numeric, string, or formatted string)
+            field_name: Field name for error messages
+            
+        Returns:
+            Float value
+            
+        Raises:
+            ValueError: If value cannot be parsed
+        """
+        if value is None:
+            raise ValueError(f"Value is None for field {field_name}")
+        
+        # If already numeric, return as float
+        if isinstance(value, (int, float)):
+            return float(value)
+        
+        # If string, check if it's in "XWYP" format
+        if isinstance(value, str):
+            value = value.strip()
+            
+            # Try to parse "XWYP" format (e.g., "456W0P", "0W0P")
+            if 'W' in value and value.endswith('P'):
+                try:
+                    # Extract the number before "W"
+                    parts = value.split('W')
+                    if len(parts) >= 1:
+                        whole_part = parts[0]
+                        # Extract numeric part (might have leading/trailing spaces)
+                        numeric_str = ''.join(c for c in whole_part if c.isdigit() or c == '.' or c == '-')
+                        if numeric_str:
+                            return float(numeric_str)
+                except (ValueError, IndexError):
+                    pass
+            
+            # Try direct float conversion
+            try:
+                return float(value)
+            except ValueError:
+                raise ValueError(f"Cannot parse {field_name} value '{value}' as numeric (expected number or 'XWYP' format)")
+        
+        # Try to convert to float directly
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"Cannot parse {field_name} value '{value}' (type: {type(value).__name__}) as numeric")
+    
+    def resolve_item_from_corebase(
+        self,
+        *,
+        item_code: str,
+        branch_code: int,
+        stock_type: int,
+    ) -> Dict[str, Any]:
+        """
+        Resolve item metadata from CoreBase API using GetExistingStock endpoint.
+        
+        This is the AUTHORITATIVE source for all item metadata:
+        - Price (avgCost, lastnitcost)
+        - Pack size (pkz)
+        - Tax information (taX_CODE, taxPerc, taxType, inclusive)
+        - All other item flags and metadata
+        
+        CRITICAL: Stock View provides QUANTITIES ONLY. This API provides ALL metadata.
+        
+        Args:
+            item_code: Item code (exact match, no fuzzy)
+            branch_code: Branch code (numeric)
+            stock_type: Stock type (1 for branch order, 0 for purchase order)
+            
+        Returns:
+            Dictionary with item metadata from CoreBase API
+            
+        Raises:
+            ValueError: If item not found, multiple items returned, or API error after retries
+            requests.exceptions.RequestException: If network error persists after retries
+        """
+        import time
+        
+        # Check cache first
+        cache_key = (item_code, branch_code, stock_type)
+        if cache_key in self._item_cache:
+            logger.debug(f"✅ Item {item_code} (bcode={branch_code}, stockType={stock_type}) found in cache")
+            return self._item_cache[cache_key]
+        
+        token = self.get_token()
+        if not token:
+            raise ValueError(f"Failed to get authentication token for item {item_code}")
+        
+        session = self.get_session()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        database_name = self._get_database_name(self.company)
+        url = f"{self.base_url}/api/BranchOrders/GetExistingStock"
+        
+        params = {
+            "itemName": item_code,  # Exact match, no fuzzy
+            "bcode": branch_code,
+            "stockType": stock_type,  # 1 for branch order, 0 for purchase order
+            "dataBaseName": database_name
+        }
+        
+        # Retry logic with exponential backoff
+        max_retries = 3
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"🔍 Resolving item {item_code} (attempt {attempt + 1}/{max_retries})...")
+                response = session.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=30,
+                    verify=False
+                )
+                
+                # Handle HTTP errors
+                if response.status_code >= 500:
+                    # Server error - retry
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    logger.warning(f"⚠️ Server error resolving item {item_code} (attempt {attempt + 1}): {error_msg}")
+                    if attempt < max_retries - 1:
+                        backoff_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                        logger.info(f"⏳ Retrying in {backoff_time}s...")
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        raise ValueError(f"Server error after {max_retries} attempts: {error_msg}")
+                
+                if response.status_code == 404:
+                    # Item not found - don't retry, this is a real missing item
+                    raise ValueError(f"Item {item_code} not found in CoreBase API (HTTP 404)")
+                
+                if response.status_code not in [200, 201]:
+                    # Other HTTP errors - retry
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    logger.warning(f"⚠️ HTTP error resolving item {item_code} (attempt {attempt + 1}): {error_msg}")
+                    if attempt < max_retries - 1:
+                        backoff_time = 2 ** attempt
+                        logger.info(f"⏳ Retrying in {backoff_time}s...")
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        raise ValueError(f"HTTP error after {max_retries} attempts: {error_msg}")
+                
+                # Parse response
+                try:
+                    data = response.json()
+                except ValueError as e:
+                    error_msg = f"Invalid JSON response: {response.text[:200]}"
+                    logger.error(f"❌ {error_msg}")
+                    if attempt < max_retries - 1:
+                        backoff_time = 2 ** attempt
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        raise ValueError(error_msg)
+                
+                # Validate response
+                if not data:
+                    # Empty response after retries - item truly missing
+                    raise ValueError(f"Item {item_code} not found: empty response from CoreBase API")
+                
+                # Handle list response
+                if isinstance(data, list):
+                    if len(data) == 0:
+                        raise ValueError(f"Item {item_code} not found: empty list from CoreBase API")
+                    elif len(data) > 1:
+                        raise ValueError(f"Item {item_code} returned multiple items ({len(data)}): conflict in CoreBase API")
+                    # Single item in list - extract it
+                    item_data = data[0]
+                elif isinstance(data, dict):
+                    item_data = data
+                else:
+                    raise ValueError(f"Unexpected response type for item {item_code}: {type(data)}")
+                
+                # Validate item_data is a dict
+                if not isinstance(item_data, dict):
+                    raise ValueError(f"Item {item_code} response is not a dictionary: {type(item_data)}")
+                
+                # Cache the result
+                self._item_cache[cache_key] = item_data
+                logger.debug(f"✅ Resolved item {item_code}: cached for reuse")
+                
+                return item_data
+                
+            except requests.exceptions.Timeout as e:
+                last_exception = e
+                logger.warning(f"⚠️ Timeout resolving item {item_code} (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    backoff_time = 2 ** attempt
+                    logger.info(f"⏳ Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                    continue
+                    
+            except requests.exceptions.ConnectionError as e:
+                last_exception = e
+                logger.warning(f"⚠️ Connection error resolving item {item_code} (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    backoff_time = 2 ** attempt
+                    logger.info(f"⏳ Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                    continue
+                    
+            except ValueError:
+                # Don't retry ValueError - these are business logic errors (missing item, etc.)
+                raise
+                
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"⚠️ Error resolving item {item_code} (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    backoff_time = 2 ** attempt
+                    logger.info(f"⏳ Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                    continue
+        
+        # All retries exhausted
+        if last_exception:
+            raise ValueError(f"Failed to resolve item {item_code} after {max_retries} attempts: {last_exception}")
+        else:
+            raise ValueError(f"Failed to resolve item {item_code} after {max_retries} attempts: unknown error")
+    
     def create_branch_order(self, items_df: pd.DataFrame) -> Dict[str, Any]:
         """
         Create branch order via API
@@ -575,30 +902,169 @@ class IntegratedProcurementBot:
             today = datetime.now()
             date_str = today.strftime("%d/%m/%Y")
             
-            # Filter valid items
-            # Default price to use when unit_price is 0 or missing
-            DEFAULT_ITEM_PRICE = 5.0
+            # Get source branch code as numeric for API calls
+            source_branch_code_numeric = None
+            if self.branch_to_code:
+                if isinstance(self.branch_to_code, str) and self.branch_to_code.startswith('BR'):
+                    try:
+                        source_branch_code_numeric = int(self.branch_to_code.replace('BR', ''))
+                    except:
+                        pass
+                elif isinstance(self.branch_to_code, (int, str)):
+                    try:
+                        source_branch_code_numeric = int(self.branch_to_code)
+                    except:
+                        pass
             
+            if not source_branch_code_numeric:
+                return {
+                    'success': False,
+                    'message': f'Invalid source branch code: {self.branch_to_code} (cannot determine numeric code)'
+                }
+            
+            # STEP 1: Resolve ALL items from CoreBase API FIRST (before processing)
+            # This ensures we have authoritative metadata (price, tax, pack size, stock)
+            resolved_items = {}
+            failed_items = []
+            
+            logger.info(f"🔍 Resolving {len(items_df)} items from CoreBase API for branch order...")
+            for idx, (_, row) in enumerate(items_df.iterrows(), 1):
+                item_code = str(row.get('item_code', '')).strip()
+                requested_quantity_packs = float(row.get('order_quantity', 0))
+                
+                if not item_code:
+                    failed_items.append({
+                        'item_code': '',
+                        'reason': 'Empty item code'
+                    })
+                    continue
+                
+                if requested_quantity_packs <= 0:
+                    failed_items.append({
+                        'item_code': item_code,
+                        'reason': f'Invalid quantity: {requested_quantity_packs}'
+                    })
+                    continue
+                
+                try:
+                    # Resolve item from CoreBase API (stock_type=1 for branch order)
+                    # Use SOURCE branch code (where stock comes FROM)
+                    item_data = self.resolve_item_from_corebase(
+                        item_code=item_code,
+                        branch_code=source_branch_code_numeric,  # Source branch (where stock comes FROM)
+                        stock_type=1  # 1 for branch order
+                    )
+                    
+                    # Validate stock availability
+                    # Get pack size first (needed for stock conversion)
+                    pack_size = item_data.get('pkz')
+                    if pack_size is None:
+                        raise ValueError(f"Item {item_code} missing pack size (pkz) in CoreBase API response")
+                    pack_size = self._parse_numeric_value(pack_size, f"pkz for item {item_code}")
+                    
+                    # Get stock value (might be in "XWYP" format or numeric)
+                    total_stock_raw = item_data.get('totalStockUnits') or item_data.get('totalStock') or item_data.get('stock') or item_data.get('calcQty')
+                    if total_stock_raw is None:
+                        raise ValueError(f"Item {item_code} missing stock information (totalStockUnits/totalStock/stock/calcQty) in CoreBase API response")
+                    
+                    # Parse stock value (handles "XWYP" format)
+                    total_stock_value = self._parse_numeric_value(total_stock_raw, f"stock for item {item_code}")
+                    
+                    # If stock is in packs (from "XWYP" format), convert to units
+                    # Note: API might return stock in pieces already, so we check the format
+                    # If it was in "XWYP" format, it's likely in packs, so convert to units
+                    if isinstance(total_stock_raw, str) and 'W' in total_stock_raw and total_stock_raw.endswith('P'):
+                        # Value is in packs, convert to units (pieces)
+                        total_stock_units = total_stock_value * pack_size
+                    else:
+                        # Value is already in units (pieces)
+                        total_stock_units = total_stock_value
+                    
+                    # Convert requested quantity to units
+                    requested_units = requested_quantity_packs * pack_size
+                    
+                    # Validate stock availability
+                    if total_stock_units < requested_units:
+                        raise ValueError(f"Item {item_code} insufficient stock: requested {requested_units} units ({requested_quantity_packs} packs), available {total_stock_units} units")
+                    
+                    resolved_items[item_code] = item_data
+                    logger.debug(f"✅ Resolved item {idx}/{len(items_df)}: {item_code} (stock: {total_stock_units} units, requested: {requested_units} units)")
+                except ValueError as e:
+                    # Item resolution or validation failed
+                    error_msg = str(e)
+                    logger.error(f"❌ Failed to resolve/validate item {item_code}: {error_msg}")
+                    failed_items.append({
+                        'item_code': item_code,
+                        'reason': error_msg
+                    })
+                except Exception as e:
+                    # Unexpected error
+                    error_msg = f"Unexpected error: {str(e)}"
+                    logger.error(f"❌ Unexpected error resolving item {item_code}: {error_msg}")
+                    failed_items.append({
+                        'item_code': item_code,
+                        'reason': error_msg
+                    })
+            
+            # FAILURE STRATEGY: Stop order creation if ANY item failed
+            if failed_items:
+                failed_codes = [item['item_code'] for item in failed_items]
+                reasons = [f"{item['item_code']}: {item['reason']}" for item in failed_items]
+                return {
+                    'success': False,
+                    'message': f'Failed to resolve/validate {len(failed_items)} item(s) from CoreBase API',
+                    'failed_items': failed_items,
+                    'failed_item_codes': failed_codes,
+                    'failure_reasons': reasons
+                }
+            
+            if not resolved_items:
+                return {
+                    'success': False,
+                    'message': 'No items could be resolved from CoreBase API'
+                }
+            
+            logger.info(f"✅ Successfully resolved {len(resolved_items)} items from CoreBase API")
+            
+            # STEP 2: Build valid items list using resolved data
             valid_items = []
             for _, row in items_df.iterrows():
                 item_code = str(row.get('item_code', '')).strip()
-                quantity = float(row.get('order_quantity', 0))
-                unit_price = float(row.get('unit_price', 0))
                 
-                if not item_code or quantity <= 0:
+                if item_code not in resolved_items:
+                    # Should not happen if resolution passed, but check anyway
+                    logger.error(f"❌ Item {item_code} not in resolved items - skipping")
                     continue
                 
-                # Use default price if unit_price is 0 or missing
-                if unit_price <= 0:
-                    unit_price = DEFAULT_ITEM_PRICE
-                    logger.info(f"⚠️ Item {item_code} has no price, using default price: {DEFAULT_ITEM_PRICE}")
+                item_data = resolved_items[item_code]
+                quantity_packs = float(row.get('order_quantity', 0))
+                
+                # Extract metadata from CoreBase API
+                # Price: use retailUnit
+                retail_unit_price = item_data.get('retailUnit') or item_data.get('retail_unit')
+                if retail_unit_price is None:
+                    raise ValueError(f"Item {item_code} missing price (retailUnit/retail_unit) in CoreBase API response")
+                retail_unit_price = self._parse_numeric_value(retail_unit_price, f"price for item {item_code}")
+                
+                # Pack size: use pkz
+                pack_size = item_data.get('pkz')
+                if pack_size is None:
+                    raise ValueError(f"Item {item_code} missing pack size (pkz) in CoreBase API response")
+                pack_size = self._parse_numeric_value(pack_size, f"pkz for item {item_code}")
+                
+                # Tax code: use API field
+                tax_code = item_data.get('taX_CODE') or item_data.get('tax_CODE') or item_data.get('taxCode')
+                if tax_code is None:
+                    raise ValueError(f"Item {item_code} missing tax code (taX_CODE/tax_CODE/taxCode) in CoreBase API response")
+                tax_code = str(tax_code)
                 
                 valid_items.append({
                     'item_code': item_code,
-                    'item_name': str(row.get('item_name', '')).strip(),
-                    'quantity': quantity,
-                    'pack_size': float(row.get('pack_size', 1)),
-                    'unit_price': unit_price
+                    'item_name': str(row.get('item_name', item_data.get('itemName', 'Unknown'))).strip(),
+                    'quantity': quantity_packs,
+                    'pack_size': pack_size,  # From API
+                    'unit_price': retail_unit_price,  # From API
+                    'tax_code': tax_code  # From API
                 })
             
             if not valid_items:
@@ -654,11 +1120,11 @@ class IntegratedProcurementBot:
                         "defpw": "W",  # Default pack/whole (W = whole)
                         "itmcode": item['item_code'],
                         "itmname": item['item_name'],
-                        "itmpackqty": int(item['pack_size']),  # Pack size (e.g., 1, 50)
+                        "itmpackqty": int(item['pack_size']),  # Pack size from API (pkz)
                         "itmpartwhole": "W",  # Part/whole (W = whole)
-                        "itmprice": float(item['unit_price']),
+                        "itmprice": float(item['unit_price']),  # Price from API (retailUnit)
                         "itmqty": str(quantity_packs),  # Quantity in packs as string
-                        "itmtax": "07",  # Tax code
+                        "itmtax": item['tax_code'],  # Tax code from API
                         "itmlinedisc": 0  # Line discount (numeric)
                     }
                     
