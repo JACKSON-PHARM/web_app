@@ -4,6 +4,7 @@ Creates Purchase Orders and Branch Orders via API
 """
 import os
 import sys
+import time
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
@@ -686,8 +687,6 @@ class IntegratedProcurementBot:
             ValueError: If item not found, multiple items returned, or API error after retries
             requests.exceptions.RequestException: If network error persists after retries
         """
-        import time
-        
         # Check cache first
         cache_key = (item_code, branch_code, stock_type)
         if cache_key in self._item_cache:

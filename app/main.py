@@ -60,19 +60,23 @@ async def lifespan(app: FastAPI):
         db_manager = get_db_manager()
         logger.info("✅ Database manager initialized")
         
-        # Verify database connection (PostgreSQL/Supabase)
+        # Verify database connection (PostgreSQL/Supabase) - with timeout
         if hasattr(db_manager, 'pool'):
             logger.info("📊 Connected to Supabase PostgreSQL database")
             try:
+                # Use a quick connection test instead of full query to avoid timeout
                 conn = db_manager.get_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM current_stock")
-                stock_count = cursor.fetchone()[0]
-                logger.info(f"📋 Found {stock_count:,} stock records in database")
-                cursor.close()
-                db_manager.put_connection(conn)
+                if conn:
+                    # Just verify connection works, don't query large tables
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT 1")
+                    cursor.fetchone()
+                    cursor.close()
+                    db_manager.put_connection(conn)
+                    logger.info("✅ Database connection verified")
             except Exception as e:
-                logger.warning(f"⚠️ Could not verify database contents: {e}")
+                logger.warning(f"⚠️ Could not verify database connection: {e}")
+                logger.info("ℹ️ App will continue - database may be available later")
     except Exception as e:
         logger.error(f"❌ Database manager initialization failed: {e}")
         import traceback
