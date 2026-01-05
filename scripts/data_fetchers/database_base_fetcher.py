@@ -14,23 +14,10 @@ import requests
 app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, app_root)
 
-# Try to import from web app services first (for Render deployment)
-try:
-    from app.services.credential_manager import CredentialManager
-    from app.services.database_manager import DatabaseManager as WebDatabaseManager
-    # Use the underlying database manager from the web app wrapper
-    # The web app's DatabaseManager wraps the original, so we need to access it
-    USE_WEB_APP_SERVICES = True
-except ImportError:
-    # Fallback to original imports (for local development with full codebase)
-    try:
-        from credential_manager import CredentialManager
-        from database_manager import DatabaseManager
-        USE_WEB_APP_SERVICES = False
-    except ImportError as e:
-        print(f"❌ Required modules not found: {e}")
-        print("Please ensure credential_manager.py and database_manager.py are in your Python path.")
-        raise
+# Note: CredentialManager and DatabaseManager are passed as parameters to fetchers
+# We don't need to import them here - they're provided by the refresh_service
+# This import attempt was causing issues on Render, so it's been removed
+USE_WEB_APP_SERVICES = True  # Always True for web app deployment
 
 
 class DatabaseBaseFetcher:
@@ -66,7 +53,9 @@ class DatabaseBaseFetcher:
                         self.logger.warning(f"Could not get credential manager from dependencies: {e}, will be set by refresh_service")
                         self.cred_manager = None
                 else:
-                    self.cred_manager = CredentialManager(self.app_root)
+                    # Fallback mode (shouldn't happen in web app deployment)
+                    self.logger.warning("Fallback credential manager creation not supported in web app mode")
+                    self.cred_manager = None
             except Exception as e:
                 # Will be set by refresh_service
                 self.logger.warning(f"Could not create credential manager: {e}, will be set by refresh_service")
@@ -83,20 +72,14 @@ class DatabaseBaseFetcher:
                     self.db_manager = PostgresDatabaseManager(settings.DATABASE_URL)
                     self.logger.info("✅ Using Supabase PostgreSQL database")
                 else:
-                    # Use SQLite fallback
-                    db_path = os.path.join(settings.LOCAL_CACHE_DIR, "pharma_stock.db")
-                    self.db_manager = WebDatabaseManager(db_path)
-                    # If web app's manager wraps the original, try to get underlying manager
-                    if hasattr(self.db_manager, '_db_manager'):
-                        self.db_manager = self.db_manager._db_manager
-                    self.logger.info(f"📁 Using SQLite database: {db_path}")
+                    # SQLite fallback not supported in web app deployment
+                    raise ValueError("DATABASE_URL must be set for web app deployment (Supabase PostgreSQL required)")
             except Exception as e:
-                self.logger.warning(f"⚠️ Could not use web app services: {e}")
-                # Fallback to original database manager
-                self.db_manager = DatabaseManager(os.path.join(self.app_root, "database", "pharma_data.db"))
+                self.logger.error(f"❌ Could not use Supabase PostgreSQL: {e}")
+                raise
         else:
-            # Use original database manager
-            self.db_manager = DatabaseManager(os.path.join(self.app_root, "database", "pharma_data.db"))
+            # Fallback mode not supported in web app deployment
+            raise ValueError("Web app services must be used - fallback mode not supported")
         
     def setup_logging(self):
         """Setup logging for the script"""
