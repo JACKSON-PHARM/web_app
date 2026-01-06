@@ -54,9 +54,9 @@ class UserServiceSupabase:
             username_lower = username.lower().strip()
             password_hash = self._hash_password(password)
             
+            # Use SELECT * for backward compatibility - works even if new columns don't exist yet
             cursor.execute("""
-                SELECT username, password_hash, is_admin, is_user_admin, active, subscription_expires, 
-                       subscription_days, assigned_branch, assigned_company
+                SELECT * 
                 FROM app_users
                 WHERE LOWER(username) = %s AND password_hash = %s
             """, (username_lower, password_hash))
@@ -117,9 +117,9 @@ class UserServiceSupabase:
             
             username_lower = username.lower().strip()
             
+            # Use SELECT * for backward compatibility - works even if new columns don't exist yet
             cursor.execute("""
-                SELECT username, is_admin, is_user_admin, active, subscription_expires, subscription_days, 
-                       created_at, assigned_branch, assigned_company
+                SELECT * 
                 FROM app_users
                 WHERE LOWER(username) = %s
             """, (username_lower,))
@@ -262,9 +262,9 @@ class UserServiceSupabase:
             conn = self.db_manager.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
+            # Use SELECT * for backward compatibility - works even if new columns don't exist yet
             cursor.execute("""
-                SELECT username, is_admin, is_user_admin, active, subscription_days, subscription_expires, 
-                       created_at, created_by, last_updated, last_updated_by, assigned_branch, assigned_company
+                SELECT * 
                 FROM app_users
                 ORDER BY created_at DESC
             """)
