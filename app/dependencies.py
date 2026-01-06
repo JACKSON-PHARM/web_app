@@ -139,9 +139,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     except JWTError:
         raise credentials_exception
     
+    # Get full user info including branch assignment
+    user_info = user_service.get_user_info(username)
+    
     return {
         "username": username,
-        "is_admin": is_admin
+        "is_admin": is_admin,
+        "is_user_admin": user_info.get('is_user_admin', False) if user_info else False,
+        "assigned_branch": user_info.get('assigned_branch') if user_info else None,
+        "assigned_company": user_info.get('assigned_company') if user_info else None
     }
 
 async def get_current_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -153,6 +159,18 @@ async def get_current_admin(current_user: dict = Depends(get_current_user)) -> d
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
+        )
+    return current_user
+
+async def get_current_user_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Get current user, ensuring they can manage users (admin or user_admin)"""
+    user_service = get_user_service()
+    
+    username = current_user.get("username")
+    if not username or not user_service.can_manage_users(username):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User management access required (admin or user admin)"
         )
     return current_user
 

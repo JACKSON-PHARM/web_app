@@ -1,7 +1,7 @@
 """
 Procurement Bot API Routes
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.dependencies import get_current_user, get_db_manager
@@ -65,6 +65,22 @@ async def run_procurement_bot(
         )
     
     try:
+        # Check branch restriction - users can only send orders to their assigned branch
+        # Full admins can send orders to any branch
+        user_branch = current_user.get('assigned_branch')
+        user_company = current_user.get('assigned_company')
+        is_admin = current_user.get('is_admin', False)
+        
+        if not is_admin and user_branch and user_company:
+            # User has branch assignment - check if they're trying to order for their branch
+            if (request.branch_name.strip().upper() != user_branch.strip().upper() or 
+                request.branch_company.strip().upper() != user_company.strip().upper()):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"You can only send orders to your assigned branch: {user_branch} ({user_company}). "
+                           f"You attempted to send an order to: {request.branch_name} ({request.branch_company})"
+                )
+        
         # Get branch code from branch name
         branch_code = None
         for branch in ALL_BRANCHES:

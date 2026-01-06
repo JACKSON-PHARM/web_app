@@ -55,7 +55,8 @@ class UserServiceSupabase:
             password_hash = self._hash_password(password)
             
             cursor.execute("""
-                SELECT username, password_hash, is_admin, active, subscription_expires, subscription_days
+                SELECT username, password_hash, is_admin, is_user_admin, active, subscription_expires, 
+                       subscription_days, assigned_branch, assigned_company
                 FROM app_users
                 WHERE LOWER(username) = %s AND password_hash = %s
             """, (username_lower, password_hash))
@@ -85,6 +86,9 @@ class UserServiceSupabase:
             return {
                 'username': user['username'],
                 'is_admin': user.get('is_admin', False),
+                'is_user_admin': user.get('is_user_admin', False),
+                'assigned_branch': user.get('assigned_branch'),
+                'assigned_company': user.get('assigned_company'),
                 'subscription_expires': expires_str.isoformat() if expires_str and isinstance(expires_str, datetime) else str(expires_str),
                 'subscription_days': user.get('subscription_days', 0)
             }
@@ -114,7 +118,8 @@ class UserServiceSupabase:
             username_lower = username.lower().strip()
             
             cursor.execute("""
-                SELECT username, is_admin, active, subscription_expires, subscription_days, created_at
+                SELECT username, is_admin, is_user_admin, active, subscription_expires, subscription_days, 
+                       created_at, assigned_branch, assigned_company
                 FROM app_users
                 WHERE LOWER(username) = %s
             """, (username_lower,))
@@ -140,7 +145,10 @@ class UserServiceSupabase:
             return {
                 'username': user['username'],
                 'is_admin': user.get('is_admin', False),
+                'is_user_admin': user.get('is_user_admin', False),
                 'active': user.get('active', True),
+                'assigned_branch': user.get('assigned_branch'),
+                'assigned_company': user.get('assigned_company'),
                 'subscription_days': user.get('subscription_days', 0),
                 'subscription_expires': expires_str.isoformat() if expires_date else str(expires_str) if expires_str else None,
                 'days_remaining': days_remaining,
@@ -162,14 +170,39 @@ class UserServiceSupabase:
             return None
     
     def is_admin(self, username: str) -> bool:
-        """Check if user is admin"""
+        """Check if user is full admin"""
         user_info = self.get_user_info(username)
         return user_info and user_info.get('is_admin', False)
     
-    def create_user(self, username: str, password: str, subscription_days: int, created_by: str, is_admin: bool = False) -> Tuple[bool, str]:
-        """Create a new user (admin only)"""
-        if not self.is_admin(created_by):
-            return False, "Only admins can create users"
+    def is_user_admin(self, username: str) -> bool:
+        """Check if user is secondary admin (can manage users)"""
+        user_info = self.get_user_info(username)
+        return user_info and user_info.get('is_user_admin', False)
+    
+    def can_manage_users(self, username: str) -> bool:
+        """Check if user can manage users (either full admin or secondary admin)"""
+        user_info = self.get_user_info(username)
+        if not user_info:
+            return False
+        return user_info.get('is_admin', False) or user_info.get('is_user_admin', False)
+    
+    def get_user_branch(self, username: str) -> Optional[Dict[str, str]]:
+        """Get user's assigned branch and company"""
+        user_info = self.get_user_info(username)
+        if not user_info:
+            return None
+        branch = user_info.get('assigned_branch')
+        company = user_info.get('assigned_company')
+        if branch and company:
+            return {'branch': branch, 'company': company}
+        return None
+    
+    def create_user(self, username: str, password: str, subscription_days: int, created_by: str, 
+                   is_admin: bool = False, is_user_admin: bool = False, 
+                   assigned_branch: Optional[str] = None, assigned_company: Optional[str] = None) -> Tuple[bool, str]:
+        """Create a new user (admin or user_admin only)"""
+        if not self.can_manage_users(created_by):
+            return False, "Only admins or user admins can create users"
         
         conn = None
         cursor = None
@@ -191,11 +224,12 @@ class UserServiceSupabase:
             password_hash = self._hash_password(password)
             
             cursor.execute("""
-                INSERT INTO app_users (username, password_hash, is_admin, subscription_days, subscription_expires, 
-                                     active, created_by, created_at, last_updated, last_updated_by)
-                VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s)
-            """, (username, password_hash, is_admin, subscription_days, expires_date, 
-                  created_by, datetime.now(), datetime.now(), created_by))
+                INSERT INTO app_users (username, password_hash, is_admin, is_user_admin, subscription_days, 
+                                     subscription_expires, active, assigned_branch, assigned_company,
+                                     created_by, created_at, last_updated, last_updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s)
+            """, (username, password_hash, is_admin, is_user_admin, subscription_days, expires_date,
+                  assigned_branch, assigned_company, created_by, datetime.now(), datetime.now(), created_by))
             
             conn.commit()
             cursor.close()
@@ -229,8 +263,8 @@ class UserServiceSupabase:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
-                SELECT username, is_admin, active, subscription_days, subscription_expires, 
-                       created_at, created_by, last_updated, last_updated_by
+                SELECT username, is_admin, is_user_admin, active, subscription_days, subscription_expires, 
+                       created_at, created_by, last_updated, last_updated_by, assigned_branch, assigned_company
                 FROM app_users
                 ORDER BY created_at DESC
             """)
@@ -253,7 +287,10 @@ class UserServiceSupabase:
                 result.append({
                     'username': user['username'],
                     'is_admin': user.get('is_admin', False),
+                    'is_user_admin': user.get('is_user_admin', False),
                     'active': user.get('active', True),
+                    'assigned_branch': user.get('assigned_branch'),
+                    'assigned_company': user.get('assigned_company'),
                     'subscription_days': user.get('subscription_days', 0),
                     'days_remaining': days_remaining,
                     'created_at': user.get('created_at'),

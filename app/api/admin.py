@@ -9,7 +9,7 @@ from typing import List, Optional
 import os
 import json
 import logging
-from app.dependencies import get_current_admin, get_user_service
+from app.dependencies import get_current_admin, get_user_service, get_current_user_admin
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,9 @@ class CreateUserRequest(BaseModel):
     password: str
     subscription_days: int
     is_admin: bool = False
+    is_user_admin: bool = False
+    assigned_branch: Optional[str] = None
+    assigned_company: Optional[str] = None
 
 class UpdateSubscriptionRequest(BaseModel):
     username: str
@@ -32,16 +35,27 @@ class UpdateSubscriptionRequest(BaseModel):
 @router.post("/users/create")
 async def create_user(
     request: CreateUserRequest,
-    current_user: dict = Depends(get_current_admin)
+    current_user: dict = Depends(get_current_user_admin)  # Allow user_admin too
 ):
-    """Create a new user (admin only)"""
+    """Create a new user (admin or user_admin only)"""
     user_service = get_user_service()
+    
+    # Only full admins can create other admins
+    if request.is_admin and not user_service.is_admin(current_user["username"]):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only full admins can create admin users"
+        )
+    
     success, message = user_service.create_user(
         request.username,
         request.password,
         request.subscription_days,
         current_user["username"],
-        request.is_admin
+        request.is_admin,
+        request.is_user_admin,
+        request.assigned_branch,
+        request.assigned_company
     )
     
     if success:
@@ -52,9 +66,9 @@ async def create_user(
 @router.post("/users/update-subscription")
 async def update_subscription(
     request: UpdateSubscriptionRequest,
-    current_user: dict = Depends(get_current_admin)
+    current_user: dict = Depends(get_current_user_admin)  # Allow user_admin too
 ):
-    """Update user subscription (admin only)"""
+    """Update user subscription (admin or user_admin only)"""
     user_service = get_user_service()
     success, message = user_service.update_user_subscription(
         request.username,
@@ -76,9 +90,9 @@ class DeleteUserRequest(BaseModel):
 @router.post("/users/deactivate")
 async def deactivate_user(
     request: DeactivateUserRequest,
-    current_user: dict = Depends(get_current_admin)
+    current_user: dict = Depends(get_current_user_admin)  # Allow user_admin too
 ):
-    """Deactivate a user (admin only)"""
+    """Deactivate a user (admin or user_admin only)"""
     user_service = get_user_service()
     success, message = user_service.deactivate_user(request.username, current_user["username"])
     
@@ -90,9 +104,9 @@ async def deactivate_user(
 @router.post("/users/activate")
 async def activate_user(
     request: DeactivateUserRequest,
-    current_user: dict = Depends(get_current_admin)
+    current_user: dict = Depends(get_current_user_admin)  # Allow user_admin too
 ):
-    """Activate a user (admin only)"""
+    """Activate a user (admin or user_admin only)"""
     user_service = get_user_service()
     success, message = user_service.activate_user(request.username, current_user["username"])
     
@@ -104,9 +118,9 @@ async def activate_user(
 @router.post("/users/delete")
 async def delete_user(
     request: DeleteUserRequest,
-    current_user: dict = Depends(get_current_admin)
+    current_user: dict = Depends(get_current_user_admin)  # Allow user_admin too
 ):
-    """Delete a user (admin only)"""
+    """Delete a user (admin or user_admin only)"""
     if request.username == current_user["username"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
@@ -119,8 +133,8 @@ async def delete_user(
         raise HTTPException(status_code=400, detail=message)
 
 @router.get("/users/list")
-async def list_users(current_user: dict = Depends(get_current_admin)):
-    """List all users (admin only)"""
+async def list_users(current_user: dict = Depends(get_current_user_admin)):  # Allow user_admin too
+    """List all users (admin or user_admin only)"""
     user_service = get_user_service()
     users = user_service.list_users()
     
