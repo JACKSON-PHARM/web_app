@@ -174,3 +174,26 @@ async def get_current_user_admin(current_user: dict = Depends(get_current_user))
         )
     return current_user
 
+async def get_current_admin_or_user_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Get current user, ensuring they are admin or user_admin (for API credentials management)"""
+    user_service = get_user_service()
+    
+    username = current_user.get("username")
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authentication required"
+        )
+    
+    # Check if user is admin or user_admin
+    is_admin = user_service.is_admin(username)
+    is_user_admin = user_service.is_user_admin(username)
+    
+    if not is_admin and not is_user_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or user admin access required"
+        )
+    
+    return current_user
+

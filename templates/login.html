@@ -217,6 +217,7 @@
                         localStorage.setItem('access_token', data.access_token);
                         localStorage.setItem('user_username', data.username);
                         localStorage.setItem('is_admin', String(data.is_admin || false));
+                        localStorage.setItem('is_user_admin', String(data.is_user_admin || false));
                         localStorage.setItem('days_remaining', String(data.days_remaining || 0));
                         
                         // Redirect to dashboard

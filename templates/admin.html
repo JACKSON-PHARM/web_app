@@ -17,12 +17,20 @@
                     <strong>Password:</strong> Use a PIN like <code>1996</code> (numbers only, 4-6 digits recommended)
                 </p>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; margin-bottom: 10px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto auto; gap: 10px; margin-bottom: 10px;">
                 <input type="text" id="newUsername" placeholder="DR-JACKSON" required style="text-transform: uppercase;">
                 <input type="password" id="newPassword" placeholder="1996" required pattern="[0-9]{4,6}" title="Enter a 4-6 digit PIN">
                 <input type="number" id="newSubscriptionDays" placeholder="Days" min="1" value="30" required>
+                <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap;">
+                    <input type="checkbox" id="newIsUserAdmin" style="width: auto;">
+                    User Admin
+                </label>
                 <button onclick="createUser()" class="btn btn-success">Create User</button>
             </div>
+            <p style="font-size: 12px; color: #666; margin-top: 5px;">
+                <strong>User Admin:</strong> Can create users, block users, and configure API credentials. 
+                <strong>Note:</strong> Only super admin (9542) can create full admins.
+            </p>
         </div>
         
         <div id="usersList" class="loading">Loading...</div>
@@ -31,9 +39,10 @@
 
 <script>
     window.addEventListener('DOMContentLoaded', () => {
-        // Check if user is authenticated and is admin
+        // Check if user is authenticated and is admin or user_admin
         const token = localStorage.getItem('access_token');
         const isAdmin = localStorage.getItem('is_admin') === 'true';
+        const isUserAdmin = localStorage.getItem('is_user_admin') === 'true';
         
         if (!token) {
             console.warn('No access token found, redirecting to login');
@@ -41,8 +50,9 @@
             return;
         }
         
-        if (!isAdmin) {
-            console.warn('User is not admin, redirecting to dashboard');
+        // Allow access if user is admin or user_admin
+        if (!isAdmin && !isUserAdmin) {
+            console.warn('User is not admin or user_admin, redirecting to dashboard');
             window.location.href = '/dashboard';
             return;
         }
@@ -132,6 +142,9 @@
             return;
         }
         
+        const isUserAdmin = document.getElementById('newIsUserAdmin').checked;
+        const isSuperAdmin = localStorage.getItem('user_username') === '9542';
+        
         try {
             const result = await apiRequest('/api/admin/users/create', {
                 method: 'POST',
@@ -139,7 +152,8 @@
                     username, 
                     password, 
                     subscription_days: subscriptionDays,
-                    is_admin: false
+                    is_admin: false,  // Only super admin can create full admins
+                    is_user_admin: isUserAdmin  // Allow creating user_admin users
                 })
             });
             

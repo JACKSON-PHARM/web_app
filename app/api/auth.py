@@ -50,7 +50,11 @@ async def login(login_data: LoginRequest):
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": username, "is_admin": user['is_admin']},
+        data={
+            "sub": username, 
+            "is_admin": user['is_admin'],
+            "is_user_admin": user.get('is_user_admin', False)
+        },
         expires_delta=access_token_expires
     )
     
@@ -59,6 +63,7 @@ async def login(login_data: LoginRequest):
         "token_type": "bearer",
         "username": user['username'],
         "is_admin": user['is_admin'],
+        "is_user_admin": user.get('is_user_admin', False),
         "days_remaining": days_remaining
     }
 

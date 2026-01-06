@@ -51,8 +51,10 @@
     
     function checkAdminStatus() {
         const isAdmin = localStorage.getItem('is_admin') === 'true';
-        if (isAdmin) {
-            // Show delete buttons for admins
+        const isUserAdmin = localStorage.getItem('is_user_admin') === 'true';
+        
+        // Show delete buttons for admins or user_admins
+        if (isAdmin || isUserAdmin) {
             document.getElementById('deleteNilaBtn').style.display = 'inline-block';
             document.getElementById('deleteDaimaBtn').style.display = 'inline-block';
         }

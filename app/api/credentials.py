@@ -4,7 +4,7 @@ Credentials API Routes
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.dependencies import get_current_user, get_current_admin
+from app.dependencies import get_current_user, get_current_admin, get_current_admin_or_user_admin
 from app.dependencies import get_credential_manager
 from app.config import settings
 
@@ -25,9 +25,9 @@ class TestCredentialsRequest(BaseModel):
 @router.post("/save")
 async def save_credentials(
     request: SaveCredentialsRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_or_user_admin)  # Admin or user_admin can save
 ):
-    """Save credentials for a company"""
+    """Save credentials for a company (Admin or User Admin only)"""
     if request.company not in ["NILA", "DAIMA"]:
         return {"success": False, "message": "Company must be NILA or DAIMA"}
     
@@ -52,9 +52,9 @@ async def save_credentials(
 @router.post("/test")
 async def test_credentials(
     request: TestCredentialsRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_or_user_admin)  # Admin or user_admin can test
 ):
-    """Test credentials for a company"""
+    """Test credentials for a company (Admin or User Admin only)"""
     if request.company not in ["NILA", "DAIMA"]:
         return {"success": False, "message": "Company must be NILA or DAIMA"}
     
@@ -103,9 +103,9 @@ class DeleteCredentialsRequest(BaseModel):
 @router.delete("/delete")
 async def delete_credentials(
     company: str,
-    current_user: dict = Depends(get_current_admin)  # Only admins can delete
+    current_user: dict = Depends(get_current_admin_or_user_admin)  # Admin or user_admin can delete
 ):
-    """Delete credentials for a company (Admin only)"""
+    """Delete credentials for a company (Admin or User Admin only)"""
     if company not in ["NILA", "DAIMA"]:
         raise HTTPException(
             status_code=400,

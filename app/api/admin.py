@@ -40,12 +40,22 @@ async def create_user(
     """Create a new user (admin or user_admin only)"""
     user_service = get_user_service()
     
-    # Only full admins can create other admins
-    if request.is_admin and not user_service.is_admin(current_user["username"]):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only full admins can create admin users"
-        )
+    # Only super admin (9542) can create other full admins
+    # User admins can create user_admin users, but not full admins
+    if request.is_admin:
+        if current_user["username"].lower() != '9542':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only super admin (9542) can create full admin users"
+            )
+    
+    # User admins can create user_admin users, but only super admin can create full admins
+    if request.is_user_admin and request.is_admin:
+        if current_user["username"].lower() != '9542':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only super admin (9542) can create users with both admin and user_admin roles"
+            )
     
     success, message = user_service.create_user(
         request.username,
