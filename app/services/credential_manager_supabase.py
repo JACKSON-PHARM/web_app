@@ -261,40 +261,103 @@ class CredentialManagerSupabase:
                 self._token_cache.clear()
     
     def test_credentials(self, company: str, username: str, password: str, base_url: str) -> Dict:
-        """Test credentials"""
+        """Test credentials using the same endpoint and format as get_valid_token"""
         try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
             session = requests.Session()
-            auth_url = f"{base_url}/api/auth/login"
-            response = session.post(auth_url, json={
-                'username': username,
-                'password': password
-            }, timeout=10)
+            base_url_clean = base_url.rstrip('/')
+            auth_url = f"{base_url_clean}/Auth"
             
-            success = response.status_code == 200
-            
-            # Update last_tested in database
-            conn = None
-            cursor = None
-            try:
-                conn = self.db_manager.get_connection()
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE app_credentials
-                    SET last_tested = %s, last_test_success = %s
-                    WHERE company_name = %s
-                """, (datetime.now(), success, company))
-                conn.commit()
-                cursor.close()
-                self.db_manager.put_connection(conn)
-            except Exception as e:
-                logger.warning(f"Could not update test status: {e}")
-            
-            return {
-                'success': success,
-                'message': 'Credentials valid' if success else f'Authentication failed: {response.status_code}',
-                'token_obtained': success
+            # Use the same payload format as get_valid_token
+            payload = {
+                "userName": username,
+                "password": password,
+                "machineCookie": "",
+                "clientPin": 0,
+                "latt": "",
+                "long": "",
+                "ipLocation": ""
             }
             
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            response = session.post(
+                auth_url,
+                json=payload,
+                headers=headers,
+                verify=False,
+                timeout=15
+            )
+            
+            # Check if authentication was successful
+            if response.status_code == 200:
+                data = response.json()
+                token = data.get('token') or data.get('access_token')
+                success = token is not None
+                
+                # Update last_tested in database
+                conn = None
+                cursor = None
+                try:
+                    conn = self.db_manager.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE app_credentials
+                        SET last_tested = %s, last_test_success = %s
+                        WHERE company_name = %s
+                    """, (datetime.now(), success, company))
+                    conn.commit()
+                    cursor.close()
+                    self.db_manager.put_connection(conn)
+                except Exception as e:
+                    logger.warning(f"Could not update test status: {e}")
+                
+                if success:
+                    return {
+                        'success': True,
+                        'message': 'Credentials valid',
+                        'token_obtained': True
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'message': 'Authentication failed: No token in response',
+                        'token_obtained': False
+                    }
+            else:
+                # Update last_tested in database
+                conn = None
+                cursor = None
+                try:
+                    conn = self.db_manager.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE app_credentials
+                        SET last_tested = %s, last_test_success = %s
+                        WHERE company_name = %s
+                    """, (datetime.now(), False, company))
+                    conn.commit()
+                    cursor.close()
+                    self.db_manager.put_connection(conn)
+                except Exception as e:
+                    logger.warning(f"Could not update test status: {e}")
+                
+                return {
+                    'success': False,
+                    'message': f'Authentication failed: {response.status_code}',
+                    'token_obtained': False
+                }
+            
+        except requests.exceptions.RequestException as e:
+            return {
+                'success': False,
+                'message': f'Error testing credentials: {str(e)}',
+                'token_obtained': False
+            }
         except Exception as e:
             return {
                 'success': False,

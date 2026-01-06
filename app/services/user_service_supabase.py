@@ -219,17 +219,47 @@ class UserServiceSupabase:
                 self.db_manager.put_connection(conn)
                 return False, f"Username '{username}' already exists"
             
+            # Check which columns exist in the table (for backward compatibility)
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'app_users' 
+                AND table_schema = 'public'
+            """)
+            existing_columns = {row[0] for row in cursor.fetchall()}
+            
             # Create new user
             expires_date = datetime.now() + timedelta(days=subscription_days)
             password_hash = self._hash_password(password)
             
-            cursor.execute("""
-                INSERT INTO app_users (username, password_hash, is_admin, is_user_admin, subscription_days, 
-                                     subscription_expires, active, assigned_branch, assigned_company,
-                                     created_by, created_at, last_updated, last_updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s)
-            """, (username, password_hash, is_admin, is_user_admin, subscription_days, expires_date,
-                  assigned_branch, assigned_company, created_by, datetime.now(), datetime.now(), created_by))
+            # Build INSERT statement dynamically based on existing columns
+            base_columns = ['username', 'password_hash', 'is_admin', 'subscription_days', 
+                          'subscription_expires', 'active', 'created_by', 'created_at', 
+                          'last_updated', 'last_updated_by']
+            base_values = [username, password_hash, is_admin, subscription_days, expires_date,
+                          True, created_by, datetime.now(), datetime.now(), created_by]
+            
+            # Add new columns only if they exist
+            if 'is_user_admin' in existing_columns:
+                base_columns.insert(3, 'is_user_admin')  # Insert after is_admin
+                base_values.insert(3, is_user_admin)
+            
+            if 'assigned_branch' in existing_columns:
+                base_columns.append('assigned_branch')
+                base_values.append(assigned_branch)
+            
+            if 'assigned_company' in existing_columns:
+                base_columns.append('assigned_company')
+                base_values.append(assigned_company)
+            
+            # Build and execute INSERT
+            columns_str = ', '.join(base_columns)
+            placeholders = ', '.join(['%s'] * len(base_values))
+            
+            cursor.execute(f"""
+                INSERT INTO app_users ({columns_str})
+                VALUES ({placeholders})
+            """, base_values)
             
             conn.commit()
             cursor.close()
