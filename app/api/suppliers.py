@@ -73,18 +73,6 @@ async def get_suppliers(
                     else:
                         auth_errors.append(f"{company_to_try}: Authentication failed - check credentials in Settings")
                     continue
-            except AccountLockedException as e:
-                # Account is locked - tell user to unlock from Pharmacore first
-                # The exception message already includes the username
-                auth_errors.append(f"{company_to_try}: {e.message}")
-                logger.error(f"🚫 {e.message}")
-                continue
-            except InvalidCredentialsException as e:
-                # Invalid credentials - tell user to check credentials
-                # The exception message already includes the username
-                auth_errors.append(f"{company_to_try}: {e.message}")
-                logger.error(f"🚫 {e.message}")
-                continue
                 
                 # Use correct database name for this company
                 db_name_for_company = database_names.get(company_to_try, db_name)
@@ -113,15 +101,39 @@ async def get_suppliers(
                 }
                 
                 logger.info(f"🔍 Fetching suppliers for branch_code={branch_code}, company={company_to_try}, database={db_name_for_company}")
+                logger.info(f"   URL: {url}")
+                logger.info(f"   Params: {params}")
                 response = requests.get(url, params=params, headers=headers, verify=False, timeout=30)
-                response.raise_for_status()
+                
+                logger.info(f"   Response status: {response.status_code}")
+                
+                if response.status_code != 200:
+                    error_text = response.text[:500] if response.text else "No response body"
+                    logger.error(f"❌ API returned {response.status_code}: {error_text}")
+                    api_errors.append(f"{company_to_try}: API returned {response.status_code} - {error_text}")
+                    continue
                 
                 company_suppliers = response.json()
                 if company_suppliers:
                     suppliers.extend(company_suppliers)
                     logger.info(f"✅ Found {len(company_suppliers)} suppliers for {company_to_try}")
                     break  # If we got suppliers from one company, use that
+                else:
+                    logger.warning(f"⚠️ API returned empty list for {company_to_try}")
+                    api_errors.append(f"{company_to_try}: API returned empty supplier list")
                     
+            except AccountLockedException as e:
+                # Account is locked - tell user to unlock from Pharmacore first
+                # The exception message already includes the username
+                auth_errors.append(f"{company_to_try}: {e.message}")
+                logger.error(f"🚫 {e.message}")
+                continue
+            except InvalidCredentialsException as e:
+                # Invalid credentials - tell user to check credentials
+                # The exception message already includes the username
+                auth_errors.append(f"{company_to_try}: {e.message}")
+                logger.error(f"🚫 {e.message}")
+                continue
             except requests.exceptions.HTTPError as e:
                 error_msg = f"{company_to_try}: API returned {e.response.status_code}"
                 try:
