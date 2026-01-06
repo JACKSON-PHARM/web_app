@@ -12,6 +12,7 @@ from app.dependencies import get_credential_manager
 from app.services.fetcher_manager import FetcherManager
 from app.services.scheduler import RefreshScheduler
 from app.services.refresh_status import RefreshStatusService
+from app.services.credential_manager_supabase import AccountLockedException, InvalidCredentialsException
 from app.config import settings
 import os
 
@@ -113,6 +114,86 @@ async def refresh_all_data(
         raise HTTPException(
             status_code=400,
             detail="No credentials available. Please configure credentials in Settings first or provide them in the request."
+        )
+    
+    # Validate credentials before starting refresh - check if they're locked or invalid
+    invalid_credentials = []
+    locked_credentials = []
+    
+    # Check NILA credentials if available
+    if has_nila:
+        try:
+            if request.nila_username and request.nila_password:
+                # Test provided credentials
+                test_result = cred_manager.test_credentials(
+                    "NILA",
+                    request.nila_username,
+                    request.nila_password,
+                    settings.NILA_API_URL
+                )
+                if not test_result.get('success'):
+                    error_msg = test_result.get('message', 'Invalid credentials')
+                    if 'locked' in error_msg.lower():
+                        locked_credentials.append(f"NILA (username: {request.nila_username})")
+                    else:
+                        invalid_credentials.append(f"NILA (username: {request.nila_username})")
+            elif nila_creds:
+                # Test saved credentials
+                try:
+                    token = cred_manager.get_valid_token("NILA")
+                    if not token:
+                        invalid_credentials.append(f"NILA (username: {nila_creds.get('username', 'Unknown')})")
+                except AccountLockedException as e:
+                    locked_credentials.append(f"NILA (username: {nila_creds.get('username', 'Unknown')})")
+                except InvalidCredentialsException as e:
+                    invalid_credentials.append(f"NILA (username: {nila_creds.get('username', 'Unknown')})")
+        except Exception as e:
+            logger.warning(f"Could not validate NILA credentials: {e}")
+    
+    # Check DAIMA credentials if available
+    if has_daima:
+        try:
+            if request.daima_username and request.daima_password:
+                # Test provided credentials
+                test_result = cred_manager.test_credentials(
+                    "DAIMA",
+                    request.daima_username,
+                    request.daima_password,
+                    settings.DAIMA_API_URL
+                )
+                if not test_result.get('success'):
+                    error_msg = test_result.get('message', 'Invalid credentials')
+                    if 'locked' in error_msg.lower():
+                        locked_credentials.append(f"DAIMA (username: {request.daima_username})")
+                    else:
+                        invalid_credentials.append(f"DAIMA (username: {request.daima_username})")
+            elif daima_creds:
+                # Test saved credentials
+                try:
+                    token = cred_manager.get_valid_token("DAIMA")
+                    if not token:
+                        invalid_credentials.append(f"DAIMA (username: {daima_creds.get('username', 'Unknown')})")
+                except AccountLockedException as e:
+                    locked_credentials.append(f"DAIMA (username: {daima_creds.get('username', 'Unknown')})")
+                except InvalidCredentialsException as e:
+                    invalid_credentials.append(f"DAIMA (username: {daima_creds.get('username', 'Unknown')})")
+        except Exception as e:
+            logger.warning(f"Could not validate DAIMA credentials: {e}")
+    
+    # If credentials are locked, prompt user to unlock and update
+    if locked_credentials:
+        companies_str = ", ".join(locked_credentials)
+        raise HTTPException(
+            status_code=403,
+            detail=f"Account(s) locked: {companies_str}. Please unlock your account(s) from Pharmacore first, then update your credentials in Settings with valid credentials before refreshing data."
+        )
+    
+    # If credentials are invalid, prompt user to update
+    if invalid_credentials:
+        companies_str = ", ".join(invalid_credentials)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid credentials: {companies_str}. Please update your credentials in Settings with valid username and password before refreshing data."
         )
     
     # Save user credentials if provided (will overwrite saved ones)
@@ -227,6 +308,88 @@ async def trigger_manual_refresh(
             raise HTTPException(
                 status_code=400,
                 detail="No credentials available. Please configure credentials in Settings first or provide them in the request."
+            )
+        
+        # Validate credentials before starting refresh - check if they're locked or invalid
+        invalid_credentials = []
+        locked_credentials = []
+        
+        # Check NILA credentials if available
+        if has_nila:
+            try:
+                if request.nila_username and request.nila_password:
+                    # Test provided credentials
+                    test_result = cred_manager.test_credentials(
+                        "NILA",
+                        request.nila_username,
+                        request.nila_password,
+                        settings.NILA_API_URL
+                    )
+                    if not test_result.get('success'):
+                        error_msg = test_result.get('message', 'Invalid credentials')
+                        if 'locked' in error_msg.lower():
+                            locked_credentials.append(f"NILA (username: {request.nila_username})")
+                        else:
+                            invalid_credentials.append(f"NILA (username: {request.nila_username})")
+                elif nila_creds:
+                    # Test saved credentials
+                    try:
+                        token = cred_manager.get_valid_token("NILA")
+                        if not token:
+                            invalid_credentials.append(f"NILA (username: {nila_creds.get('username', 'Unknown')})")
+                    except AccountLockedException as e:
+                        locked_credentials.append(f"NILA (username: {nila_creds.get('username', 'Unknown')})")
+                    except InvalidCredentialsException as e:
+                        invalid_credentials.append(f"NILA (username: {nila_creds.get('username', 'Unknown')})")
+            except Exception as e:
+                logger.warning(f"Could not validate NILA credentials: {e}")
+        
+        # Check DAIMA credentials if available
+        if has_daima:
+            try:
+                if request.daima_username and request.daima_password:
+                    # Test provided credentials
+                    test_result = cred_manager.test_credentials(
+                        "DAIMA",
+                        request.daima_username,
+                        request.daima_password,
+                        settings.DAIMA_API_URL
+                    )
+                    if not test_result.get('success'):
+                        error_msg = test_result.get('message', 'Invalid credentials')
+                        if 'locked' in error_msg.lower():
+                            locked_credentials.append(f"DAIMA (username: {request.daima_username})")
+                        else:
+                            invalid_credentials.append(f"DAIMA (username: {request.daima_username})")
+                elif daima_creds:
+                    # Test saved credentials
+                    try:
+                        token = cred_manager.get_valid_token("DAIMA")
+                        if not token:
+                            invalid_credentials.append(f"DAIMA (username: {daima_creds.get('username', 'Unknown')})")
+                    except AccountLockedException as e:
+                        locked_credentials.append(f"DAIMA (username: {daima_creds.get('username', 'Unknown')})")
+                    except InvalidCredentialsException as e:
+                        invalid_credentials.append(f"DAIMA (username: {daima_creds.get('username', 'Unknown')})")
+            except Exception as e:
+                logger.warning(f"Could not validate DAIMA credentials: {e}")
+        
+        # If credentials are locked, prompt user to unlock and update
+        if locked_credentials:
+            companies_str = ", ".join(locked_credentials)
+            logger.error(f"🚫 Cannot refresh: {companies_str} account(s) locked")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Account(s) locked: {companies_str}. Please unlock your account(s) from Pharmacore first, then update your credentials in Settings with valid credentials before refreshing data."
+            )
+        
+        # If credentials are invalid, prompt user to update
+        if invalid_credentials:
+            companies_str = ", ".join(invalid_credentials)
+            logger.error(f"❌ Cannot refresh: {companies_str} invalid credentials")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid credentials: {companies_str}. Please update your credentials in Settings with valid username and password before refreshing data."
             )
         
         # Save user credentials if provided (will overwrite saved ones)

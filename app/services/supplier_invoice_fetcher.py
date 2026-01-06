@@ -29,10 +29,18 @@ class SupplierInvoiceFetcher:
     def _get_auth_token(self, company: str) -> Optional[str]:
         """Get authentication token for company"""
         try:
+            from app.services.credential_manager_supabase import AccountLockedException, InvalidCredentialsException
+            
             token = self.credential_manager.get_valid_token(company)
             if token:
                 self.token = token
                 return token
+        except AccountLockedException as e:
+            logger.error(f"🚫 {e.message}")
+            return None
+        except InvalidCredentialsException as e:
+            logger.error(f"🚫 {e.message}")
+            return None
             
             # Try to authenticate if no token
             creds = self.credential_manager.get_credentials(company)

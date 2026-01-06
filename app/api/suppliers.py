@@ -4,6 +4,7 @@ Suppliers API Routes
 from fastapi import APIRouter, Depends, HTTPException
 from app.dependencies import get_current_user, get_credential_manager
 from app.config import settings
+from app.services.credential_manager_supabase import AccountLockedException, InvalidCredentialsException
 import requests
 import logging
 
@@ -55,6 +56,8 @@ async def get_suppliers(
         # Try companies in order: determined company first, then both if not found
         companies_to_try = [company] if company else ["NILA", "DAIMA"]
         suppliers = []
+        auth_errors = []
+        api_errors = []
         
         for company_to_try in companies_to_try:
             if not company_to_try:
@@ -63,7 +66,25 @@ async def get_suppliers(
                 # Get authentication token
                 token = cred_manager.get_valid_token(company_to_try)
                 if not token:
+                    # Check if credentials exist
+                    creds = cred_manager.get_credentials(company_to_try)
+                    if not creds:
+                        auth_errors.append(f"{company_to_try}: No credentials configured")
+                    else:
+                        auth_errors.append(f"{company_to_try}: Authentication failed - check credentials in Settings")
                     continue
+            except AccountLockedException as e:
+                # Account is locked - tell user to unlock from Pharmacore first
+                # The exception message already includes the username
+                auth_errors.append(f"{company_to_try}: {e.message}")
+                logger.error(f"🚫 {e.message}")
+                continue
+            except InvalidCredentialsException as e:
+                # Invalid credentials - tell user to check credentials
+                # The exception message already includes the username
+                auth_errors.append(f"{company_to_try}: {e.message}")
+                logger.error(f"🚫 {e.message}")
+                continue
                 
                 # Use correct database name for this company
                 db_name_for_company = database_names.get(company_to_try, db_name)
@@ -101,12 +122,36 @@ async def get_suppliers(
                     logger.info(f"✅ Found {len(company_suppliers)} suppliers for {company_to_try}")
                     break  # If we got suppliers from one company, use that
                     
+            except requests.exceptions.HTTPError as e:
+                error_msg = f"{company_to_try}: API returned {e.response.status_code}"
+                try:
+                    error_data = e.response.json()
+                    error_msg += f" - {error_data}"
+                except:
+                    error_msg += f" - {e.response.text[:200]}"
+                api_errors.append(error_msg)
+                logger.warning(f"Failed to get suppliers from {company_to_try}: {e}")
+                continue
             except Exception as e:
+                api_errors.append(f"{company_to_try}: {str(e)}")
                 logger.warning(f"Failed to get suppliers from {company_to_try}: {e}")
                 continue
         
         if not suppliers:
-            raise HTTPException(status_code=404, detail=f"No suppliers found for branch_code {branch_code}")
+            # Provide detailed error message
+            error_detail = f"No suppliers found for branch_code {branch_code}"
+            
+            # Check if account is locked - prioritize this message
+            locked_errors = [err for err in auth_errors if 'locked' in err.lower() or 'unlock' in err.lower()]
+            if locked_errors:
+                error_detail = f"{'; '.join(locked_errors)}"
+            elif auth_errors:
+                error_detail += f". Authentication issues: {'; '.join(auth_errors)}"
+            
+            if api_errors:
+                error_detail += f". API errors: {'; '.join(api_errors)}"
+            
+            raise HTTPException(status_code=403 if locked_errors else 404, detail=error_detail)
         
         return {
             "success": True,

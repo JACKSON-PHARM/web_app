@@ -13,6 +13,22 @@ from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
+
+class AccountLockedException(Exception):
+    """Exception raised when an account is locked due to failed login attempts"""
+    def __init__(self, company: str, message: str):
+        self.company = company
+        self.message = message
+        super().__init__(self.message)
+
+
+class InvalidCredentialsException(Exception):
+    """Exception raised when credentials are invalid"""
+    def __init__(self, company: str, message: str):
+        self.company = company
+        self.message = message
+        super().__init__(self.message)
+
 class CredentialManagerSupabase:
     """Manages credentials for API access using Supabase PostgreSQL"""
     
@@ -176,7 +192,12 @@ class CredentialManagerSupabase:
                 logger.warning(f"No credentials found for {company}")
                 return None
             
-            # Authenticate and get token using /Auth endpoint (same as standalone scripts)
+            # Log credential info (without password) for debugging
+            logger.info(f"🔐 Authenticating {company} with username: {creds.get('username', 'N/A')}, base_url: {creds.get('base_url', 'N/A')}")
+            
+            # Authenticate and get token using /Auth endpoint with correct payload format
+            # IMPORTANT: Use ONLY the correct payload format to avoid wasting authentication attempts
+            # The API allows only 3 attempts before locking the account
             try:
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -184,8 +205,10 @@ class CredentialManagerSupabase:
                 session = requests.Session()
                 base_url = creds['base_url'].rstrip('/')
                 auth_url = f"{base_url}/Auth"
+                logger.info(f"🔗 Auth URL: {auth_url}")
                 
-                # Use the same payload format as standalone scripts
+                # Use the correct payload format (as specified by user)
+                # DO NOT try multiple formats - this wastes authentication attempts!
                 payload = {
                     "userName": creds['username'],
                     "password": creds['password'],
@@ -197,9 +220,13 @@ class CredentialManagerSupabase:
                 }
                 
                 headers = {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "Origin": "https://phamacoreonline.co.ke:5100",
+                    "Referer": "https://phamacoreonline.co.ke:5100/",
+                    "Accept": "application/json"
                 }
                 
+                logger.info(f"🔐 Attempting authentication for {company}")
                 response = session.post(
                     auth_url,
                     json=payload,
@@ -208,27 +235,75 @@ class CredentialManagerSupabase:
                     timeout=15
                 )
                 
-                response.raise_for_status()
-                data = response.json()
-                token = data.get('token') or data.get('access_token')
-                
-                if token:
-                    # Cache token (assume 8 hour expiry)
-                    expires_at = datetime.now().replace(microsecond=0) + timedelta(hours=8)
-                    self._token_cache[company] = {
-                        'token': token,
-                        'expires_at': expires_at
-                    }
-                    logger.info(f"✅ Obtained token for {company}")
-                    return token
-                
-                logger.error(f"No token in response for {company}: {data}")
+                if response.status_code == 200:
+                    data = response.json()
+                    token = data.get('token') or data.get('access_token')
+                    
+                    if token:
+                        # Cache token (assume 8 hour expiry)
+                        expires_at = datetime.now().replace(microsecond=0) + timedelta(hours=8)
+                        self._token_cache[company] = {
+                            'token': token,
+                            'expires_at': expires_at
+                        }
+                        logger.info(f"✅ Obtained token for {company}")
+                        return token
+                    else:
+                        logger.error(f"❌ No token in response for {company}: {data}")
+                        return None
+                else:
+                    # Log the error response for debugging
+                    try:
+                        error_data = response.json()
+                        error_message = error_data.get('message', str(error_data))
+                        logger.error(f"❌ Auth returned {response.status_code} for {company}: {error_message}")
+                        
+                        # Check for account lockout - raise special exception to inform user
+                        username = creds.get('username', 'Unknown')
+                        if 'locked' in error_message.lower() or 'lock' in error_message.lower():
+                            logger.error(f"🚫 Account is locked for {company} - Username: {username}")
+                            # Raise a custom exception that can be caught by API endpoints
+                            raise AccountLockedException(
+                                company=company,
+                                message=f"Your {company} account (username: {username}) is locked due to failed login attempts. "
+                                       f"Please unlock your account from Pharmacore first, then update your credentials in Settings."
+                            )
+                        elif 'invalid credentials' in error_message.lower():
+                            logger.error(f"🚫 Invalid credentials for {company} - Username: {username}. Check username/password in Settings.")
+                            raise InvalidCredentialsException(
+                                company=company,
+                                message=f"Invalid credentials for {company} (username: {username}). Please check your username and password in Settings."
+                            )
+                        
+                        return None
+                    except:
+                        error_text = response.text[:500] if response.text else "No response body"
+                        logger.error(f"❌ Auth returned {response.status_code} for {company}: {error_text}")
+                        return None
+                                
+            except AccountLockedException:
+                # Re-raise account locked exceptions so API endpoints can handle them
+                raise
+            except InvalidCredentialsException:
+                # Re-raise invalid credentials exceptions so API endpoints can handle them
+                raise
+            except requests.exceptions.HTTPError as e:
+                # This catches response.raise_for_status() if called
+                error_detail = str(e)
+                try:
+                    if hasattr(e, 'response') and e.response is not None:
+                        error_detail = f"{e.response.status_code}: {e.response.text[:500]}"
+                except:
+                    pass
+                logger.error(f"❌ HTTP error for {company}: {error_detail}")
                 return None
-                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"❌ Request error for {company}: {e}")
+                return None
             except Exception as e:
-                logger.error(f"Error getting token for {company}: {e}")
+                logger.error(f"❌ Unexpected error getting token for {company}: {e}")
                 import traceback
-                logger.debug(traceback.format_exc())
+                logger.error(traceback.format_exc())
                 return None
     
     def get_session(self, company: str) -> Optional[requests.Session]:
@@ -260,6 +335,47 @@ class CredentialManagerSupabase:
             else:
                 self._token_cache.clear()
     
+    def delete_credentials(self, company: str) -> Dict:
+        """Delete credentials for a company"""
+        conn = None
+        cursor = None
+        try:
+            conn = self.db_manager.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete credentials by setting is_enabled to FALSE (soft delete)
+            # Or completely remove the record
+            cursor.execute("""
+                DELETE FROM app_credentials
+                WHERE company_name = %s
+            """, (company,))
+            
+            conn.commit()
+            cursor.close()
+            self.db_manager.put_connection(conn)
+            
+            # Clear cached tokens
+            self.clear_tokens(company)
+            
+            logger.info(f"✅ Deleted credentials for {company}")
+            return {'success': True, 'message': f'Credentials deleted for {company}'}
+            
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Error deleting credentials: {e}")
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if conn:
+                try:
+                    self.db_manager.put_connection(conn)
+                except:
+                    pass
+            return {'success': False, 'message': f'Failed to delete credentials: {str(e)}'}
+    
     def test_credentials(self, company: str, username: str, password: str, base_url: str) -> Dict:
         """Test credentials using the same endpoint and format as get_valid_token"""
         try:
@@ -282,7 +398,10 @@ class CredentialManagerSupabase:
             }
             
             headers = {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Origin": "https://phamacoreonline.co.ke:5100",
+                "Referer": "https://phamacoreonline.co.ke:5100/",
+                "Accept": "application/json"
             }
             
             response = session.post(
@@ -329,6 +448,36 @@ class CredentialManagerSupabase:
                         'token_obtained': False
                     }
             else:
+                # Get error message from response
+                error_message = f'Authentication failed: {response.status_code}'
+                try:
+                    error_data = response.json()
+                    api_message = error_data.get('message', str(error_data))
+                    error_message = api_message
+                    
+                    # Check for account lockout - include username in message
+                    if 'locked' in api_message.lower() or 'lock' in api_message.lower():
+                        error_message = (
+                            f'Your {company} account (username: {username}) is locked due to failed login attempts. '
+                            'Please unlock your account from Pharmacore first, then update your credentials in Settings.'
+                        )
+                        logger.error(f"🚫 Account locked for {company} - Username: {username}")
+                    elif 'invalid credentials' in api_message.lower():
+                        # Extract attempts remaining if available
+                        if 'attempts remaining' in api_message.lower():
+                            error_message = (
+                                f'{api_message} (username: {username}) '
+                                'Please check your username and password. '
+                                'If your account gets locked, unlock it from Pharmacore first, then update credentials here.'
+                            )
+                            logger.warning(f"⚠️ Invalid credentials for {company} - Username: {username} - {api_message}")
+                        else:
+                            error_message = f'Invalid credentials for {company} (username: {username}). Please check your username and password in Settings.'
+                            logger.warning(f"⚠️ Invalid credentials for {company} - Username: {username}")
+                except:
+                    error_text = response.text[:200] if response.text else "Unknown error"
+                    error_message = f'Authentication failed: {error_text}'
+                
                 # Update last_tested in database
                 conn = None
                 cursor = None
@@ -348,7 +497,7 @@ class CredentialManagerSupabase:
                 
                 return {
                     'success': False,
-                    'message': f'Authentication failed: {response.status_code}',
+                    'message': error_message,
                     'token_obtained': False
                 }
             

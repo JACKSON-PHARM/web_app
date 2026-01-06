@@ -1,10 +1,10 @@
 """
 Credentials API Routes
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_admin
 from app.dependencies import get_credential_manager
 from app.config import settings
 
@@ -96,4 +96,30 @@ async def get_credentials_status(current_user: dict = Depends(get_current_user))
         "success": True,
         "credentials": status
     }
+
+class DeleteCredentialsRequest(BaseModel):
+    company: str  # "NILA" or "DAIMA"
+
+@router.delete("/delete")
+async def delete_credentials(
+    company: str,
+    current_user: dict = Depends(get_current_admin)  # Only admins can delete
+):
+    """Delete credentials for a company (Admin only)"""
+    if company not in ["NILA", "DAIMA"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Company must be NILA or DAIMA"
+        )
+    
+    cred_manager = get_credential_manager()
+    result = cred_manager.delete_credentials(company)
+    
+    if not result.get('success'):
+        raise HTTPException(
+            status_code=500,
+            detail=result.get('message', 'Failed to delete credentials')
+        )
+    
+    return result
 

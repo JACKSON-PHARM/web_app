@@ -22,6 +22,7 @@
                 <input type="password" id="nilaPassword" required>
             </div>
             <button type="button" onclick="testCredentials('NILA')" class="btn btn-primary">Test Connection</button>
+            <button type="button" onclick="deleteCredentials('NILA')" class="btn btn-danger" id="deleteNilaBtn" style="display: none; margin-left: 10px;">🗑️ Delete</button>
             
             <h3 style="margin-top: 30px;">DAIMA</h3>
             <div class="form-group">
@@ -33,6 +34,7 @@
                 <input type="password" id="daimaPassword" required>
             </div>
             <button type="button" onclick="testCredentials('DAIMA')" class="btn btn-primary">Test Connection</button>
+            <button type="button" onclick="deleteCredentials('DAIMA')" class="btn btn-danger" id="deleteDaimaBtn" style="display: none; margin-left: 10px;">🗑️ Delete</button>
             
             <div style="margin-top: 30px;">
                 <button type="submit" class="btn btn-success">Save All Settings</button>
@@ -44,7 +46,17 @@
 <script>
     window.addEventListener('DOMContentLoaded', () => {
         loadCredentialsStatus();
+        checkAdminStatus();
     });
+    
+    function checkAdminStatus() {
+        const isAdmin = localStorage.getItem('is_admin') === 'true';
+        if (isAdmin) {
+            // Show delete buttons for admins
+            document.getElementById('deleteNilaBtn').style.display = 'inline-block';
+            document.getElementById('deleteDaimaBtn').style.display = 'inline-block';
+        }
+    }
     
     async function loadCredentialsStatus() {
         try {
@@ -146,6 +158,36 @@
             alert(`Error saving credentials: ${error.message}`);
         }
     });
+    
+    async function deleteCredentials(company) {
+        const confirmed = confirm(`Are you sure you want to delete ${company} credentials? This action cannot be undone.`);
+        if (!confirmed) {
+            return;
+        }
+        
+        try {
+            const result = await apiRequest(`/api/credentials/delete?company=${company}`, {
+                method: 'DELETE'
+            });
+            
+            if (result.success) {
+                alert(`✅ ${company} credentials deleted successfully!`);
+                // Clear the form fields
+                document.getElementById(`${company.toLowerCase()}Username`).value = '';
+                document.getElementById(`${company.toLowerCase()}Password`).value = '';
+                // Reload status
+                loadCredentialsStatus();
+            } else {
+                alert(`❌ Failed to delete ${company} credentials: ${result.message || 'Unknown error'}`);
+            }
+        } catch (error) {
+            if (error.message.includes('403') || error.message.includes('Forbidden')) {
+                alert('❌ Only admins can delete credentials.');
+            } else {
+                alert(`Error deleting credentials: ${error.message}`);
+            }
+        }
+    }
 </script>
 {% endblock %}
 
