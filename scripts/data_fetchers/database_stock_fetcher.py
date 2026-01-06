@@ -215,13 +215,15 @@ class DatabaseStockFetcher(DatabaseBaseFetcher):
         for branch_name, stock_data in branch_stock_data.items():
             all_stock_data.extend(stock_data)
         
-        # Save to database (but don't delete old data yet - wait for sanity checks)
+        # Save to database - use UPSERT to atomically update existing records
+        # This ensures we always have the latest version without risking empty table
         if all_stock_data:
-            # Use replace_all=False to append, or use staging table without deletion
-            # We'll delete old branch data after sanity checks pass
+            # Use replace_all=False to trigger UPSERT mode
+            # UPSERT will atomically update existing records or insert new ones
+            # After successful insert, cleanup will remove any remaining old versions
             updated = self.db_manager.insert_current_stock(all_stock_data, replace_all=False)
             result["total_updated"] = updated
-            self.logger.info(f"✅ Inserted {updated} stock records for {company} (old data not deleted yet - waiting for sanity checks)")
+            self.logger.info(f"✅ Inserted/updated {updated} stock records for {company} (using UPSERT - always retains latest version)")
         
         return result
 

@@ -494,6 +494,8 @@ class PostgresDatabaseManager:
                 target_table = "current_stock_staging"
             else:
                 # Append mode - insert directly into main table
+                # Use UPSERT (INSERT ... ON CONFLICT) to atomically update existing records
+                # This ensures we always have the latest version without risking empty table
                 target_table = "current_stock"
             
             # Get schema from target table (main or staging - they have same structure)
@@ -624,10 +626,104 @@ class PostgresDatabaseManager:
             column_names = ', '.join([f'"{col}"' for col in valid_columns])
             placeholders = ', '.join(['%s'] * len(valid_columns))
             
-            insert_sql = f"""
-                INSERT INTO {target_table} ({column_names}) 
-                VALUES ({placeholders})
-            """
+            # For append mode, use UPSERT (INSERT ... ON CONFLICT) to atomically update existing records
+            # This ensures we always have the latest version without risking empty table
+            use_upsert = (not replace_all and target_table == "current_stock")
+            
+            if use_upsert:
+                # Check if unique constraint exists for ON CONFLICT
+                cursor.execute("""
+                    SELECT indexname 
+                    FROM pg_indexes 
+                    WHERE tablename = 'current_stock' 
+                    AND indexname LIKE '%unique%branch%company%item%'
+                    LIMIT 1
+                """)
+                unique_index = cursor.fetchone()
+                
+                if unique_index:
+                    # Use UPSERT: INSERT ... ON CONFLICT DO UPDATE
+                    # This atomically updates existing records or inserts new ones
+                    # We update all columns to ensure we have the latest version
+                    update_columns = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != 'id']
+                    update_clause = ', '.join(update_columns)
+                    
+                    insert_sql = f"""
+                        INSERT INTO {target_table} ({column_names}) 
+                        VALUES ({placeholders})
+                        ON CONFLICT (UPPER(TRIM(branch)), UPPER(TRIM(company)), item_code)
+                        DO UPDATE SET {update_clause}
+                    """
+                    self.logger.info("🔄 Using UPSERT mode (INSERT ... ON CONFLICT) for atomic updates")
+                else:
+                    # Fallback to regular INSERT if unique constraint doesn't exist
+                    insert_sql = f"""
+                        INSERT INTO {target_table} ({column_names}) 
+                        VALUES ({placeholders})
+                    """
+                    self.logger.warning("⚠️ Unique constraint not found - using regular INSERT (duplicates may occur)")
+                    use_upsert = False
+            else:
+                # For replace_all mode or staging table, use regular INSERT
+                insert_sql = f"""
+                    INSERT INTO {target_table} ({column_names}) 
+                    VALUES ({placeholders})
+                """
+            
+            # For append mode with UPSERT, use executemany (COPY doesn't support ON CONFLICT)
+            # For replace_all mode, use COPY for maximum performance
+            if use_upsert:
+                # Use executemany for UPSERT (slower but supports ON CONFLICT)
+                self.logger.info("📝 Using executemany for UPSERT operations...")
+                try:
+                    cursor.execute("SET statement_timeout = '30min'")
+                except Exception:
+                    pass
+                
+                # Prepare all values for batch insert
+                all_values = []
+                for record in stock_data:
+                    values = [record.get(col) for col in valid_columns]
+                    values = [None if v == '' or (isinstance(v, float) and (v != v)) else v for v in values]
+                    all_values.append(values)
+                
+                # Insert in chunks for better performance
+                chunk_size = 5000
+                count = 0
+                for chunk_start in range(0, len(all_values), chunk_size):
+                    chunk_end = min(chunk_start + chunk_size, len(all_values))
+                    chunk = all_values[chunk_start:chunk_end]
+                    cursor.executemany(insert_sql, chunk)
+                    count += len(chunk)
+                    if chunk_start % 25000 == 0:
+                        self.logger.info(f"  Processed {count:,} records...")
+                
+                # After successful insert, clean up any remaining old versions
+                # This ensures only the most recent version exists per (branch, company, item_code)
+                self.logger.info("🧹 Cleaning up any remaining old stock versions...")
+                try:
+                    cursor.execute("""
+                        DELETE FROM current_stock a
+                        USING current_stock b
+                        WHERE UPPER(TRIM(a.branch)) = UPPER(TRIM(b.branch))
+                          AND UPPER(TRIM(a.company)) = UPPER(TRIM(b.company))
+                          AND a.item_code = b.item_code
+                          AND a.id < b.id
+                    """)
+                    deleted_count = cursor.rowcount
+                    if deleted_count > 0:
+                        self.logger.info(f"   Removed {deleted_count:,} old versions")
+                except Exception as cleanup_error:
+                    self.logger.warning(f"⚠️ Could not clean up old versions: {cleanup_error}")
+                
+                try:
+                    cursor.execute("RESET statement_timeout")
+                except:
+                    pass
+                
+                conn.commit()
+                self.logger.info(f"✅ Inserted/updated {count:,} stock records using UPSERT")
+                return count
             
             # Use COPY FROM for maximum performance (fastest bulk insert method)
             # This is 10-100x faster than executemany for large datasets (243k records in seconds, not hours)
@@ -654,7 +750,7 @@ class PostgresDatabaseManager:
             # Supabase free tier has a default 10 second timeout, which is too short for large inserts
             try:
                 cursor.execute("SET statement_timeout = '30min'")
-                self.logger.info("⏱️ Set statement timeout to 30 minutes for COPY operation")
+                self.logger.info("⏱️ Set statement_timeout to 30 minutes for COPY operation")
             except Exception as timeout_error:
                 self.logger.warning(f"⚠️ Could not set statement timeout: {timeout_error} - continuing anyway")
             
